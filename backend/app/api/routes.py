@@ -7,12 +7,20 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from app.config import get_settings
+from app.guardrail.engine import check_command
+from app.guardrail.rules import RULES
 
 router = APIRouter()
 
 
 class ChatRequest(BaseModel):
     message: str
+
+
+class GuardCheckRequest(BaseModel):
+    command: str
+    authorized: bool = False
+    confirmed: bool = False
 
 
 @router.get("/health")
@@ -26,6 +34,26 @@ async def list_tools(request: Request) -> dict:
     """列出 MCP Server 暴露的工具，对应评分①「列工具」可演示项。"""
     mcp = request.app.state.mcp
     return {"tools": await mcp.list_tools()}
+
+
+@router.get("/guardrail/rules")
+async def guardrail_rules() -> dict:
+    """列出护栏规则库，供前端「规则可视化」展示（评分③可演示项）。"""
+    return {
+        "count": len(RULES),
+        "rules": [
+            {"id": r.id, "category": r.category, "risk": r.risk.value,
+             "action": r.action.value, "description": r.description}
+            for r in RULES
+        ],
+    }
+
+
+@router.post("/guardrail/check")
+async def guardrail_check(req: GuardCheckRequest) -> dict:
+    """对一条命令做护栏裁决（只校验、绝不执行）—— 危险命令拦截 demo 的后端入口。"""
+    return check_command(req.command, authorized=req.authorized,
+                         confirmed=req.confirmed).to_dict()
 
 
 @router.post("/chat")

@@ -46,3 +46,58 @@ def list_processes(top_n: int = 10, sort_by: str = "cpu") -> dict:
             for p in procs[:top_n]
         ],
     }
+
+
+def find_zombie_processes() -> dict:
+    """查找僵尸进程（评分④根因分析：僵尸进程诊断）。READONLY。
+
+    Returns:
+        含僵尸进程列表（pid/name/ppid）的字典
+    """
+    zombies = []
+    for p in psutil.process_iter(["pid", "name", "status", "ppid"]):
+        try:
+            if p.info["status"] == psutil.STATUS_ZOMBIE:
+                zombies.append({"pid": p.info["pid"], "name": p.info["name"],
+                                "ppid": p.info["ppid"]})
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return {"ok": True, "level": "READONLY", "count": len(zombies), "zombies": zombies}
+
+
+def process_detail(pid: int) -> dict:
+    """查询单个进程的详细信息。READONLY。
+
+    Args:
+        pid: 进程号
+    Returns:
+        含 name/status/cpu/memory/cmdline/create_time 等的字典；进程不存在则优雅报错
+    """
+    try:
+        p = psutil.Process(pid)
+        with p.oneshot():
+            return {
+                "ok": True,
+                "level": "READONLY",
+                "pid": pid,
+                "name": p.name(),
+                "status": p.status(),
+                "username": _safe(p.username),
+                "cpu_percent": p.cpu_percent(interval=0.1),
+                "memory_percent": round(p.memory_percent(), 2),
+                "cmdline": _safe(lambda: " ".join(p.cmdline())),
+                "ppid": p.ppid(),
+                "num_threads": p.num_threads(),
+            }
+    except psutil.NoSuchProcess:
+        return {"ok": False, "level": "READONLY", "error": f"进程不存在: pid={pid}"}
+    except psutil.AccessDenied:
+        return {"ok": False, "level": "READONLY", "error": f"无权限读取进程: pid={pid}"}
+
+
+def _safe(fn):
+    """部分进程属性可能因权限抛 AccessDenied，统一降级为 None。"""
+    try:
+        return fn()
+    except (psutil.AccessDenied, psutil.NoSuchProcess):
+        return None
