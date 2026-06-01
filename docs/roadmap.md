@@ -4,13 +4,13 @@
 > 原则：先骨架跑通闭环（哪怕功能少），再逐项加深。永远保持"可演示"状态。
 
 ## 第 1 周（6/1–6/7）：骨架 + 闭环
-- [ ] 本地环境搭好（WSL2 Ubuntu，Python3.11、Node、Ollama+Qwen3-8B）
-- [ ] 申请麒麟虚机（QQ群1092135086 群文件），拿到后记录访问方式
-- [ ] FastAPI 后端骨架 + 健康检查接口
-- [ ] LLM 抽象层：deepseek / ollama 双 provider，配置开关切换
-- [ ] MCP Server 起一个，封装 3 个只读工具（disk_usage、list_processes、memory_info）
-- [ ] 最小闭环：前端发一句话 → LLM 选工具 → 返回结果（先不带护栏）
-- [ ] Vue3 前端：一个对话框 + 消息流
+- [x] 本地环境搭好（WSL2 Ubuntu，Python3.11、Node）；Ollama+Qwen3-8B 待装（答辩用，非阻塞）
+- [ ] 申请麒麟虚机（QQ群1092135086 群文件），拿到后记录访问方式 ← 仍需人工尽快办
+- [x] FastAPI 后端骨架 + 健康检查接口（/health /tools /chat）
+- [x] LLM 抽象层：deepseek / ollama 双 provider + mock 离线兜底，配置开关切换
+- [x] MCP Server 起一个，封装 3 个只读工具（disk_usage、list_processes、memory_info），stdio 暴露
+- [x] 最小闭环：前端发一句话 → LLM 选工具 → 返回结果（先不带护栏），已端到端验证通过
+- [x] Vue3 前端：一个对话框 + 消息流（含思维链回放折叠面板，npm build 通过）
 
 ## 第 2 周（6/8–6/14）：MCP 工具全 + 护栏雏形
 - [ ] 补全 MCP 工具清单（进程/网络/磁盘/日志/句柄/服务，见 mcp-tool-builder skill）
