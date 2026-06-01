@@ -1,15 +1,25 @@
-"""编排器 —— 评分②「自然语言交互准确性」的落点。
+"""编排器 —— 评分②「自然语言交互准确性」+ 思维链溯源闭环的落点。
 
-闭环：自然语言 → LLM 选 MCP 工具 → 执行工具 → LLM 据结果作答。
-同时产出一个轻量 trace（接收指令 / 感知环境 / 推理决策 / 安全校验 / 执行结果），
-为第 3 周「思维链溯源」打基础；本周护栏尚未接入，READONLY 工具自动放行。
+闭环：自然语言 → 【防线1 意图分类 + 防线3 注入体检】→ LLM 选 MCP 工具 → 执行工具 → LLM 据结果作答。
+全程产出五段 trace（接收指令 / 感知环境 / 推理决策 / 安全校验 / 执行结果），挂在同一 trace_id 下，
+会话结束落 SQLite（app.audit.store），前端可按 trace_id 回放（评分明确要求的「可追溯」闭环）。
+
+护栏在编排层的接入（第3周）：
+- 接收指令阶段先做意图分类（白/灰/黑）与注入扫描；判黑/命中注入则直接拒绝，不进 LLM。
+- 工具均为 READONLY，调用前在安全校验段记录意图与级别；真正的可变命令走 executor（含防线2/4）。
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.audit import store
+from app.config import get_settings
+from app.guardrail.classifier import IntentClass, classify_intent
+from app.guardrail.engine import scan_injection
 from app.llm.provider import LLMProvider
 from app.mcp_server.client import MCPClient
 from app.mcp_server.tools import REGISTRY
@@ -34,6 +44,9 @@ class ChatResult:
     answer: str
     trace: list[TraceStep] = field(default_factory=list)
     tool_calls: list[dict] = field(default_factory=list)  # 本轮实际调用的工具与参数
+    trace_id: str = ""
+    blocked: bool = False  # 是否被护栏在编排层拦下
+    intent: str = ""       # 防线1 意图分类结果
 
 
 class Orchestrator:
@@ -42,16 +55,38 @@ class Orchestrator:
         self.mcp = mcp
 
     async def chat(self, user_input: str) -> ChatResult:
+        trace_id = uuid.uuid4().hex
         trace: list[TraceStep] = [TraceStep("接收指令", user_input)]
-        tool_calls_log: list[dict] = []
+
+        # —— 防线1 意图分类 + 防线3 注入体检（在进 LLM 之前）——
+        intent = classify_intent(user_input)
+        inj = scan_injection(user_input)
+        trace.append(TraceStep("安全校验", {
+            "phase": "入口预检",
+            "intent": intent.to_dict(),
+            "injection_scan": inj.to_dict(),
+        }))
+
+        # 判黑 / 命中注入 → 直接拒绝，绝不进入 LLM 编排
+        if intent.intent is IntentClass.BLACK or not inj.allowed:
+            reason = inj.reason if not inj.allowed else intent.reason
+            answer = (f"⚠️ 请求被安全护栏拦截，未予执行。\n原因：{reason}\n"
+                      "如这是正常运维需求，请换一种更具体、无越权/注入特征的表述。")
+            trace.append(TraceStep("执行结果", {"blocked": True, "reason": reason}))
+            return await self._finish(trace_id, user_input, answer, trace, [],
+                                      blocked=True, intent=intent.intent.value)
 
         tools = await self.mcp.openai_tools()
-        trace.append(TraceStep("感知环境", {"available_tools": [t["function"]["name"] for t in tools]}))
+        trace.append(TraceStep("感知环境", {
+            "available_tools": [t["function"]["name"] for t in tools],
+            "intent": intent.intent.value,
+        }))
 
         messages: list[dict] = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_input},
         ]
+        tool_calls_log: list[dict] = []
 
         for _ in range(MAX_ROUNDS):
             msg = await self.llm.achat(messages, tools)
@@ -61,7 +96,8 @@ class Orchestrator:
                 answer = msg.get("content") or "(模型未返回内容)"
                 trace.append(TraceStep("推理决策", "直接作答，无需调用工具"))
                 trace.append(TraceStep("执行结果", answer))
-                return ChatResult(answer=answer, trace=trace, tool_calls=tool_calls_log)
+                return await self._finish(trace_id, user_input, answer, trace,
+                                          tool_calls_log, intent=intent.intent.value)
 
             # 模型决定调用工具
             messages.append(_assistant_msg_for_history(msg, calls))
@@ -73,12 +109,14 @@ class Orchestrator:
                     args = {}
                 trace.append(TraceStep("推理决策", {"tool": name, "arguments": args}))
 
-                # —— 安全校验段（第 1 周占位）——
-                # 本周工具均为 READONLY，自动放行；MUTATING/PRIVILEGED 将在此接入护栏。
+                # —— 安全校验段：工具级裁决 ——
+                # 工具均为 READONLY，自动放行；MUTATING/PRIVILEGED 命令不在此走，
+                # 而是经 executor（防线2 规则库 + 防线4 最小权限）统一出口。
                 spec = REGISTRY.get(name)
                 level = spec.level if spec else "UNKNOWN"
+                decision = "auto_approve (READONLY)" if level == "READONLY" else "需经 executor 护栏"
                 trace.append(TraceStep("安全校验",
-                                       {"tool": name, "level": level, "decision": "auto_approve (READONLY)"}))
+                                       {"tool": name, "level": level, "decision": decision}))
 
                 result = await self.mcp.call_tool(name, args)
                 tool_calls_log.append({"tool": name, "arguments": args, "result": result})
@@ -93,8 +131,25 @@ class Orchestrator:
 
         # 轮次用尽仍未给出最终答复
         trace.append(TraceStep("执行结果", "达到最大工具调用轮次，未能收敛"))
-        return ChatResult(answer="处理超出最大轮次，请简化需求后重试。",
-                          trace=trace, tool_calls=tool_calls_log)
+        return await self._finish(trace_id, user_input,
+                                  "处理超出最大轮次，请简化需求后重试。",
+                                  trace, tool_calls_log, intent=intent.intent.value)
+
+    async def _finish(self, trace_id: str, user_input: str, answer: str,
+                      trace: list[TraceStep], tool_calls: list[dict],
+                      *, blocked: bool = False, intent: str = "") -> ChatResult:
+        """收尾：把整条思维链落 SQLite（失败不影响主流程），返回结果。"""
+        steps = [{"stage": s.stage, "detail": s.detail} for s in trace]
+        try:
+            await asyncio.to_thread(
+                store.save_trace, trace_id, user_input, answer, steps,
+                intent=intent, blocked=blocked,
+                llm_provider=get_settings().llm_provider,
+            )
+        except Exception as e:  # 审计落库失败不能阻断对话主流程，仅记录
+            trace.append(TraceStep("执行结果", {"audit_warning": f"思维链落库失败：{e}"}))
+        return ChatResult(answer=answer, trace=trace, tool_calls=tool_calls,
+                          trace_id=trace_id, blocked=blocked, intent=intent)
 
 
 def _assistant_msg_for_history(msg: dict, calls: list[dict]) -> dict:

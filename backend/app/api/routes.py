@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from app.audit import store
 from app.config import get_settings
+from app.core import diagnosis
 from app.guardrail.engine import check_command
 from app.guardrail.rules import RULES
 
@@ -58,11 +60,35 @@ async def guardrail_check(req: GuardCheckRequest) -> dict:
 
 @router.post("/chat")
 async def chat(req: ChatRequest, request: Request) -> dict:
-    """自然语言运维对话，返回最终答复 + 思维链 trace。"""
+    """自然语言运维对话，返回最终答复 + 思维链 trace（含 trace_id 供回放）。"""
     orch = request.app.state.orchestrator
     result = await orch.chat(req.message)
     return {
+        "trace_id": result.trace_id,
         "answer": result.answer,
+        "blocked": result.blocked,
+        "intent": result.intent,
         "trace": [asdict(s) for s in result.trace],
         "tool_calls": result.tool_calls,
     }
+
+
+@router.get("/traces")
+async def traces(limit: int = 50) -> dict:
+    """列出最近会话，供前端「思维链回放」历史列表（评分：可追溯闭环）。"""
+    return {"traces": store.list_traces(limit=limit)}
+
+
+@router.get("/traces/{trace_id}")
+async def trace_detail(trace_id: str) -> dict:
+    """按 trace_id 取完整思维链五段，供前端回放整条推理链路。"""
+    t = store.get_trace(trace_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail=f"trace 不存在: {trace_id}")
+    return t
+
+
+@router.get("/diagnose")
+async def diagnose(topic: str = "all", path: str = "/") -> dict:
+    """智能根因分析（评分④）：disk/zombie/load/all。只分析给建议，绝不执行处置。"""
+    return diagnosis.diagnose(topic=topic, path=path)

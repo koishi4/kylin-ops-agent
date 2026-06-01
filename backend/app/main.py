@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
+from app.audit import store
 from app.core.orchestrator import Orchestrator
 from app.llm.provider import get_llm
 from app.mcp_server.client import MCPClient
@@ -19,7 +20,8 @@ from app.mcp_server.client import MCPClient
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动：连接 MCP 工具层 + 装配编排器
+    # 启动：初始化审计库 + 连接 MCP 工具层 + 装配编排器
+    store.init_db()
     mcp = MCPClient()
     await mcp.connect()
     app.state.mcp = mcp

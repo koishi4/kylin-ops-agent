@@ -108,7 +108,7 @@ RULES: list[Rule] = [
     # ---------- 注入类（也用于扫描用户输入 / 被当作上下文的文件内容）----------
     Rule("INJ-001", r"(忽略.*(以上|之前|前面).*(规则|指令|设定|提示)|ignore\s+(all\s+)?previous|disregard.*(rule|instruction)|forget.*(instruction|rule))",
          RiskLevel.HIGH, Action.DENY, "疑似提示词注入：指令覆盖（忽略既有规则）", "inject"),
-    Rule("INJ-002", r"(你现在是\s*root|你(现在)?可以做任何|没有任何限制|developer\s*mode|开发者模式|越狱|jailbreak|act\s+as\s+root)",
+    Rule("INJ-002", r"(你(现在)?(是|拥有|有了?)\s*root|拥有\s*root\s*权限|你(现在)?(可以|能)做任何|没有任何限制|developer\s*mode|开发者模式|越狱|jailbreak|act\s+as\s+root)",
          RiskLevel.HIGH, Action.DENY, "疑似提示词注入：角色劫持/越权扮演", "inject"),
     Rule("INJ-003", r"(base64\s+-d|base64\s+--decode|xxd\s+-r)\s*\|\s*(sh|bash|zsh)",
          RiskLevel.CRITICAL, Action.DENY, "编码绕过执行：解码后直接管道给 shell", "inject"),

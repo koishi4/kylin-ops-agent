@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .env
 audit.sqlite
+*.sqlite
+*.sqlite-*
 node_modules/
 dist/
 .DS_Store

@@ -13,6 +13,7 @@ from __future__ import annotations
 import shlex
 
 from app.guardrail.engine import GuardResult, check_command
+from app.guardrail.privilege import check_privilege
 from app.mcp_server.tools._shell import run_cmd
 
 
@@ -47,6 +48,19 @@ def execute(
             "guard": guard.to_dict(),
         }
 
+    # 防线4 最小权限：危险规则放行后，再校验是否需要提权、会话是否授权。
+    # 命令不在高危规则库、却仍需 root（如普通 systemctl restart）时，这一层兜底拦截。
+    priv = check_privilege(cmd, authorized=authorized)
+    if not priv.allowed:
+        return {
+            "executed": False,
+            "blocked": True,
+            "require_confirm": False,
+            "reason": priv.reason,
+            "guard": guard.to_dict(),
+            "privilege": priv.to_dict(),
+        }
+
     if dry_run:
         return {
             "executed": False,
@@ -54,6 +68,7 @@ def execute(
             "dry_run": True,
             "reason": "护栏放行（dry_run，未真正执行）",
             "guard": guard.to_dict(),
+            "privilege": priv.to_dict(),
         }
 
     # 护栏放行后才执行；shell=False + shlex 拆分，杜绝 shell 元字符二次解释
@@ -67,4 +82,5 @@ def execute(
                 "guard": guard.to_dict()}
 
     result = run_cmd(args, timeout=timeout)
-    return {"executed": True, "blocked": False, "guard": guard.to_dict(), **result}
+    return {"executed": True, "blocked": False, "guard": guard.to_dict(),
+            "privilege": priv.to_dict(), **result}
