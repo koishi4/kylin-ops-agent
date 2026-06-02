@@ -37,6 +37,7 @@ SYSTEM_PROMPT = (
 )
 
 MAX_ROUNDS = 5  # 防止工具调用死循环
+MAX_TOOL_RETRIES = 2  # P2-2 工具调用自愈：累计失败超过此数即停止重试，避免空转
 
 
 @dataclass
@@ -112,6 +113,8 @@ class Orchestrator:
             {"role": "user", "content": user_input},
         ]
         tool_calls_log: list[dict] = []
+        available_names = {t["function"]["name"] for t in tools}
+        tool_failures = 0  # P2-2：累计工具调用失败次数，用于自愈重试预算
 
         for _ in range(MAX_ROUNDS):
             msg = await self.llm.achat(messages, tools)
@@ -128,11 +131,34 @@ class Orchestrator:
             messages.append(_assistant_msg_for_history(msg, calls))
             for call in calls:
                 name = call["function"]["name"]
+
+                # —— P2-2 自愈①：参数必须是合法 JSON 对象 ——
+                # 原先解析失败静默置空 args 蒙混调用；现改为明确回喂错误，让模型重出参数。
                 try:
                     args = json.loads(call["function"].get("arguments") or "{}")
-                except json.JSONDecodeError:
-                    args = {}
+                    if not isinstance(args, dict):
+                        raise ValueError("arguments 必须是 JSON 对象")
+                except (json.JSONDecodeError, ValueError) as e:
+                    tool_failures += 1
+                    err = _tool_error(name, f"参数不是合法 JSON 对象：{e}",
+                                      "请重新生成符合该工具 schema 的 JSON 参数后再调用。")
+                    trace.append(TraceStep("执行结果", {"tool": name, "self_heal": err}))
+                    messages.append(_tool_error_msg(call["id"], err))
+                    continue
+
                 trace.append(TraceStep("推理决策", {"tool": name, "arguments": args}))
+
+                # —— P2-2 自愈②：工具名必须真实存在（防模型臆造工具名）——
+                if name not in available_names:
+                    tool_failures += 1
+                    err = _tool_error(
+                        name, f"工具不存在：{name}",
+                        f"可用工具仅限：{sorted(available_names)}。请改用其中之一，勿臆造工具名。")
+                    trace.append(TraceStep("安全校验",
+                                           {"tool": name, "level": "UNKNOWN", "decision": "拒绝：未知工具"}))
+                    trace.append(TraceStep("执行结果", {"tool": name, "self_heal": err}))
+                    messages.append(_tool_error_msg(call["id"], err))
+                    continue
 
                 # —— 安全校验段：工具级裁决 ——
                 # 工具均为 READONLY，自动放行；MUTATING/PRIVILEGED 命令不在此走，
@@ -143,8 +169,30 @@ class Orchestrator:
                 trace.append(TraceStep("安全校验",
                                        {"tool": name, "level": level, "decision": decision}))
 
-                result = await self.mcp.call_tool(name, args)
+                # —— P2-2 自愈③：工具执行抛异常 → 结构化回喂，不让整条对话崩 ——
+                try:
+                    result = await self.mcp.call_tool(name, args)
+                except Exception as e:  # MCP 协议错误 / 工具内部异常等
+                    tool_failures += 1
+                    err = _tool_error(name, f"工具执行抛出异常：{e}",
+                                      "可能是参数取值不当或目标不存在；请调整参数或改用更合适的工具重试。")
+                    trace.append(TraceStep("执行结果", {"tool": name, "self_heal": err}))
+                    messages.append(_tool_error_msg(call["id"], err))
+                    continue
+
                 tool_calls_log.append({"tool": name, "arguments": args, "result": result})
+
+                # —— P2-2 自愈④：工具返回失败结果（ok=False / 含 error）→ 回喂错误供换策略 ——
+                if isinstance(result, dict) and (result.get("ok") is False or result.get("error")):
+                    tool_failures += 1
+                    reason = result.get("error") or result.get("raw") or "工具返回了失败结果"
+                    err = _tool_error(name, f"工具返回失败：{reason}",
+                                      "请根据该错误调整参数或改用其它工具；不要重复同样的失败调用。")
+                    trace.append(TraceStep("执行结果",
+                                           {"tool": name, "result": result, "self_heal": err}))
+                    messages.append(_tool_error_msg(call["id"], err))
+                    continue
+
                 trace.append(TraceStep("执行结果", {"tool": name, "result": result}))
 
                 # —— 防线3 强化：工具返回视为外部不可信数据，沙盒化隔离后再喂回 LLM ——
@@ -158,7 +206,17 @@ class Orchestrator:
                     "tool_call_id": call["id"],
                     "content": san.wrapped,
                 })
-            # 带着工具结果再问一轮，让模型总结
+
+            # —— P2-2 自愈：失败超出重试预算则优雅收场，不空转耗尽轮次 ——
+            if tool_failures > MAX_TOOL_RETRIES:
+                answer = ("多次尝试调用工具均失败，已停止自动重试以避免空转。"
+                          "请补充更明确的信息，或稍后再试。")
+                trace.append(TraceStep("执行结果",
+                                       {"reason": "工具调用自愈超出重试预算",
+                                        "tool_failures": tool_failures}))
+                return await self._finish(trace_id, user_input, answer, trace,
+                                          tool_calls_log, intent=intent.intent.value)
+            # 带着工具结果（或结构化错误）再问一轮，让模型总结或换策略重试
 
         # 轮次用尽仍未给出最终答复
         trace.append(TraceStep("执行结果", "达到最大工具调用轮次，未能收敛"))
@@ -181,6 +239,18 @@ class Orchestrator:
             trace.append(TraceStep("执行结果", {"audit_warning": f"思维链落库失败：{e}"}))
         return ChatResult(answer=answer, trace=trace, tool_calls=tool_calls,
                           trace_id=trace_id, blocked=blocked, intent=intent)
+
+
+def _tool_error(name: str, reason: str, hint: str) -> dict:
+    """P2-2：构造结构化工具错误，回喂给 LLM 以驱动自愈重试。
+    带 tool_error=True 让模型明确「这是错误、需换策略」，而非把错误文本当数据转述。"""
+    return {"tool_error": True, "tool": name, "reason": reason, "hint": hint}
+
+
+def _tool_error_msg(call_id: str, err: dict) -> dict:
+    """把结构化错误包成 OpenAI 协议要求的 tool 角色消息（每个 tool_call 必须有对应回应）。"""
+    return {"role": "tool", "tool_call_id": call_id,
+            "content": json.dumps(err, ensure_ascii=False)}
 
 
 def _assistant_msg_for_history(msg: dict, calls: list[dict]) -> dict:
