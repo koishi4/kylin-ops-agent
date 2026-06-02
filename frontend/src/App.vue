@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
-import { chat, getHealth, listTools, listTraces, getTrace, diagnose } from './api.js'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { chat, getHealth, listTools, listTraces, getTrace, diagnose, executeAction } from './api.js'
 
 const provider = ref('-')
 const tools = ref([])
@@ -20,8 +21,8 @@ const stageColor = {
   执行结果: '#67C23A',
 }
 // 意图分类 → 标签类型
-const intentTag = { white: 'success', gray: 'warning', black: 'danger' }
-const intentText = { white: '白·只读放行', gray: '灰·需校验', black: '黑·已拦截' }
+const intentTag = { white: 'success', gray: 'warning', black: 'danger', action: 'primary' }
+const intentText = { white: '白·只读放行', gray: '灰·需校验', black: '黑·已拦截', action: '动作执行' }
 
 // ---- 思维链回放抽屉 ----
 const replayOpen = ref(false)
@@ -108,6 +109,49 @@ async function runDiagnose() {
   }
 }
 const sevType = { ok: 'success', warning: 'warning', critical: 'danger', unknown: 'info' }
+
+// ---- 受控安全清理（P0-3）：根因分析判定「可清理」的文件，用户点按 → 二次确认 → 经护栏执行 ----
+const cleaning = ref('')  // 正在清理的路径，用于按钮 loading
+
+// 日志类用 truncate（保留句柄），其余可清理文件用 rm
+function actionFor(path) {
+  return /\.log($|\.)/i.test(path) ? 'truncate_log' : 'clean_path'
+}
+
+async function safeClean(file) {
+  const path = file.path
+  const action = actionFor(path)
+  cleaning.value = path
+  try {
+    // 第一步：dry_run 预览，拿到护栏裁决（绝不执行）
+    const preview = await executeAction(action, { path }, { dryRun: true })
+    if (preview.blocked) {
+      // 即便根因分析判「可清理」，命令层护栏仍可能独立拦截（如 rm 落在 /var）——展示纵深防御
+      await ElMessageBox.alert(
+        `护栏拦截，未执行。\n命令：${preview.command || '-'}\n原因：${preview.reason}`,
+        '⛔ 被安全护栏拦截', { type: 'error' })
+      return
+    }
+    // 第二步：二次确认（展示将执行的命令与护栏放行结论）
+    await ElMessageBox.confirm(
+      `将执行：${preview.command}\n护栏结论：${preview.reason}\n确认安全清理？`,
+      '⚠️ 二次确认', { type: 'warning', confirmedButtonText: '确认执行', cancelButtonText: '取消' })
+    // 第三步：确认后真正执行（confirmed + 非 dry_run），全程记入思维链
+    const res = await executeAction(action, { path }, { confirmed: true, dryRun: false })
+    if (res.executed && res.ok) {
+      ElMessage.success(`已安全清理：${path}（已记入思维链 ${res.trace_id?.slice(0, 8)}）`)
+      await runDiagnose()  // 刷新报告，清理后大文件应消失/缩小
+    } else if (res.blocked) {
+      ElMessage.error(`护栏拦截：${res.reason}`)
+    } else {
+      ElMessage.warning(res.reason || '未执行')
+    }
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.info('已取消')
+  } finally {
+    cleaning.value = ''
+  }
+}
 </script>
 
 <template>
@@ -223,6 +267,13 @@ const sevType = { ok: 'success', warning: 'warning', critical: 'danger', unknown
               </el-tag>
               <span class="lf-path">{{ lf.path }}</span>
               <span class="lf-size">{{ lf.size_mb }}MB</span>
+              <!-- 仅「可清理」类给出安全清理入口，点按必经二次确认 + 护栏 -->
+              <el-button
+                v-if="lf.class === 'cleanable'"
+                size="small" type="success" plain
+                :loading="cleaning === lf.path"
+                @click="safeClean(lf)"
+              >安全清理</el-button>
             </div>
           </div>
           <div v-if="r.suggestions && r.suggestions.length" class="diag-sugg">

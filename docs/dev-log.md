@@ -79,3 +79,34 @@
 - 解决方法：拓宽 INJ-002 角色劫持正则（是/拥有/有 root + 拥有 root 权限）；黑意图正则补「(整个|所有).*(系统|根目录).*(删|清空)」反向语序。两处都是测试驱动暴露后真实强化护栏，非改测试迁就。
 - 指标（可直接进报告/答辩）：护栏四防线齐全；红队 67 条，拦截率 100% / 误杀率 0% / 注入识别率 100%；MCP 工具 15、护栏规则 25；思维链五段全程可按 trace_id 回放；pytest **207 全绿**。
 - 下一步（第4周）：麒麟 V11 + LoongArch 虚机部署、本地 Qwen3 跑通断网演示、7 分钟演示视频、9 项软件杯文档 + 合工大格式课程报告。
+
+---
+
+### 2026-06-02 改进 P0-3：补齐受控 MUTATING 动作，让护栏从「空跑」变「实战」
+- 背景：见 docs/IMPROVEMENTS.md。此前 15 个 MCP 工具全 READONLY，护栏只能在 /guardrail/check 里「空跑」演示；
+  赛题招牌场景「清理垃圾 → 识别关键性 → 安全执行」缺「执行」这一环，根因分析给了建议却没有「确认后安全执行」的闭环。
+- 做了什么：
+  - 新增**受控动作层** `core/actions.py`：白名单参数化动作 `truncate_log` / `kill_process` / `clean_path`，
+    不做自由 shell（收敛攻击面）。统一入口 `run_action(action, params, *, confirmed, authorized, dry_run)`。
+  - 每个动作先过**动作层语义校验**（只读）：truncate/clean 用 `diagnosis.classify_file` 判关键性（仅 CLEANABLE 放行，
+    CRITICAL/UNKNOWN 拒）；kill 用 `process_detail` 判进程关键性（禁 init/systemd、自身/父进程、关键服务名，
+    root 进程需授权）。**通过后构造命令仍唯一经 `executor.execute`**（防线2 规则库 + 防线4 最小权限），任一层不过即不执行。
+  - **二次确认 + 默认 dry_run**：confirmed=False 绝不真执行，只返回护栏裁决预览 + require_confirm；
+    每次动作产出五段 trace 落审计（intent="action"），可按 trace_id 回放。
+  - 新增接口 `POST /action/execute`（默认 dry_run）；动作执行经 `asyncio.to_thread` 不阻塞事件循环，落库失败不阻断。
+  - 前端：根因分析抽屉里「可清理」文件旁加「安全清理」按钮 → 先 dry_run 预览护栏裁决 → ElMessageBox 二次确认 →
+    confirmed 真执行 → 刷新报告；动作记入思维链可在回放抽屉查看。
+  - 测试：新增 `tests/test_actions.py`（21 条），三动作放行/拦截路径各覆盖 + 路由落库集成。**全套 228 全绿**。
+- 设计决策与理由（课程报告/答辩素材）：
+  - **动作层语义校验 ≠ 命令层护栏，二者纵深叠加**：`truncate`/`kill` 不在防线2 规则库、也不触发防线4，命令层会放行——
+    真正拦它们的是动作层的「关键性/受保护进程」语义判断（正则表达不了的语义）；反过来，动作层即便判某文件「可清理」，
+    命令层仍独立兜底：`rm` 作用于 /var 下的可清理日志会被 PATH-001（CRITICAL）拦死。这正是**「日志走 truncate 不走 rm」**的硬理由，
+    也证明「动作层放行 ≠ 最终放行」——多层防御缺一不可。已写成回归测试 `test_clean_var_log_blocked_by_command_guard`。
+  - **变更动作不交给 LLM**：MCP 工具保持全 READONLY，kill/删除只能由用户经 /action/execute 显式触发，避免模型自主发起破坏性动作，
+    符合「不信任 LLM 输出」的护栏定位。
+  - **未确认强制 dry_run**：把「二次确认」做成执行的硬前置（effective_dry = dry_run or not confirmed），
+    确保任何路径下「没点确认就绝不落系统」。
+  - **kill 默认 SIGTERM、信号白名单**：给进程自清理机会，禁止任意 -9 滥杀；root 进程接入防线4（需授权）。
+- 踩坑：无（设计阶段就理清了 /var 下 rm 与 truncate 的护栏差异，反而成了最佳纵深防御演示点）。
+- 指标：白名单动作 3 个，动作测试 21 条，全套 pytest **228 全绿**；招牌场景「清理垃圾→判关键性→二次确认→truncate 执行→思维链留痕」端到端可演，对照「rm /var/lib/mysql 被 CRITICAL 拦死」。
+- 下一步（按 IMPROVEMENTS 顺序）：P0-2 上下文沙盒防注入 → P0-1 双层意图理解（规则 + LLM 风险研判）。

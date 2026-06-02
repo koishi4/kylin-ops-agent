@@ -35,3 +35,12 @@ export async function diagnose(topic = 'all', path = '/') {
   const { data } = await http.get('/diagnose', { params: { topic, path } })
   return data
 }
+
+// 受控 MUTATING 动作（P0-3）：白名单动作 → 语义校验 → 护栏 → 执行。
+// 默认 dry_run/未确认时只返回护栏裁决预览，绝不真正执行。
+export async function executeAction(action, params, { confirmed = false, authorized = false, dryRun = true } = {}) {
+  const { data } = await http.post('/action/execute', {
+    action, params, confirmed, authorized, dry_run: dryRun,
+  })
+  return data // { ok, executed, blocked, require_confirm, command, guard, precheck, reason, trace_id, ... }
+}
