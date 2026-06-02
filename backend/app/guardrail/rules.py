@@ -106,7 +106,7 @@ RULES: list[Rule] = [
          RiskLevel.HIGH, Action.CONFIRM, "关闭/清空防火墙规则，暴露主机攻击面，需确认", "config"),
 
     # ---------- 注入类（也用于扫描用户输入 / 被当作上下文的文件内容）----------
-    Rule("INJ-001", r"(忽略.*(以上|之前|前面).*(规则|指令|设定|提示)|ignore\s+(all\s+)?previous|disregard.*(rule|instruction)|forget.*(instruction|rule))",
+    Rule("INJ-001", r"(忽略[^。\n]{0,12}(规则|指令|设定|提示|限制|约束)|ignore\s+(all\s+)?(previous\s+|prior\s+|the\s+)?(instruction|rule|prompt)|disregard.*(rule|instruction)|forget.*(instruction|rule))",
          RiskLevel.HIGH, Action.DENY, "疑似提示词注入：指令覆盖（忽略既有规则）", "inject"),
     Rule("INJ-002", r"(你(现在)?(是|拥有|有了?)\s*root|拥有\s*root\s*权限|你(现在)?(可以|能)做任何|没有任何限制|developer\s*mode|开发者模式|越狱|jailbreak|act\s+as\s+root)",
          RiskLevel.HIGH, Action.DENY, "疑似提示词注入：角色劫持/越权扮演", "inject"),
