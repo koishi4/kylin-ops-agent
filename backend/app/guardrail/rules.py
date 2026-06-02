@@ -7,15 +7,32 @@
 匹配兼顾变形：-rf / -fr / -r -f、绝对/相对路径、引号包裹、命令拼接。
 正则之外再用 realpath 做路径规范化双重判断（见 engine.py 调用 hits_critical_path）。
 
+【P2-1 可配置化 / 插件化】规则与关键路径抽到同目录 rules.yaml，支持运行时热加载
+（reload_rules() / POST /guardrail/rules/reload / 前端「重新加载」按钮）——增改规则只改 YAML，
+不改代码、不重启进程，呼应赛题「插件化架构」。但「可配置 ≠ 可削弱护栏」，靠两条安全不变量保证：
+
+  1. 红线兜底（_REDLINE_RULES）：CRITICAL+DENY 的绝命规则（删库/格式化/dd 覆盖磁盘/篡改 sudoers/
+     下载即执行…）硬编码在本文件，加载时强制覆盖 YAML 中同 id 的项、并补回被删的项。
+     即在 YAML 里把红线调松或删掉【无效】——配置层动不了核心红线。
+  2. 故障安全（fail-safe，不是 fail-open）：YAML 缺失/损坏/任一规则校验不过（字段缺失、枚举非法、
+     正则编不过、id 重复）→【拒绝换入】，维持上一份已生效规则；进程刚启动尚无规则时退回红线兜底集。
+     护栏绝不因一次坏配置出现空窗或缺口。
+
 扩展规则前务必读 .claude/skills/safety-guardrail/SKILL.md。
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shlex
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
+
+import yaml
+
+logger = logging.getLogger(__name__)
 
 
 class RiskLevel(Enum):
@@ -45,78 +62,180 @@ class Rule:
     category: str     # delete / permission / disk / privilege / config / inject
 
 
-# 关键路径：rm / chmod / chown 命中这些（含其子路径）即按高危处理
-CRITICAL_PATHS = [
-    "/", "/etc", "/var", "/boot", "/usr", "/bin", "/sbin", "/lib", "/lib64",
-    "/root", "/var/lib/mysql", "/var/lib/postgresql", "/var/lib/docker",
-]
-
 # rm 的递归强制标志变形：-rf / -fr / --recursive --force / -r -f
 _RF = r"(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|-r\s+-f|-f\s+-r|--recursive|--force)"
 
-RULES: list[Rule] = [
-    # ---------- 删除类 ----------
+# ---------------------------------------------------------------------------
+# 安全不变量 1：红线兜底集（硬编码，不可被 YAML 配置削弱或删除）
+# 选取标准：风险 CRITICAL 且动作 DENY 的「绝命操作」——一旦放行即不可逆的系统/数据灾难。
+# 加载时这些规则会强制覆盖 YAML 中的同 id 项，并补回 YAML 里被删掉的项（见 _merge_redlines）。
+# ---------------------------------------------------------------------------
+_REDLINE_RULES: list[Rule] = [
     Rule("DEL-001", rf"\brm\s+{_RF}\s+/(\s|$)",
          RiskLevel.CRITICAL, Action.DENY, "递归强制删除根目录，将摧毁整个系统", "delete"),
     Rule("DEL-002", rf"\brm\s+.*{_RF}.*\s/\*",
          RiskLevel.CRITICAL, Action.DENY, "删除根目录下所有内容（/*），等同摧毁系统", "delete"),
     Rule("DEL-003", r"\brm\s+.*(/etc|/boot|/usr|/bin|/sbin|/lib|/var/lib/mysql|/var/lib/postgresql)(/|\s|\*|$)",
          RiskLevel.CRITICAL, Action.DENY, "删除涉及系统关键目录或数据库数据目录", "delete"),
-    Rule("DEL-004", r"\brm\s+.*\.(db|sql|sqlite|frm|ibd|myd|myi)(\s|$)",
-         RiskLevel.HIGH, Action.DENY, "删除数据库文件，可能造成不可逆数据丢失", "delete"),
-
-    # ---------- 权限类 ----------
-    Rule("PERM-001", r"\bchmod\s+(-R\s+)?0?777\s+/(etc|usr|var|boot|bin|sbin|lib|root)?(\s|/|$)",
-         RiskLevel.HIGH, Action.DENY, "对系统目录开放 777 全权限，严重提权风险", "permission"),
-    Rule("PERM-002", r"\bchmod\s+-R\s+\d*\s*/(etc|usr|var|boot|bin|sbin|lib)?(\s|/|$)",
-         RiskLevel.HIGH, Action.DENY, "递归修改系统目录权限，可能破坏系统完整性", "permission"),
-    Rule("PERM-003", r"\bchown\s+-R\s+\S+\s+/(etc|usr|var|boot|bin|sbin|lib)?(\s|/|$)",
-         RiskLevel.HIGH, Action.DENY, "递归修改系统目录属主，可能导致服务失效", "permission"),
-    Rule("PERM-004", r"\bchmod\s+.*\bu\+s\b",
-         RiskLevel.HIGH, Action.CONFIRM, "设置 setuid 位，存在提权后门风险，需确认", "permission"),
-
-    # ---------- 磁盘类 ----------
     Rule("DISK-001", r"\bmkfs(\.\w+)?\s",
          RiskLevel.CRITICAL, Action.DENY, "格式化文件系统，将清空目标设备数据", "disk"),
     Rule("DISK-002", r"\bdd\s+.*of=/dev/(sd|nvme|vd|hd|mmcblk)",
          RiskLevel.CRITICAL, Action.DENY, "用 dd 直接写裸块设备，将覆盖磁盘数据", "disk"),
     Rule("DISK-003", r">\s*/dev/(sd|nvme|vd|hd)",
          RiskLevel.CRITICAL, Action.DENY, "重定向覆写块设备，将损坏磁盘/分区", "disk"),
-    Rule("DISK-004", r"\b(wipefs|fdisk|parted|sgdisk)\s",
-         RiskLevel.HIGH, Action.CONFIRM, "分区/擦除工具，误用会破坏分区表，需确认", "disk"),
-
-    # ---------- 提权类 ----------
-    Rule("PRIV-001", r"(^|[\s;&|])(sudo|su)\s",
-         RiskLevel.MEDIUM, Action.CONFIRM, "涉及提权，需确认授权与必要性（最小权限原则）", "privilege"),
-    Rule("PRIV-002", r"\bpasswd\s+(root|-)",
-         RiskLevel.HIGH, Action.DENY, "尝试修改 root 密码，越权操作", "privilege"),
     Rule("PRIV-003", r"(>>?\s*/etc/sudoers|\bvisudo\b|usermod\s+.*-aG?\s+(sudo|wheel|root))",
          RiskLevel.CRITICAL, Action.DENY, "篡改 sudoers / 提权用户组，严重权限越界", "privilege"),
     Rule("PRIV-004", r"\b(useradd|adduser)\s+.*(-u\s*0|--uid\s*0)",
          RiskLevel.CRITICAL, Action.DENY, "创建 UID=0 的等价 root 账户，提权后门", "privilege"),
-
-    # ---------- 关键配置保护 ----------
     Rule("CFG-001", r">\s*/etc/(passwd|shadow|fstab|sudoers|group|gshadow)",
          RiskLevel.CRITICAL, Action.DENY, "改写系统关键配置文件，可致系统无法登录/启动", "config"),
-    Rule("CFG-002", r"/etc/ssh/sshd_config",
-         RiskLevel.HIGH, Action.CONFIRM, "修改 SSH 服务配置，可能影响远程登录安全，需确认", "config"),
-    Rule("CFG-003", r">\s*/etc/(hosts|resolv\.conf)",
-         RiskLevel.MEDIUM, Action.CONFIRM, "改写 hosts/DNS 解析，可能被用于流量劫持，需确认", "config"),
-    Rule("CFG-004", r"\b(iptables\s+-F|systemctl\s+(stop|disable)\s+(firewalld|ufw))",
-         RiskLevel.HIGH, Action.CONFIRM, "关闭/清空防火墙规则，暴露主机攻击面，需确认", "config"),
-
-    # ---------- 注入类（也用于扫描用户输入 / 被当作上下文的文件内容）----------
-    Rule("INJ-001", r"(忽略[^。\n]{0,12}(规则|指令|设定|提示|限制|约束)|ignore\s+(all\s+)?(previous\s+|prior\s+|the\s+)?(instruction|rule|prompt)|disregard.*(rule|instruction)|forget.*(instruction|rule))",
-         RiskLevel.HIGH, Action.DENY, "疑似提示词注入：指令覆盖（忽略既有规则）", "inject"),
-    Rule("INJ-002", r"(你(现在)?(是|拥有|有了?)\s*root|拥有\s*root\s*权限|你(现在)?(可以|能)做任何|没有任何限制|developer\s*mode|开发者模式|越狱|jailbreak|act\s+as\s+root)",
-         RiskLevel.HIGH, Action.DENY, "疑似提示词注入：角色劫持/越权扮演", "inject"),
     Rule("INJ-003", r"(base64\s+-d|base64\s+--decode|xxd\s+-r)\s*\|\s*(sh|bash|zsh)",
          RiskLevel.CRITICAL, Action.DENY, "编码绕过执行：解码后直接管道给 shell", "inject"),
     Rule("INJ-004", r"(curl|wget)\s+\S+\s*\|\s*(sudo\s+)?(sh|bash|zsh)",
          RiskLevel.CRITICAL, Action.DENY, "下载即执行：远程脚本直接管道给 shell，极高风险", "inject"),
-    Rule("INJ-005", r"[;&|]\s*(rm|mkfs|dd|chmod|chown)\s",
-         RiskLevel.HIGH, Action.DENY, "命令拼接夹带危险指令（; && | 后接破坏性命令）", "inject"),
 ]
+
+# YAML 缺失/损坏时退回的关键路径兜底集（与 rules.yaml 的 critical_paths 保持一致）
+_FALLBACK_CRITICAL_PATHS: list[str] = [
+    "/", "/etc", "/var", "/boot", "/usr", "/bin", "/sbin", "/lib", "/lib64",
+    "/root", "/var/lib/mysql", "/var/lib/postgresql", "/var/lib/docker",
+]
+
+RULES_YAML_PATH = Path(__file__).with_name("rules.yaml")
+
+# ---------------------------------------------------------------------------
+# 运行时生效的规则集与关键路径：以「原地修改 list」的方式热加载（见 reload_rules），
+# 这样已经 `from .rules import RULES` 的模块持有的引用始终指向最新内容，无需重新 import。
+# ---------------------------------------------------------------------------
+RULES: list[Rule] = []
+CRITICAL_PATHS: list[str] = []
+
+# 最近一次加载状态，供 /guardrail/rules/reload 与状态查询回报
+_load_status: dict = {"source": "fallback", "count": 0, "errors": [], "applied": False}
+
+_VALID_RISKS = {r.value for r in RiskLevel}
+_VALID_ACTIONS = {a.value for a in Action}
+
+
+def _parse_rule(d: object) -> Rule:
+    """把 YAML 里的一条规则映射校验并转成 Rule；任何不合规都抛 ValueError。"""
+    if not isinstance(d, dict):
+        raise ValueError("规则项必须是映射（含 id/pattern/risk/action/description/category）")
+    missing = [k for k in ("id", "pattern", "risk", "action", "description", "category")
+               if d.get(k) in (None, "")]
+    if missing:
+        raise ValueError(f"缺少必填字段：{', '.join(missing)}")
+
+    risk_raw = str(d["risk"]).strip().lower()
+    if risk_raw not in _VALID_RISKS:
+        raise ValueError(f"risk 非法：{d['risk']!r}（应为 critical/high/medium/low）")
+    action_raw = str(d["action"]).strip().lower()
+    if action_raw not in _VALID_ACTIONS:
+        raise ValueError(f"action 非法：{d['action']!r}（应为 deny/confirm/allow）")
+
+    pattern = str(d["pattern"])
+    try:
+        re.compile(pattern)
+    except re.error as e:
+        raise ValueError(f"正则编译失败：{e}")
+
+    return Rule(str(d["id"]).strip(), pattern, RiskLevel(risk_raw), Action(action_raw),
+                str(d["description"]).strip(), str(d["category"]).strip())
+
+
+def _read_yaml_rules(path: Path) -> tuple[list[Rule], list[str], list[str]]:
+    """读取并整体校验 YAML，返回 (rules, critical_paths, errors)。errors 非空即视为不可用。"""
+    path = Path(path)
+    if not path.exists():
+        return [], [], [f"规则配置文件不存在：{path}"]
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        return [], [], [f"YAML 解析失败：{e}"]
+    if not isinstance(raw, dict):
+        return [], [], ["规则配置根节点必须是映射（含 rules / critical_paths 两个键）"]
+
+    errors: list[str] = []
+    rules: list[Rule] = []
+    seen: set[str] = set()
+    for i, item in enumerate(raw.get("rules") or [], start=1):
+        try:
+            r = _parse_rule(item)
+        except ValueError as e:
+            errors.append(f"第 {i} 条规则无效：{e}")
+            continue
+        if r.id in seen:
+            errors.append(f"规则 id 重复：{r.id}")
+            continue
+        seen.add(r.id)
+        rules.append(r)
+
+    cps_raw = raw.get("critical_paths")
+    if cps_raw is None:
+        cps: list[str] = []
+    elif isinstance(cps_raw, list) and all(isinstance(c, str) and c for c in cps_raw):
+        cps = list(cps_raw)
+    else:
+        errors.append("critical_paths 必须是非空字符串的列表")
+        cps = []
+
+    if not rules and not errors:
+        errors.append("配置中未定义任何规则（rules 为空）")
+    return rules, cps, errors
+
+
+def _merge_redlines(rules: list[Rule]) -> list[Rule]:
+    """安全不变量 1：红线规则用硬编码版本强制覆盖 YAML 同 id 项，并补回被删的红线。
+    保持 YAML 给出的顺序，仅替换/追加，使配置层无法把核心红线调松或删除。"""
+    redline = {r.id: r for r in _REDLINE_RULES}
+    out: list[Rule] = []
+    seen: set[str] = set()
+    for r in rules:
+        out.append(redline.get(r.id, r))   # 同 id 是红线 → 强制用硬编码版本
+        seen.add(r.id)
+    for rid, r in redline.items():
+        if rid not in seen:                # YAML 删掉了某条红线 → 强制补回
+            out.append(r)
+    return out
+
+
+def load_rules(path: Path = RULES_YAML_PATH) -> tuple[list[Rule], list[str], list[str]]:
+    """加载并校验规则。
+    成功 → (合并红线后的规则, critical_paths, [])；
+    失败 → (红线兜底集, 兜底关键路径, errors)。本函数不改全局状态，便于测试与预检。"""
+    rules, cps, errors = _read_yaml_rules(path)
+    if errors:
+        return list(_REDLINE_RULES), list(_FALLBACK_CRITICAL_PATHS), errors
+    return _merge_redlines(rules), (cps or list(_FALLBACK_CRITICAL_PATHS)), []
+
+
+def reload_rules(path: Path = RULES_YAML_PATH) -> dict:
+    """热加载：重新读 YAML 并（仅在校验通过时）原地换入当前规则集，返回加载状态。
+
+    安全不变量 2（故障安全）：校验不过时【不换入】、维持现有规则；仅当进程刚启动、
+    尚无任何规则时才退回红线兜底集兜住，护栏绝不出现空窗。原地改 list 而非重新赋值，
+    避免已 `import RULES` 的模块拿到旧引用。
+    """
+    rules, cps, errors = load_rules(path)
+    applied = (not errors) or (not RULES)   # 校验过→换入；启动期无规则→用兜底兜住
+    if applied:
+        RULES[:] = rules
+        CRITICAL_PATHS[:] = cps
+    _load_status.update(
+        source=("yaml" if not errors else "fallback"),
+        count=len(RULES),
+        errors=errors,
+        applied=applied,
+    )
+    if errors:
+        logger.warning("规则热加载校验未通过（%s），维持现有 %d 条规则：%s",
+                       path, len(RULES), "；".join(errors))
+    return dict(_load_status)
+
+
+def load_status() -> dict:
+    """最近一次加载状态：{source, count, errors, applied}，供接口/前端展示。"""
+    return dict(_load_status)
 
 
 def normalize(cmd: str) -> str:
@@ -172,3 +291,7 @@ def hits_critical_path(cmd: str) -> list[str]:
         if _is_under_critical(resolved):
             hits.append(resolved)
     return hits
+
+
+# 进程启动即从 YAML 加载一次；失败则退回红线兜底集（永不空窗）。
+reload_rules()

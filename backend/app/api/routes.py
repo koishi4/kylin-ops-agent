@@ -12,7 +12,7 @@ from app.audit import store
 from app.config import get_settings
 from app.core import actions, diagnosis
 from app.guardrail.engine import check_command
-from app.guardrail.rules import RULES
+from app.guardrail.rules import RULES, load_status, reload_rules
 
 router = APIRouter()
 
@@ -48,16 +48,44 @@ async def list_tools(request: Request) -> dict:
     return {"tools": await mcp.list_tools()}
 
 
+def _rules_payload() -> list[dict]:
+    return [
+        {"id": r.id, "category": r.category, "risk": r.risk.value,
+         "action": r.action.value, "description": r.description}
+        for r in RULES
+    ]
+
+
 @router.get("/guardrail/rules")
 async def guardrail_rules() -> dict:
-    """列出护栏规则库，供前端「规则可视化」展示（评分③可演示项）。"""
+    """列出护栏规则库，供前端「规则可视化」展示（评分③可演示项）。
+
+    source/errors 反映规则来自 YAML 配置还是红线兜底集（P2-1 可配置化）。
+    """
+    st = load_status()
     return {
         "count": len(RULES),
-        "rules": [
-            {"id": r.id, "category": r.category, "risk": r.risk.value,
-             "action": r.action.value, "description": r.description}
-            for r in RULES
-        ],
+        "source": st["source"],
+        "errors": st["errors"],
+        "rules": _rules_payload(),
+    }
+
+
+@router.post("/guardrail/rules/reload")
+async def guardrail_rules_reload() -> dict:
+    """热加载规则库：从 rules.yaml 重新读取并校验（P2-1 插件化/可扩展）。
+
+    故障安全：校验不过则【不换入】、维持现有规则并回报 errors，护栏绝不因坏配置出现空窗。
+    红线规则（CRITICAL+DENY 绝命操作）硬编码兜底，无法经配置削弱或删除。
+    """
+    st = reload_rules()
+    return {
+        "ok": not st["errors"],
+        "source": st["source"],
+        "count": st["count"],
+        "applied": st["applied"],
+        "errors": st["errors"],
+        "rules": _rules_payload(),
     }
 
 

@@ -50,3 +50,15 @@ export async function executeAction(action, params, { confirmed = false, authori
   })
   return data // { ok, executed, blocked, require_confirm, command, guard, precheck, reason, trace_id, ... }
 }
+
+// 护栏规则库（P2-1 可配置化）：列出当前规则 + 来源/校验状态
+export async function getRules() {
+  const { data } = await http.get('/guardrail/rules')
+  return data // { count, source, errors, rules }
+}
+
+// 护栏规则库热加载：从 rules.yaml 重新读取并校验（不重启进程即生效）
+export async function reloadRules() {
+  const { data } = await http.post('/guardrail/rules/reload')
+  return data // { ok, source, count, applied, errors, rules }
+}

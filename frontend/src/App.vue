@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { chat, getHealth, listTools, listTraces, getTrace, verifyTrace, diagnose, executeAction } from './api.js'
+import { chat, getHealth, listTools, listTraces, getTrace, verifyTrace, diagnose, executeAction, getRules, reloadRules } from './api.js'
 
 const provider = ref('-')
 const tools = ref([])
@@ -165,6 +165,47 @@ async function safeClean(file) {
     cleaning.value = ''
   }
 }
+
+// ---- 护栏规则库（P2-1 可配置化/热加载）----
+const rulesOpen = ref(false)
+const rulesLoading = ref(false)
+const rulesReloading = ref(false)
+const rulesData = ref(null)  // { count, source, errors, rules }
+const riskType = { critical: 'danger', high: 'warning', medium: '', low: 'info' }
+const actionType = { deny: 'danger', confirm: 'warning', allow: 'success' }
+const catText = {
+  delete: '删除', permission: '权限', disk: '磁盘',
+  privilege: '提权', config: '配置', inject: '注入',
+}
+
+async function openRules() {
+  rulesOpen.value = true
+  rulesLoading.value = true
+  try {
+    rulesData.value = await getRules()
+  } finally {
+    rulesLoading.value = false
+  }
+}
+
+// 热加载：改完 rules.yaml 后点此即生效，无需重启后端（展示「插件化/可扩展」）
+async function doReloadRules() {
+  rulesReloading.value = true
+  try {
+    const res = await reloadRules()
+    rulesData.value = res
+    if (res.ok) {
+      ElMessage.success(`规则已热加载：共 ${res.count} 条（来源 ${res.source}）`)
+    } else {
+      // 故障安全：坏配置不换入、维持原规则，把错误明确告知用户
+      ElMessage.error(`配置校验未通过，已维持原规则（${res.count} 条）`)
+    }
+  } catch (e) {
+    ElMessage.error('热加载失败：' + (e.message || e))
+  } finally {
+    rulesReloading.value = false
+  }
+}
 </script>
 
 <template>
@@ -176,6 +217,7 @@ async function safeClean(file) {
         <el-tag size="small" type="info">工具: {{ tools.length }}</el-tag>
         <el-button size="small" @click="runDiagnose">🩺 一键体检</el-button>
         <el-button size="small" @click="openReplay">🔍 思维链回放</el-button>
+        <el-button size="small" @click="openRules">🛡️ 规则库</el-button>
       </div>
     </el-header>
 
@@ -307,6 +349,45 @@ async function safeClean(file) {
         </el-card>
       </div>
     </el-drawer>
+
+    <!-- 护栏规则库抽屉（P2-1 可配置化/热加载）：规则即配置，改 rules.yaml → 热加载即生效 -->
+    <el-drawer v-model="rulesOpen" title="🛡️ 安全护栏规则库（可配置 / 热加载）" size="58%" direction="rtl">
+      <div v-loading="rulesLoading">
+        <div class="rules-bar">
+          <el-tag size="small" :type="rulesData && rulesData.source === 'yaml' ? 'success' : 'danger'">
+            {{ rulesData && rulesData.source === 'yaml' ? '来源：rules.yaml' : '来源：红线兜底集（配置异常）' }}
+          </el-tag>
+          <el-tag size="small" type="info">共 {{ rulesData ? rulesData.count : 0 }} 条</el-tag>
+          <el-button size="small" type="primary" plain :loading="rulesReloading" @click="doReloadRules">
+            ♻️ 重新加载规则库
+          </el-button>
+          <span class="rules-hint">改 rules.yaml 后点此热加载，无需重启后端</span>
+        </div>
+        <el-alert
+          v-if="rulesData && rulesData.errors && rulesData.errors.length"
+          type="error" :closable="false" style="margin-bottom:10px"
+          title="配置校验未通过——已维持原规则（故障安全，护栏不空窗）">
+          <div v-for="(e, i) in rulesData.errors" :key="i" class="rules-err">· {{ e }}</div>
+        </el-alert>
+        <el-table v-if="rulesData" :data="rulesData.rules" size="small" stripe height="calc(100vh - 180px)">
+          <el-table-column prop="id" label="ID" width="92" />
+          <el-table-column label="分类" width="72">
+            <template #default="{ row }">{{ catText[row.category] || row.category }}</template>
+          </el-table-column>
+          <el-table-column label="风险" width="84">
+            <template #default="{ row }">
+              <el-tag size="small" :type="riskType[row.risk]">{{ row.risk }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="动作" width="84">
+            <template #default="{ row }">
+              <el-tag size="small" effect="plain" :type="actionType[row.action]">{{ row.action }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="description" label="说明" min-width="220" show-overflow-tooltip />
+        </el-table>
+      </div>
+    </el-drawer>
   </el-container>
 </template>
 
@@ -360,4 +441,9 @@ html, body, #app { height: 100%; margin: 0; }
 .lf-path { word-break: break-all; }
 .lf-size { color: #909399; margin-left: auto; white-space: nowrap; }
 .diag-sugg { margin-top: 8px; padding: 8px; background: #f5f7fa; border-radius: 6px; font-size: 13px; white-space: pre-wrap; line-height: 1.7; }
+
+/* 规则库抽屉 */
+.rules-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.rules-hint { font-size: 12px; color: #909399; }
+.rules-err { font-size: 12px; line-height: 1.6; }
 </style>

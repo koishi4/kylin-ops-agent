@@ -1,0 +1,185 @@
+# rules.yaml —— 安全护栏规则库（P2-1 可配置化 / 插件化）
+#
+# 规则即配置：增改规则只改本文件，运行时热加载（POST /guardrail/rules/reload 或前端「重新加载」按钮），
+# 无需改代码、不重启进程。每条规则字段：
+#   id          规则编号（同类前缀 DEL/PERM/DISK/PRIV/CFG/INJ，全局唯一）
+#   category    分类：delete/permission/disk/privilege/config/inject
+#   risk        风险等级：critical（拒绝不可覆盖）/ high（需授权）/ medium（需确认）/ low（记录放行）
+#   action      命中动作：deny / confirm / allow
+#   pattern     Python 正则（re.IGNORECASE 匹配规范化后的命令；兼顾 -rf/-fr、引号包裹、命令拼接等变形）
+#   description 命中后给用户/审计日志的人类可读解释
+#
+# 【安全不变量，勿试图通过本文件绕过】
+#   1. 红线兜底：CRITICAL+DENY 的绝命规则（删库/格式化/dd 覆盖磁盘/篡改 sudoers/下载即执行…）
+#      在 rules.py 中硬编码为 _REDLINE_RULES，加载时强制覆盖此处同 id 项并补回被删项——
+#      在本文件把它们调松或删掉【无效】。可配置 ≠ 可削弱护栏。
+#   2. 故障安全：本文件缺失/YAML 损坏/任一规则校验不过（缺字段/枚举非法/正则编不过/id 重复）
+#      → 拒绝换入、维持上一份已生效规则（进程刚启动则退回红线兜底集）。护栏绝不 fail-open。
+#
+# 扩展规则前务必读 .claude/skills/safety-guardrail/SKILL.md。
+
+critical_paths:
+- /
+- /etc
+- /var
+- /boot
+- /usr
+- /bin
+- /sbin
+- /lib
+- /lib64
+- /root
+- /var/lib/mysql
+- /var/lib/postgresql
+- /var/lib/docker
+rules:
+- id: DEL-001
+  category: delete
+  risk: critical
+  action: deny
+  pattern: \brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|-r\s+-f|-f\s+-r|--recursive|--force)\s+/(\s|$)
+  description: 递归强制删除根目录，将摧毁整个系统
+- id: DEL-002
+  category: delete
+  risk: critical
+  action: deny
+  pattern: \brm\s+.*(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|-r\s+-f|-f\s+-r|--recursive|--force).*\s/\*
+  description: 删除根目录下所有内容（/*），等同摧毁系统
+- id: DEL-003
+  category: delete
+  risk: critical
+  action: deny
+  pattern: \brm\s+.*(/etc|/boot|/usr|/bin|/sbin|/lib|/var/lib/mysql|/var/lib/postgresql)(/|\s|\*|$)
+  description: 删除涉及系统关键目录或数据库数据目录
+- id: DEL-004
+  category: delete
+  risk: high
+  action: deny
+  pattern: \brm\s+.*\.(db|sql|sqlite|frm|ibd|myd|myi)(\s|$)
+  description: 删除数据库文件，可能造成不可逆数据丢失
+- id: PERM-001
+  category: permission
+  risk: high
+  action: deny
+  pattern: \bchmod\s+(-R\s+)?0?777\s+/(etc|usr|var|boot|bin|sbin|lib|root)?(\s|/|$)
+  description: 对系统目录开放 777 全权限，严重提权风险
+- id: PERM-002
+  category: permission
+  risk: high
+  action: deny
+  pattern: \bchmod\s+-R\s+\d*\s*/(etc|usr|var|boot|bin|sbin|lib)?(\s|/|$)
+  description: 递归修改系统目录权限，可能破坏系统完整性
+- id: PERM-003
+  category: permission
+  risk: high
+  action: deny
+  pattern: \bchown\s+-R\s+\S+\s+/(etc|usr|var|boot|bin|sbin|lib)?(\s|/|$)
+  description: 递归修改系统目录属主，可能导致服务失效
+- id: PERM-004
+  category: permission
+  risk: high
+  action: confirm
+  pattern: \bchmod\s+.*\bu\+s\b
+  description: 设置 setuid 位，存在提权后门风险，需确认
+- id: DISK-001
+  category: disk
+  risk: critical
+  action: deny
+  pattern: \bmkfs(\.\w+)?\s
+  description: 格式化文件系统，将清空目标设备数据
+- id: DISK-002
+  category: disk
+  risk: critical
+  action: deny
+  pattern: \bdd\s+.*of=/dev/(sd|nvme|vd|hd|mmcblk)
+  description: 用 dd 直接写裸块设备，将覆盖磁盘数据
+- id: DISK-003
+  category: disk
+  risk: critical
+  action: deny
+  pattern: '>\s*/dev/(sd|nvme|vd|hd)'
+  description: 重定向覆写块设备，将损坏磁盘/分区
+- id: DISK-004
+  category: disk
+  risk: high
+  action: confirm
+  pattern: \b(wipefs|fdisk|parted|sgdisk)\s
+  description: 分区/擦除工具，误用会破坏分区表，需确认
+- id: PRIV-001
+  category: privilege
+  risk: medium
+  action: confirm
+  pattern: (^|[\s;&|])(sudo|su)\s
+  description: 涉及提权，需确认授权与必要性（最小权限原则）
+- id: PRIV-002
+  category: privilege
+  risk: high
+  action: deny
+  pattern: \bpasswd\s+(root|-)
+  description: 尝试修改 root 密码，越权操作
+- id: PRIV-003
+  category: privilege
+  risk: critical
+  action: deny
+  pattern: (>>?\s*/etc/sudoers|\bvisudo\b|usermod\s+.*-aG?\s+(sudo|wheel|root))
+  description: 篡改 sudoers / 提权用户组，严重权限越界
+- id: PRIV-004
+  category: privilege
+  risk: critical
+  action: deny
+  pattern: \b(useradd|adduser)\s+.*(-u\s*0|--uid\s*0)
+  description: 创建 UID=0 的等价 root 账户，提权后门
+- id: CFG-001
+  category: config
+  risk: critical
+  action: deny
+  pattern: '>\s*/etc/(passwd|shadow|fstab|sudoers|group|gshadow)'
+  description: 改写系统关键配置文件，可致系统无法登录/启动
+- id: CFG-002
+  category: config
+  risk: high
+  action: confirm
+  pattern: /etc/ssh/sshd_config
+  description: 修改 SSH 服务配置，可能影响远程登录安全，需确认
+- id: CFG-003
+  category: config
+  risk: medium
+  action: confirm
+  pattern: '>\s*/etc/(hosts|resolv\.conf)'
+  description: 改写 hosts/DNS 解析，可能被用于流量劫持，需确认
+- id: CFG-004
+  category: config
+  risk: high
+  action: confirm
+  pattern: \b(iptables\s+-F|systemctl\s+(stop|disable)\s+(firewalld|ufw))
+  description: 关闭/清空防火墙规则，暴露主机攻击面，需确认
+- id: INJ-001
+  category: inject
+  risk: high
+  action: deny
+  pattern: (忽略[^。\n]{0,12}(规则|指令|设定|提示|限制|约束)|ignore\s+(all\s+)?(previous\s+|prior\s+|the\s+)?(instruction|rule|prompt)|disregard.*(rule|instruction)|forget.*(instruction|rule))
+  description: 疑似提示词注入：指令覆盖（忽略既有规则）
+- id: INJ-002
+  category: inject
+  risk: high
+  action: deny
+  pattern: (你(现在)?(是|拥有|有了?)\s*root|拥有\s*root\s*权限|你(现在)?(可以|能)做任何|没有任何限制|developer\s*mode|开发者模式|越狱|jailbreak|act\s+as\s+root)
+  description: 疑似提示词注入：角色劫持/越权扮演
+- id: INJ-003
+  category: inject
+  risk: critical
+  action: deny
+  pattern: (base64\s+-d|base64\s+--decode|xxd\s+-r)\s*\|\s*(sh|bash|zsh)
+  description: 编码绕过执行：解码后直接管道给 shell
+- id: INJ-004
+  category: inject
+  risk: critical
+  action: deny
+  pattern: (curl|wget)\s+\S+\s*\|\s*(sudo\s+)?(sh|bash|zsh)
+  description: 下载即执行：远程脚本直接管道给 shell，极高风险
+- id: INJ-005
+  category: inject
+  risk: high
+  action: deny
+  pattern: '[;&|]\s*(rm|mkfs|dd|chmod|chown)\s'
+  description: 命令拼接夹带危险指令（; && | 后接破坏性命令）
