@@ -30,6 +30,12 @@ export async function getTrace(traceId) {
   return data
 }
 
+// 审计防篡改：校验哈希链完整性（P1-3）
+export async function verifyTrace(traceId) {
+  const { data } = await http.get(`/traces/${traceId}/verify`)
+  return data // { valid, steps, broken_at, reason, head_hash }
+}
+
 // 智能根因分析（评分④）
 export async function diagnose(topic = 'all', path = '/') {
   const { data } = await http.get('/diagnose', { params: { topic, path } })

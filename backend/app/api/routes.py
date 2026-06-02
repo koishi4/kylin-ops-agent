@@ -98,6 +98,12 @@ async def trace_detail(trace_id: str) -> dict:
     return t
 
 
+@router.get("/traces/{trace_id}/verify")
+async def trace_verify(trace_id: str) -> dict:
+    """校验思维链哈希链完整性（防篡改）：返回 valid 及断裂点，供前端展示「可信审计」。"""
+    return store.verify_chain(trace_id)
+
+
 @router.get("/diagnose")
 async def diagnose(topic: str = "all", path: str = "/") -> dict:
     """智能根因分析（评分④）：disk/zombie/load/all。只分析给建议，绝不执行处置。"""

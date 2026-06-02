@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { chat, getHealth, listTools, listTraces, getTrace, diagnose, executeAction } from './api.js'
+import { chat, getHealth, listTools, listTraces, getTrace, verifyTrace, diagnose, executeAction } from './api.js'
 
 const provider = ref('-')
 const tools = ref([])
@@ -90,10 +90,23 @@ async function openReplay() {
 }
 async function loadTrace(id) {
   replayLoading.value = true
+  verifyResult.value = null   // 切换会话时清空上一条的校验结果
   try {
     activeTrace.value = await getTrace(id)
   } finally {
     replayLoading.value = false
+  }
+}
+// 审计防篡改：校验当前回放会话的哈希链完整性（P1-3 可信审计 demo）
+const verifyResult = ref(null)
+const verifying = ref(false)
+async function doVerify() {
+  if (!activeTrace.value) return
+  verifying.value = true
+  try {
+    verifyResult.value = await verifyTrace(activeTrace.value.trace_id)
+  } finally {
+    verifying.value = false
   }
 }
 
@@ -233,7 +246,19 @@ async function safeClean(file) {
             <div class="td-meta">
               <b>trace_id：</b><code>{{ activeTrace.trace_id }}</code>
               <el-tag size="small" type="info" style="margin-left:8px">{{ activeTrace.llm_provider }}</el-tag>
+              <el-button size="small" :loading="verifying" style="margin-left:8px" @click="doVerify">🔒 校验完整性</el-button>
+              <el-tag
+                v-if="verifyResult"
+                size="small"
+                :type="verifyResult.valid ? 'success' : 'danger'"
+                style="margin-left:8px"
+              >
+                {{ verifyResult.valid
+                    ? `✓ 哈希链完整（${verifyResult.steps} 段）`
+                    : `✗ 检测到篡改${verifyResult.broken_at != null ? '（断链于第 ' + verifyResult.broken_at + ' 段）' : ''}` }}
+              </el-tag>
             </div>
+            <div v-if="verifyResult" class="verify-reason">{{ verifyResult.reason }}</div>
             <el-timeline>
               <el-timeline-item
                 v-for="(s, j) in activeTrace.steps"
@@ -325,6 +350,7 @@ html, body, #app { height: 100%; margin: 0; }
 .ti-input { margin-top: 4px; font-size: 13px; word-break: break-all; }
 .trace-detail { flex: 1; overflow-y: auto; }
 .td-meta { margin-bottom: 10px; font-size: 13px; }
+.verify-reason { margin: -2px 0 10px; color: #909399; font-size: 12px; }
 
 /* 诊断抽屉 */
 .diag-card { margin-bottom: 12px; }

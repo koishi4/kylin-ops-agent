@@ -23,6 +23,9 @@ class Settings(BaseSettings):
 
     # 审计库（第 3 周接入思维链溯源）
     audit_db: str = "./audit.sqlite"
+    # 审计哈希链密钥（防篡改）：用 HMAC 串联每条 step，无密钥无法重算合法哈希。
+    # 生产应经环境变量注入并妥善保管（KMS/密钥库）；此默认值仅供开发与演示。
+    audit_hmac_key: str = "kylin-ops-agent-audit-chain-v1"
 
     # 执行账户（最小权限，非 root）
     exec_user: str = "opsagent"
