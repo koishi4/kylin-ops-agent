@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { chat, getHealth, listTools, listTraces, getTrace, verifyTrace, diagnose, executeAction, getRules, reloadRules } from './api.js'
 
@@ -177,6 +177,30 @@ const catText = {
   delete: '删除', permission: '权限', disk: '磁盘',
   privilege: '提权', config: '配置', inject: '注入',
 }
+
+// ---- P2-4 规则可视化：分类筛选 + 风险筛选 + 关键词搜索 ----
+const ruleCat = ref('all')     // all / delete / permission / disk / privilege / config / inject
+const ruleRisk = ref('all')    // all / critical / high / medium / low
+const ruleSearch = ref('')
+const CATS = ['delete', 'permission', 'disk', 'privilege', 'config', 'inject']
+
+// 每个分类的规则条数，做成带计数的筛选标签（答辩时「25 条规则一目了然」）
+const catCounts = computed(() => {
+  const all = (rulesData.value && rulesData.value.rules) || []
+  const m = { all: all.length }
+  for (const c of CATS) m[c] = all.filter(r => r.category === c).length
+  return m
+})
+
+const filteredRules = computed(() => {
+  const all = (rulesData.value && rulesData.value.rules) || []
+  const kw = ruleSearch.value.trim().toLowerCase()
+  return all.filter(r =>
+    (ruleCat.value === 'all' || r.category === ruleCat.value) &&
+    (ruleRisk.value === 'all' || r.risk === ruleRisk.value) &&
+    (!kw || r.id.toLowerCase().includes(kw) || (r.description || '').toLowerCase().includes(kw)),
+  )
+})
 
 async function openRules() {
   rulesOpen.value = true
@@ -369,12 +393,36 @@ async function doReloadRules() {
           title="配置校验未通过——已维持原规则（故障安全，护栏不空窗）">
           <div v-for="(e, i) in rulesData.errors" :key="i" class="rules-err">· {{ e }}</div>
         </el-alert>
-        <el-table v-if="rulesData" :data="rulesData.rules" size="small" stripe height="calc(100vh - 180px)">
+
+        <!-- P2-4 筛选：分类（带计数）+ 风险 + 关键词搜索 -->
+        <div v-if="rulesData" class="rules-filter">
+          <el-radio-group v-model="ruleCat" size="small">
+            <el-radio-button value="all">全部 {{ catCounts.all }}</el-radio-button>
+            <el-radio-button v-for="c in CATS" :key="c" :value="c">
+              {{ catText[c] }} {{ catCounts[c] }}
+            </el-radio-button>
+          </el-radio-group>
+          <div class="rules-filter2">
+            <el-select v-model="ruleRisk" size="small" style="width:130px">
+              <el-option label="全部风险" value="all" />
+              <el-option label="critical" value="critical" />
+              <el-option label="high" value="high" />
+              <el-option label="medium" value="medium" />
+              <el-option label="low" value="low" />
+            </el-select>
+            <el-input
+              v-model="ruleSearch" size="small" clearable style="width:240px"
+              placeholder="搜索规则 ID 或说明" />
+            <span class="rules-hint">命中 {{ filteredRules.length }} 条</span>
+          </div>
+        </div>
+
+        <el-table v-if="rulesData" :data="filteredRules" size="small" stripe height="calc(100vh - 240px)">
           <el-table-column prop="id" label="ID" width="92" />
           <el-table-column label="分类" width="72">
             <template #default="{ row }">{{ catText[row.category] || row.category }}</template>
           </el-table-column>
-          <el-table-column label="风险" width="84">
+          <el-table-column label="风险" width="84" sortable :sort-by="row => ({critical:3,high:2,medium:1,low:0})[row.risk]">
             <template #default="{ row }">
               <el-tag size="small" :type="riskType[row.risk]">{{ row.risk }}</el-tag>
             </template>
@@ -385,6 +433,7 @@ async function doReloadRules() {
             </template>
           </el-table-column>
           <el-table-column prop="description" label="说明" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="pattern" label="匹配正则" min-width="200" show-overflow-tooltip />
         </el-table>
       </div>
     </el-drawer>
@@ -446,4 +495,6 @@ html, body, #app { height: 100%; margin: 0; }
 .rules-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
 .rules-hint { font-size: 12px; color: #909399; }
 .rules-err { font-size: 12px; line-height: 1.6; }
+.rules-filter { margin-bottom: 10px; }
+.rules-filter2 { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
 </style>

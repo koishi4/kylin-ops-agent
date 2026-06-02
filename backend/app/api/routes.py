@@ -51,7 +51,7 @@ async def list_tools(request: Request) -> dict:
 def _rules_payload() -> list[dict]:
     return [
         {"id": r.id, "category": r.category, "risk": r.risk.value,
-         "action": r.action.value, "description": r.description}
+         "action": r.action.value, "description": r.description, "pattern": r.pattern}
         for r in RULES
     ]
 
