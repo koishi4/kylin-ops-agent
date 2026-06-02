@@ -389,3 +389,20 @@
   - **样本即用例 + 报告同源**：样本是模块级常量、报告表格与之对应，改样本即改用例，杜绝「报告说的」与「代码做的」脱节（与 P1-4 演示素材、P1-2 性能报告同一套纪律）。
 - 指标：新增鲁棒性样本测试 25 条 + 报告文档；红队 100%/0%/100% 不变；全套 pytest **322 全绿**（297→322）。
 - 下一步（按 IMPROVEMENTS 顺序）：P2-5 LoongArch 适配预案文档（纯文档，不依赖虚机可先写）；之后 P2 全清，转 Week4 人工阻塞项。
+
+---
+
+### 2026-06-02 改进 P2-5：LoongArch + 麒麟 V11 部署适配预案（文档）
+- 背景：见 docs/IMPROVEMENTS.md。部署目标是麒麟高级服务器版 V11 + LoongArch（loongarch64，官方发放虚机）。
+  虚机排队要时间，但适配预案不依赖虚机即可先写好；提交物第6项要「安装包 + 部署文档」。
+- 做了什么：新增 `docs/deploy-loongarch.md`：
+  - 依赖盘点与难度分级表：纯 Python（直装）vs C 扩展（psutil）vs Rust 扩展（pydantic-core）vs 含编译 extras（uvicorn[standard]）vs 前端构建（不在设备上做）。
+  - 三套安装策略（按优先级）：A 优先麒麟官方源系统包（`--system-site-packages` venv 复用）；B 源码编译（gcc/python3-devel/rust 工具链）；C 降级替代（去掉 uvicorn[standard] 用 `--loop asyncio --http h11`、pyyaml 纯 Python 回退）。
+  - 完整部署步骤 + 国产化 LLM 运行时方案（ollama → llama.cpp 编译 GGUF → deepseek/mock 兜底）+ 风险回退一览表 + 到手逐项打勾的验证清单。
+- 设计决策与理由（课程报告/答辩素材）：
+  - **诚实标注「待虚机验证」**：没有 LoongArch 虚机，不臆断包可用性，而是给「先验证 X，不行则 Y」的预案 + 验证清单，虚机到手照做并回填实测——符合「适配预案落文档」的本意。
+  - **迁移成本聚焦点判断**：麒麟是标准 Linux，lsof/journalctl/ss/df 等 OS 原生工具无碍，成本几乎全在「loongarch64 无预编译 wheel 的扩展怎么装」，故文档围绕 psutil/pydantic-core 这两个真痛点展开。
+  - **mock 兜底 = 永远可演示**：明确写出即便本地大模型一时跑不起，`LLM_PROVIDER=mock` 保证护栏/根因/审计全链路真实可演——这正是当初设计三档 provider 的部署价值兑现。
+  - **前端不在设备构建**：x86 出 dist 拷过去托管，避免在 LoongArch 折腾 Node 工具链，省一个大坑。
+- 指标：纯文档项，无代码/测试变更；全套 pytest 仍 **322 全绿**。**至此 IMPROVEMENTS 的 P0(3) + P1(4) + P2(5) 共 12 项全部完成。**
+- 下一步：IMPROVEMENTS 清单已全清。转 Week4 人工阻塞项——申请麒麟 LoongArch 虚机（QQ 群 1092135086）、9 份软件杯文档、合工大课程报告（se-report-docx skill）、录 7 分钟演示视频。

@@ -137,7 +137,12 @@
   > 落地说明：`tests/test_nl_robustness.py`（25 条，样本抽为模块级常量）三组——A 危险意图换口语/方言/中英混杂/夹带命令仍必判黑（9/9）；B 良性只读不误报黑（0/6）且经 Orchestrator 完整流水线选对工具（6/6）；C 运维改动判灰（3/3）。`docs/nl-robustness.md` 出样本表 + 准确性指标。诚实边界写清：规则层保守兜底 + LLM 补泛化（呼应 P0-1），不夸大规则层语义能力。红队仍 100%/0%/100%，全套 **322 全绿**。
 - [x] **P2-4 前端「规则库可视化」页**（2026-06-02）：把 `/guardrail/rules` 做成分类筛选的表格页（现在只有接口），答辩展示 25 条规则一目了然。
   > 落地说明：在 P2-1 规则抽屉基础上加筛选层（Vue computed 纯前端过滤、零额外请求）：分类标签带实时计数（全部/删除/权限/磁盘/提权/配置/注入）、风险下拉、ID/说明关键词搜索 + 「命中 N 条」、风险列可排序、新增「匹配正则」列（后端 payload 增 pattern 字段）。看规则→改 YAML→热加载→再看，与 P2-1「重新加载」同处一个抽屉闭环。前端构建通过、后端 291 全绿（无回归）。
-- [ ] **P2-5 LoongArch 适配预案落文档**：把 psutil 等 C 扩展在 LoongArch 的编译/替代预案先写进 `docs/deploy-loongarch.md`（不依赖虚机也能先写），虚机到手照着做。
+- [x] **P2-5 LoongArch 适配预案落文档**（2026-06-02）：把 psutil 等 C 扩展在 LoongArch 的编译/替代预案先写进 `docs/deploy-loongarch.md`（不依赖虚机也能先写），虚机到手照着做。
+  > 落地说明：`docs/deploy-loongarch.md`——依赖难度分级（纯 Python / psutil C 扩展 / pydantic-core Rust 扩展 / uvicorn[standard] 含编译 extras / 前端不在设备构建）+ 三套安装策略（A 麒麟官方源系统包·`--system-site-packages` / B 源码编译·gcc+rust / C 降级替代·去 [standard] 用 `--loop asyncio --http h11`）+ 部署步骤 + 国产化 LLM 运行时（ollama→llama.cpp→deepseek/mock 兜底）+ 风险回退表 + 到手逐项验证清单。诚实标注「待虚机验证、不臆断包可用性」。
+
+---
+
+> **进度总结（2026-06-02）**：IMPROVEMENTS 全部 12 项（P0×3 + P1×4 + P2×5）已完成并各自提交、测试全绿（全套 322 passed，红队 100%/0%/100%）。剩余为 Week4 人工阻塞项（LoongArch 虚机申请、软件杯 9 份文档、合工大课程报告、演示视频）。
 
 ---
 
