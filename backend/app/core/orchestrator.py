@@ -21,7 +21,8 @@ from app.config import get_settings
 from app.guardrail.classifier import IntentClass, classify_intent
 from app.guardrail.context_sanitizer import sanitize_tool_result
 from app.guardrail.engine import scan_injection
-from app.llm.provider import LLMProvider
+from app.guardrail.risk_assessor import assess_risk
+from app.llm.provider import LLMProvider, MockProvider
 from app.mcp_server.client import MCPClient
 from app.mcp_server.tools import REGISTRY
 
@@ -80,6 +81,25 @@ class Orchestrator:
             trace.append(TraceStep("执行结果", {"blocked": True, "reason": reason}))
             return await self._finish(trace_id, user_input, answer, trace, [],
                                       blocked=True, intent=intent.intent.value)
+
+        # —— 防线1.5 双层意图研判：规则粗筛后叠加独立 LLM 语义研判，保守合并取更严 ——
+        # 只对「修改类（灰）」意图研判：只读查询无破坏性，跳过以省一次 LLM 往返。
+        # mock provider 无法做 JSON 研判 → 传 None 退回纯规则，保证 CI 不依赖网络。
+        if intent.intent is IntentClass.GRAY:
+            assessor_llm = None if isinstance(self.llm, MockProvider) else self.llm
+            assessment = await asyncio.to_thread(
+                assess_risk, user_input, llm=assessor_llm)
+            trace.append(TraceStep("安全校验", assessment.to_trace()))
+            if assessment.blocked:
+                answer = (
+                    "⚠️ 请求被安全护栏拦截（AI 语义研判）。\n"
+                    f"原因：{assessment.reason}\n"
+                    "若确属正常运维，请用更明确、可审计的表述重述，"
+                    "或通过「安全清理」按钮在二次确认下执行受控动作。")
+                trace.append(TraceStep("执行结果",
+                                       {"blocked": True, "reason": assessment.reason}))
+                return await self._finish(trace_id, user_input, answer, trace, [],
+                                          blocked=True, intent=intent.intent.value)
 
         tools = await self.mcp.openai_tools()
         trace.append(TraceStep("感知环境", {
