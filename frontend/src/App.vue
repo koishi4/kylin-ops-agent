@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { chat, getHealth, listTools, listTraces, getTrace, verifyTrace, diagnose, executeAction, getRules, reloadRules, getTrifecta } from './api.js'
+import { chat, getHealth, listTools, listTraces, getTrace, verifyTrace, diagnose, executeAction, getRules, reloadRules, getTrifecta, getToolScan } from './api.js'
 
 const provider = ref('-')
 const tools = ref([])
@@ -248,6 +248,25 @@ async function openTrifecta() {
     trifectaLoading.value = false
   }
 }
+
+// ---- P3-4 MCP 工具供应链扫描（投毒/影子/隐形载荷）----
+const scanning = ref(false)
+const scanData = ref(null)  // { ok, scanned, flagged, tools, note }
+async function runToolScan() {
+  scanning.value = true
+  try {
+    scanData.value = await getToolScan()
+    if (scanData.value.ok) {
+      ElMessage.success(`供应链扫描通过：${scanData.value.scanned} 个工具元数据无投毒/影子/隐形载荷`)
+    } else {
+      ElMessage.warning(`扫描命中 ${scanData.value.flagged} 个可疑工具，请查看详情`)
+    }
+  } catch (e) {
+    ElMessage.error('扫描失败：' + (e.message || e))
+  } finally {
+    scanning.value = false
+  }
+}
 </script>
 
 <template>
@@ -485,6 +504,26 @@ async function openTrifecta() {
           </el-tag>
           <span class="rules-hint">— 一条路径同时集齐三者才危险；至多两者即安全</span>
         </div>
+
+        <!-- P3-4 供应链扫描：检测工具元数据里的投毒/影子/隐形载荷 -->
+        <div class="tri-legend">
+          <el-button size="small" type="primary" plain :loading="scanning" @click="runToolScan">
+            🔬 工具投毒扫描
+          </el-button>
+          <el-tag v-if="scanData" size="small" :type="scanData.ok ? 'success' : 'danger'">
+            {{ scanData.ok
+                ? `✓ ${scanData.scanned} 工具均无投毒/影子/隐形载荷`
+                : `✗ 命中 ${scanData.flagged}/${scanData.scanned} 个可疑工具` }}
+          </el-tag>
+          <span class="rules-hint">本地静态扫描，不上传文件/凭据（致敬 mcp-scan）</span>
+        </div>
+        <el-alert
+          v-if="scanData && !scanData.ok" type="error" :closable="false" style="margin-bottom:10px"
+          title="检出可疑工具元数据">
+          <div v-for="t in scanData.tools.filter(x => x.suspicious)" :key="t.name" class="rules-err">
+            · {{ t.name }}（{{ t.max_severity }}）：{{ t.findings.map(f => f.code).join(', ') }}
+          </div>
+        </el-alert>
 
         <el-table v-if="trifectaData" :data="trifectaData.tools" size="small" stripe
                   height="calc(100vh - 230px)" :default-sort="{ prop: 'leg_count', order: 'descending' }">

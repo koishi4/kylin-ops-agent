@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.core import actions, diagnosis
 from app.guardrail.engine import check_command
 from app.guardrail.rules import RULES, load_status, reload_rules
+from app.guardrail.tool_scan import scan_tools
 from app.guardrail.trifecta import capability_table
 
 router = APIRouter()
@@ -88,6 +89,17 @@ async def guardrail_rules_reload() -> dict:
         "errors": st["errors"],
         "rules": _rules_payload(),
     }
+
+
+@router.get("/guardrail/tool-scan")
+async def guardrail_tool_scan(request: Request) -> dict:
+    """MCP 工具供应链扫描（P3-4）：静态检测工具元数据里的投毒/影子/隐形载荷。
+
+    本地分析 name/description/schema，绝不上传文件或凭据（致敬 mcp-scan）。
+    覆盖 2025 年 MCP 新攻击面：工具投毒（藏指令）、工具影子（跨工具篡改）、隐形 Unicode。
+    """
+    mcp = request.app.state.mcp
+    return scan_tools(await mcp.list_tools())
 
 
 @router.get("/guardrail/trifecta")

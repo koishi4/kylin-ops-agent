@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -14,8 +15,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
 from app.audit import store
 from app.core.orchestrator import Orchestrator
+from app.guardrail.tool_scan import scan_tools
 from app.llm.provider import get_llm
 from app.mcp_server.client import MCPClient
+
+logger = logging.getLogger("kylin-ops-agent")
 
 
 @asynccontextmanager
@@ -26,6 +30,22 @@ async def lifespan(app: FastAPI):
     await mcp.connect()
     app.state.mcp = mcp
     app.state.orchestrator = Orchestrator(llm=get_llm(), mcp=mcp)
+
+    # P3-4 供应链防线：连接后立即静态扫描工具元数据（投毒/影子/隐形载荷），命中则告警。
+    # 不信任工具元数据——与「不信任 LLM 输出 / 不信任外部数据」三位一体。
+    try:
+        report = scan_tools(await mcp.list_tools())
+        app.state.tool_scan = report
+        if report["flagged"]:
+            logger.warning("MCP 工具供应链扫描命中 %d/%d 个可疑工具：%s",
+                           report["flagged"], report["scanned"],
+                           [t["name"] for t in report["tools"] if t["suspicious"]])
+        else:
+            logger.info("MCP 工具供应链扫描通过：%d 个工具元数据均无投毒/影子/隐形载荷。",
+                        report["scanned"])
+    except Exception as e:  # 扫描是旁路，失败不阻断启动
+        logger.warning("MCP 工具供应链扫描失败（不阻断启动）：%s", e)
+
     try:
         yield
     finally:

@@ -68,3 +68,9 @@ export async function getTrifecta() {
   const { data } = await http.get('/guardrail/trifecta')
   return data // { legend, tools:[{name, level, untrusted, sensitive, state_change, leg_count, legs}], invariant }
 }
+
+// MCP 工具供应链扫描（P3-4）：静态检测工具元数据里的投毒/影子/隐形载荷（不上传文件/凭据）
+export async function getToolScan() {
+  const { data } = await http.get('/guardrail/tool-scan')
+  return data // { ok, scanned, flagged, tools:[{name, suspicious, max_severity, findings}], note }
+}
