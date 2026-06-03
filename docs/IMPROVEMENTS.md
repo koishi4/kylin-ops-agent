@@ -162,7 +162,12 @@
   > 落地说明：`guardrail/tool_scan.py`（复用 scan_injection + 七类专项启发式：隐藏指令标签/祈使越权/敏感凭据路径/外联/工具影子/不可见 Unicode/超长）；`scan_tools` 聚合；`GET /guardrail/tool-scan` + main.py 启动即扫描记日志 + 前端「🔬 工具投毒扫描」按钮。补上第三个「不信任」（工具元数据/供应链），与不信任 LLM 输出、不信任外部数据三位一体。测试 `tests/test_tool_scan.py`（12 条，含真实 15 工具全过自证清白），红队仍 100%/0%/100%，全套 **363 全绿**。
 - [x] **P3-5 加护栏 vs 不加护栏 量化 A/B 实验**（2026-06-03）：护栏抽象为可开关中间层，跑红队语料对比攻击成功率/完成率，出离线柱状对比。借鉴 InjecAgent/AgentDojo/RedCode 方法论适配运维语料。源 改进v2 推荐1（量化最值钱）。
   > 落地说明：`scripts/redteam_ab.py`（可开关中间层 + `compute_ab()` 纯函数算 ASR/拦截率/完成率 + ASCII 柱状图，无图形依赖）；生成 `docs/guardrail-ab.md`：49 攻击样本结论 **ASR 100%→0%（净降 100%）、正常完成率维持 100%（误杀 0）**，附文献量级对照。语料与红队同源、`compute_ab` 被 `tests/test_guardrail_ab.py`（4 条）固化。红队仍 100%/0%/100%，全套 **367 全绿**。
-- [ ] **P3-6 理论拔高文档**：把「双层意图研判 / 上下文沙盒 / 最小权限」重表述为 Plan-then-Execute + Dual-LLM + Context-Minimization（arXiv:2506.08837）组合，引言锚定 Meta Rule of Two + 致命三要素 + 「攻击者后动」(arXiv:2510)。源 改进v2 推荐2/3。
+- [x] **P3-6 理论拔高文档**（2026-06-03）：把模块重表述为 Plan-then-Execute + Dual-LLM + Context-Minimization 组合，引言锚定 Meta Rule of Two + 致命三要素 + 「攻击者后动」。源 改进v2 推荐2/3。
+  > 落地说明：`docs/theory-alignment.md`（九节）：问题陈述/答辩金句 + 六大设计模式映射（arXiv:2506.08837，命中 5/6）+ CaMeL 信息流（→P3-3）+ Rule of Two 面板（→P3-2）+ LLM-as-a-judge 保守合并 + MCP 供应链（→P3-4）+ 量化对标（→P3-5 + 文献数字）+ 模块→前沿总览对标表（每行附落点文件）+ 诚实边界。纯文档项，全套仍 **367 全绿**。
+
+---
+
+> **P3 进度总结（2026-06-03）**：docs/改进v2.md 的 P3 系列 6 项（P3-1 datamarking / P3-2 Rule of Two 面板 / P3-3 污点追踪 / P3-4 工具投毒扫描 / P3-5 A/B 量化 / P3-6 理论文档）已全部完成并各自提交。新增测试 45 条（322→367 全绿），红队 100%/0%/100% 全程不变，每项均更新 dev-log + 勾本框。加上原 IMPROVEMENTS 12 项（P0×3+P1×4+P2×5），累计 **18 项可落地改进全部完成**。剩余为 Week4 人工阻塞项（LoongArch 虚机、合工大课程报告、软件杯文档、演示视频）。
 
 ---
 
