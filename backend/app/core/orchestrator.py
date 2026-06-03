@@ -22,6 +22,7 @@ from app.guardrail.classifier import IntentClass, classify_intent
 from app.guardrail.context_sanitizer import DATA_MARKER, sanitize_tool_result
 from app.guardrail.engine import scan_injection
 from app.guardrail.risk_assessor import assess_risk
+from app.guardrail.trifecta import evaluate_path
 from app.llm.provider import LLMProvider, MockProvider
 from app.mcp_server.client import MCPClient
 from app.mcp_server.tools import REGISTRY
@@ -230,6 +231,13 @@ class Orchestrator:
                       trace: list[TraceStep], tool_calls: list[dict],
                       *, blocked: bool = False, intent: str = "") -> ChatResult:
         """收尾：把整条思维链落 SQLite（失败不影响主流程），返回结果。"""
+        # —— P3-2 致命三要素 / Rule of Two：对本轮实际执行路径做能力面足迹评估 ——
+        # 感知层工具全 READONLY（无『改状态/外联』腿），路径能力上限恒 ≤2，结构上满足 Rule of Two；
+        # 写进 trace 让回放可见这条安全结论（无工具调用的纯应答/被拦请求跳过，避免噪声）。
+        if tool_calls:
+            tri = evaluate_path([c["tool"] for c in tool_calls])
+            trace.append(TraceStep("安全校验", tri.to_trace()))
+
         steps = [{"stage": s.stage, "detail": s.detail} for s in trace]
         try:
             await asyncio.to_thread(

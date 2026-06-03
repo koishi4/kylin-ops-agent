@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.core import actions, diagnosis
 from app.guardrail.engine import check_command
 from app.guardrail.rules import RULES, load_status, reload_rules
+from app.guardrail.trifecta import capability_table
 
 router = APIRouter()
 
@@ -87,6 +88,16 @@ async def guardrail_rules_reload() -> dict:
         "errors": st["errors"],
         "rules": _rules_payload(),
     }
+
+
+@router.get("/guardrail/trifecta")
+async def guardrail_trifecta() -> dict:
+    """致命三要素 / Rule of Two 能力面板（P3-2）：每个工具/动作的三腿能力标签 + 结构性安全不变量。
+
+    评委可见：感知层 15 工具全 READONLY、能力上限 ≤2 腿（无『改状态/外联』），第三条腿仅存于
+    强制二次确认的动作层——任何可能集齐致命三要素的路径都必经人工闸门，Rule of Two 由架构强制。
+    """
+    return capability_table()
 
 
 @router.post("/guardrail/check")

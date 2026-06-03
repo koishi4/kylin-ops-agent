@@ -62,3 +62,9 @@ export async function reloadRules() {
   const { data } = await http.post('/guardrail/rules/reload')
   return data // { ok, source, count, applied, errors, rules }
 }
+
+// 致命三要素 / Rule of Two 能力面板（P3-2）：每个工具/动作的三腿能力标签 + 结构性安全不变量
+export async function getTrifecta() {
+  const { data } = await http.get('/guardrail/trifecta')
+  return data // { legend, tools:[{name, level, untrusted, sensitive, state_change, leg_count, legs}], invariant }
+}

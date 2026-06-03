@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { chat, getHealth, listTools, listTraces, getTrace, verifyTrace, diagnose, executeAction, getRules, reloadRules } from './api.js'
+import { chat, getHealth, listTools, listTraces, getTrace, verifyTrace, diagnose, executeAction, getRules, reloadRules, getTrifecta } from './api.js'
 
 const provider = ref('-')
 const tools = ref([])
@@ -230,6 +230,24 @@ async function doReloadRules() {
     rulesReloading.value = false
   }
 }
+
+// ---- P3-2 致命三要素 / Rule of Two 能力面板 ----
+const trifectaOpen = ref(false)
+const trifectaLoading = ref(false)
+const trifectaData = ref(null)  // { legend, tools, invariant }
+const levelType = { READONLY: 'success', MUTATING: 'warning', UNKNOWN: 'info' }
+// 三腿配色：腿越多越醒目（红 > 橙 > 蓝），呼应「能力越集中越危险」
+const legCountType = { 0: 'info', 1: '', 2: 'warning', 3: 'danger' }
+
+async function openTrifecta() {
+  trifectaOpen.value = true
+  trifectaLoading.value = true
+  try {
+    trifectaData.value = await getTrifecta()
+  } finally {
+    trifectaLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -242,6 +260,7 @@ async function doReloadRules() {
         <el-button size="small" @click="runDiagnose">🩺 一键体检</el-button>
         <el-button size="small" @click="openReplay">🔍 思维链回放</el-button>
         <el-button size="small" @click="openRules">🛡️ 规则库</el-button>
+        <el-button size="small" @click="openTrifecta">⚖️ 能力面板</el-button>
       </div>
     </el-header>
 
@@ -437,6 +456,64 @@ async function doReloadRules() {
         </el-table>
       </div>
     </el-drawer>
+
+    <!-- P3-2 致命三要素 / Rule of Two 能力面板：每个工具的三腿能力 + 结构性安全不变量 -->
+    <el-drawer v-model="trifectaOpen" title="⚖️ 致命三要素 / Rule of Two 能力面板" size="62%" direction="rtl">
+      <div v-loading="trifectaLoading">
+        <el-alert
+          v-if="trifectaData" type="success" :closable="false" show-icon
+          style="margin-bottom:12px"
+          title="结构性安全不变量：感知层永不集齐致命三要素">
+          <div class="tri-note">{{ trifectaData.invariant.note }}</div>
+          <div class="tri-note">
+            只读工具能力腿上限：<b>{{ trifectaData.invariant.readonly_max_legs }}/3</b>；
+            含「改状态/外联」腿的只读工具：
+            <b>{{ trifectaData.invariant.readonly_has_state_change ? '有（异常！）' : '无' }}</b>。
+          </div>
+        </el-alert>
+
+        <div v-if="trifectaData" class="tri-legend">
+          <span class="rules-hint">致命三要素（Lethal Trifecta · Meta Rule of Two）：</span>
+          <el-tag v-for="l in trifectaData.legend" :key="l.key" size="small" effect="plain">
+            {{ l.label }}
+          </el-tag>
+          <span class="rules-hint">— 一条路径同时集齐三者才危险；至多两者即安全</span>
+        </div>
+
+        <el-table v-if="trifectaData" :data="trifectaData.tools" size="small" stripe
+                  height="calc(100vh - 230px)" :default-sort="{ prop: 'leg_count', order: 'descending' }">
+          <el-table-column prop="name" label="工具 / 动作" min-width="160" show-overflow-tooltip />
+          <el-table-column label="级别" width="104">
+            <template #default="{ row }">
+              <el-tag size="small" :type="levelType[row.level]">{{ row.level }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="接触不可信内容" width="120" align="center">
+            <template #default="{ row }">
+              <el-tag v-if="row.untrusted" size="small" type="danger" effect="plain">A ✓</el-tag>
+              <span v-else class="tri-dash">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="访问敏感数据" width="112" align="center">
+            <template #default="{ row }">
+              <el-tag v-if="row.sensitive" size="small" type="warning" effect="plain">B ✓</el-tag>
+              <span v-else class="tri-dash">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="改状态/外联" width="108" align="center">
+            <template #default="{ row }">
+              <el-tag v-if="row.state_change" size="small" type="danger">C ✓</el-tag>
+              <span v-else class="tri-dash">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="leg_count" label="能力腿" width="92" align="center" sortable>
+            <template #default="{ row }">
+              <el-tag size="small" :type="legCountType[row.leg_count]">{{ row.leg_count }}/3</el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </el-drawer>
   </el-container>
 </template>
 
@@ -497,4 +574,9 @@ html, body, #app { height: 100%; margin: 0; }
 .rules-err { font-size: 12px; line-height: 1.6; }
 .rules-filter { margin-bottom: 10px; }
 .rules-filter2 { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+
+/* 能力面板（致命三要素 / Rule of Two）抽屉 */
+.tri-note { font-size: 12px; line-height: 1.7; }
+.tri-legend { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.tri-dash { color: #c0c4cc; }
 </style>
