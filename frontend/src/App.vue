@@ -320,6 +320,8 @@ async function openTrifecta() {
             <div class="ti-head">
               <el-tag size="small" :type="intentTag[t.intent] || 'info'">{{ t.intent || '-' }}</el-tag>
               <el-tag v-if="t.blocked" size="small" type="danger">拦截</el-tag>
+              <el-tag v-if="t.tainted" size="small" type="warning" effect="plain"
+                      title="本路径摄入过外部不可信数据（仅只读分析，未驱动任何变更）">☣ 污点</el-tag>
               <span class="ti-time">{{ fmtTime(t.created_at) }}</span>
             </div>
             <div class="ti-input">{{ t.user_input }}</div>
@@ -331,6 +333,10 @@ async function openTrifecta() {
             <div class="td-meta">
               <b>trace_id：</b><code>{{ activeTrace.trace_id }}</code>
               <el-tag size="small" type="info" style="margin-left:8px">{{ activeTrace.llm_provider }}</el-tag>
+              <el-tag size="small" :type="activeTrace.tainted ? 'warning' : 'success'" effect="plain"
+                      style="margin-left:8px">
+                {{ activeTrace.tainted ? '☣ 污点路径（仅只读）' : '✓ 无污点' }}
+              </el-tag>
               <el-button size="small" :loading="verifying" style="margin-left:8px" @click="doVerify">🔒 校验完整性</el-button>
               <el-tag
                 v-if="verifyResult"

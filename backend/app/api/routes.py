@@ -117,6 +117,7 @@ async def chat(req: ChatRequest, request: Request) -> dict:
         "answer": result.answer,
         "blocked": result.blocked,
         "intent": result.intent,
+        "tainted": result.tainted,
         "trace": [asdict(s) for s in result.trace],
         "tool_calls": result.tool_calls,
     }
@@ -171,6 +172,9 @@ async def action_execute(req: ActionRequest) -> dict:
             result.get("trace", []),
             intent="action",
             blocked=bool(result.get("blocked")),
+            # P3-3：动作层不把外部不可信内容喂进任何决策/指令流（进程元数据仅用于确定性
+            # 关键性校验，不驱动模型），故状态变更动作恒非污点——与编排路径恰成信息流分离。
+            tainted=False,
             llm_provider=get_settings().llm_provider,
         )
     except Exception:  # noqa: BLE001 审计是旁路，绝不因落库失败中断动作

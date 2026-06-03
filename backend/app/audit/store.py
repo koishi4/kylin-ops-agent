@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     answer      TEXT,
     intent      TEXT,          -- 防线1 意图分类结果：white/gray/black
     blocked     INTEGER NOT NULL DEFAULT 0,  -- 是否被护栏拦下（1/0）
+    tainted     INTEGER NOT NULL DEFAULT 0,  -- 污点追踪：本路径是否摄入过不可信数据（CaMeL 轻量版）
     llm_provider TEXT,
     head_hash   TEXT           -- 整条链的封口哈希（最后一条 step 的 hash）
 );
@@ -58,6 +59,7 @@ CREATE INDEX IF NOT EXISTS idx_steps_trace ON steps(trace_id, seq);
 # 旧库平滑升级：给已存在的表补哈希链字段（列已存在则忽略）
 _MIGRATIONS = [
     "ALTER TABLE sessions ADD COLUMN head_hash TEXT",
+    "ALTER TABLE sessions ADD COLUMN tainted INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE steps ADD COLUMN prev_hash TEXT",
     "ALTER TABLE steps ADD COLUMN step_hash TEXT",
 ]
@@ -125,6 +127,7 @@ def save_trace(
     *,
     intent: str | None = None,
     blocked: bool = False,
+    tainted: bool = False,
     llm_provider: str | None = None,
 ) -> None:
     """落一整条会话思维链。steps 每项形如 {"stage": str, "detail": Any}。
@@ -147,10 +150,11 @@ def save_trace(
     with _connect() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO sessions "
-            "(trace_id, created_at, user_input, answer, intent, blocked, llm_provider, head_hash) "
-            "VALUES (?,?,?,?,?,?,?,?)",
+            "(trace_id, created_at, user_input, answer, intent, blocked, tainted, "
+            "llm_provider, head_hash) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
             (trace_id, now, user_input, answer, intent, 1 if blocked else 0,
-             llm_provider, head_hash),
+             1 if tainted else 0, llm_provider, head_hash),
         )
         # 重存同一 trace 时先清旧段，避免重复
         conn.execute("DELETE FROM steps WHERE trace_id = ?", (trace_id,))
@@ -165,8 +169,8 @@ def list_traces(limit: int = 50) -> list[dict[str, Any]]:
     """列出最近会话（不含完整 steps），供前端历史列表。"""
     with _connect() as conn:
         cur = conn.execute(
-            "SELECT trace_id, created_at, user_input, answer, intent, blocked, llm_provider "
-            "FROM sessions ORDER BY created_at DESC LIMIT ?",
+            "SELECT trace_id, created_at, user_input, answer, intent, blocked, tainted, "
+            "llm_provider FROM sessions ORDER BY created_at DESC LIMIT ?",
             (limit,),
         )
         return [_session_row(r) for r in cur.fetchall()]
@@ -176,7 +180,7 @@ def get_trace(trace_id: str) -> dict[str, Any] | None:
     """取一条会话的完整思维链（含五段 steps），供前端回放。"""
     with _connect() as conn:
         s = conn.execute(
-            "SELECT trace_id, created_at, user_input, answer, intent, blocked, "
+            "SELECT trace_id, created_at, user_input, answer, intent, blocked, tainted, "
             "llm_provider, head_hash FROM sessions WHERE trace_id = ?",
             (trace_id,),
         ).fetchone()
@@ -252,6 +256,7 @@ def _session_row(r: sqlite3.Row) -> dict[str, Any]:
         "answer": r["answer"],
         "intent": r["intent"],
         "blocked": bool(r["blocked"]),
+        "tainted": bool(r["tainted"]) if "tainted" in r.keys() else False,
         "llm_provider": r["llm_provider"],
     }
 

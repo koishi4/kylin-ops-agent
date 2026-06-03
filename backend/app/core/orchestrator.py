@@ -22,7 +22,7 @@ from app.guardrail.classifier import IntentClass, classify_intent
 from app.guardrail.context_sanitizer import DATA_MARKER, sanitize_tool_result
 from app.guardrail.engine import scan_injection
 from app.guardrail.risk_assessor import assess_risk
-from app.guardrail.trifecta import evaluate_path
+from app.guardrail.trifecta import caps_for, evaluate_path
 from app.llm.provider import LLMProvider, MockProvider
 from app.mcp_server.client import MCPClient
 from app.mcp_server.tools import REGISTRY
@@ -57,6 +57,7 @@ class ChatResult:
     trace_id: str = ""
     blocked: bool = False  # 是否被护栏在编排层拦下
     intent: str = ""       # 防线1 意图分类结果
+    tainted: bool = False  # P3-3 污点追踪：本路径是否摄入过不可信数据
 
 
 class Orchestrator:
@@ -118,6 +119,7 @@ class Orchestrator:
         tool_calls_log: list[dict] = []
         available_names = {t["function"]["name"] for t in tools}
         tool_failures = 0  # P2-2：累计工具调用失败次数，用于自愈重试预算
+        tainted = False    # P3-3 污点追踪：一旦摄入不可信数据即置位，落审计可证「危险动作未在污点下放行」
 
         for _ in range(MAX_ROUNDS):
             msg = await self.llm.achat(messages, tools)
@@ -128,7 +130,8 @@ class Orchestrator:
                 trace.append(TraceStep("推理决策", "直接作答，无需调用工具"))
                 trace.append(TraceStep("执行结果", answer))
                 return await self._finish(trace_id, user_input, answer, trace,
-                                          tool_calls_log, intent=intent.intent.value)
+                                          tool_calls_log, intent=intent.intent.value,
+                                          tainted=tainted)
 
             # 模型决定调用工具
             messages.append(_assistant_msg_for_history(msg, calls))
@@ -198,10 +201,16 @@ class Orchestrator:
 
                 trace.append(TraceStep("执行结果", {"tool": name, "result": result}))
 
+                # —— P3-3 污点追踪：摄入「接触不可信内容」的工具结果即把本路径标记为污点 ——
+                # （CaMeL 信息流控制轻量版：data provenance。注入命中是更强信号，一并置位。）
+                if caps_for(name).untrusted:
+                    tainted = True
+
                 # —— 防线3 强化：工具返回视为外部不可信数据，沙盒化隔离后再喂回 LLM ——
                 # 检测注入只「标红降权」不拒绝（外部数据带可疑内容很常见，要的是不被它驱动）。
                 san = sanitize_tool_result(name, result)
                 if san.injection_detected:
+                    tainted = True
                     trace.append(TraceStep("安全校验", san.to_trace(name)))
 
                 messages.append({
@@ -218,18 +227,21 @@ class Orchestrator:
                                        {"reason": "工具调用自愈超出重试预算",
                                         "tool_failures": tool_failures}))
                 return await self._finish(trace_id, user_input, answer, trace,
-                                          tool_calls_log, intent=intent.intent.value)
+                                          tool_calls_log, intent=intent.intent.value,
+                                          tainted=tainted)
             # 带着工具结果（或结构化错误）再问一轮，让模型总结或换策略重试
 
         # 轮次用尽仍未给出最终答复
         trace.append(TraceStep("执行结果", "达到最大工具调用轮次，未能收敛"))
         return await self._finish(trace_id, user_input,
                                   "处理超出最大轮次，请简化需求后重试。",
-                                  trace, tool_calls_log, intent=intent.intent.value)
+                                  trace, tool_calls_log, intent=intent.intent.value,
+                                  tainted=tainted)
 
     async def _finish(self, trace_id: str, user_input: str, answer: str,
                       trace: list[TraceStep], tool_calls: list[dict],
-                      *, blocked: bool = False, intent: str = "") -> ChatResult:
+                      *, blocked: bool = False, intent: str = "",
+                      tainted: bool = False) -> ChatResult:
         """收尾：把整条思维链落 SQLite（失败不影响主流程），返回结果。"""
         # —— P3-2 致命三要素 / Rule of Two：对本轮实际执行路径做能力面足迹评估 ——
         # 感知层工具全 READONLY（无『改状态/外联』腿），路径能力上限恒 ≤2，结构上满足 Rule of Two；
@@ -237,18 +249,30 @@ class Orchestrator:
         if tool_calls:
             tri = evaluate_path([c["tool"] for c in tool_calls])
             trace.append(TraceStep("安全校验", tri.to_trace()))
+            # —— P3-3 污点追踪：记录本路径污点状态 + 可证明的信息流不变量 ——
+            # 编排路径工具全 READONLY（无状态变更腿），故「污点 ∧ 改状态」恒不成立——
+            # 即危险动作绝不可能在污点状态下经本路径放行（CaMeL 信息流分离的轻量证明）。
+            trace.append(TraceStep("安全校验", {
+                "phase": "污点追踪（taint / 信息流控制）",
+                "tainted": tainted,
+                "state_change_in_path": tri.trifecta_complete or "state_change" in tri.legs,
+                "invariant": "本路径无状态变更能力（全 READONLY），危险动作不可能在污点下放行",
+                "reason": ("已摄入外部不可信数据，路径被标记为污点（仅作只读分析，不驱动任何变更）"
+                           if tainted else "未摄入不可信数据，路径无污点"),
+            }))
 
         steps = [{"stage": s.stage, "detail": s.detail} for s in trace]
         try:
             await asyncio.to_thread(
                 store.save_trace, trace_id, user_input, answer, steps,
-                intent=intent, blocked=blocked,
+                intent=intent, blocked=blocked, tainted=tainted,
                 llm_provider=get_settings().llm_provider,
             )
         except Exception as e:  # 审计落库失败不能阻断对话主流程，仅记录
             trace.append(TraceStep("执行结果", {"audit_warning": f"思维链落库失败：{e}"}))
         return ChatResult(answer=answer, trace=trace, tool_calls=tool_calls,
-                          trace_id=trace_id, blocked=blocked, intent=intent)
+                          trace_id=trace_id, blocked=blocked, intent=intent,
+                          tainted=tainted)
 
 
 def _tool_error(name: str, reason: str, hint: str) -> dict:

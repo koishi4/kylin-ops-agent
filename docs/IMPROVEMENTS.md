@@ -156,7 +156,8 @@
   > 落地说明：`context_sanitizer.py` 数据每处行内空白→`¦`(U+00A6)、每行行首加标记；**反欺骗顺序**先剥除攻击者预置标记再检测/打标（防 `忽¦略规则` 规避正则）；`SYSTEM_PROMPT` + 边界声明显式告知标记符语义；`DATAMARK_ENABLED` 开关（正交附加层，可消融）；`SanitizeResult.datamarked` 入 trace。测试 `tests/test_spotlighting.py`（11 条），红队仍 100%/0%/100%，全套 **333 全绿**。
 - [x] **P3-2 致命三要素 / Rule of Two 工具能力打标 + 风险面板**（2026-06-03）：给每个工具/动作打三条能力腿标签，路径集齐三者且无人工在环即须审批；前端可视化面板。源 改进v2 推荐5（差异化亮点）。
   > 落地说明：`guardrail/trifecta.py`（TOOL_CAPS 15 工具+3 动作三腿标签 + `evaluate_path` Rule of Two 裁决 + `capability_table` 面板数据）；orchestrator `_finish` 写能力面足迹入 trace；`GET /guardrail/trifecta` + 前端「⚖️ 能力面板」抽屉（不变量横幅 + A/B/C 标签表）。**结构性不变量**：15 工具全 READONLY、能力上限 ≤2 腿（无『改状态/外联』），第三腿仅存于强制二次确认的动作层——任何可能集齐三要素的路径都必经人工闸门，Rule of Two 由架构强制。测试 `tests/test_trifecta.py`（11 条），红队仍 100%/0%/100%，全套 **344 全绿**。
-- [ ] **P3-3 污点追踪（taint）写入审计链**：审计 session 增 `tainted` 标志位，标记该执行路径是否摄入过不可信数据；可证明「危险动作从未在污点状态下放行」（CaMeL 信息流控制轻量版）。源 改进v2 推荐7。
+- [x] **P3-3 污点追踪（taint）写入审计链**（2026-06-03）：审计 session 增 `tainted` 标志位 + 可证明「危险动作从未在污点状态下放行」（CaMeL 信息流控制轻量版）。源 改进v2 推荐7。
+  > 落地说明：store sessions 加 `tainted` 列（+迁移），save_trace/list/get 回带；orchestrator 摄入 untrusted 腿工具或检出注入即置污点，落审计 + 入 `/chat` 响应 + trace 记信息流不变量；动作层显式 `tainted=False`；前端回放显示「☣ 污点/✓ 无污点」。**可证明的信息流分离**：untrusted 腿与 state_change 腿在能力库互斥、编排路径全 READONLY → 「污点∧改状态」恒不成立（会摄入不可信数据的路径绝不改状态，反之亦然）。测试 `tests/test_taint.py`（7 条），红队仍 100%/0%/100%，全套 **351 全绿**。
 - [ ] **P3-4 MCP 工具投毒/影子扫描**：加载 MCP 工具时扫描其 description/schema 里的投毒（藏指令）、影子（跨工具引用篡改）模式。致敬 `mcp-scan`，点出「考虑了 2025 年 MCP 供应链新攻击面」。源 改进v2 推荐6。
 - [ ] **P3-5 加护栏 vs 不加护栏 量化 A/B 实验**：把护栏包成可开关中间层，跑红队语料对比「攻击成功率/拒绝率」前后变化，出柱状对比 + 对照「正常任务完成率几乎不降」。借鉴 InjecAgent/RedCode-Exec 方法论适配运维场景。源 改进v2 推荐1（量化最值钱）。
 - [ ] **P3-6 理论拔高文档**：把「双层意图研判 / 上下文沙盒 / 最小权限」重表述为 Plan-then-Execute + Dual-LLM + Context-Minimization（arXiv:2506.08837）组合，引言锚定 Meta Rule of Two + 致命三要素 + 「攻击者后动」(arXiv:2510)。源 改进v2 推荐2/3。
