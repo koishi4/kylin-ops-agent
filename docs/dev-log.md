@@ -533,3 +533,28 @@
   测试 `tests/test_tool_scan.py`（12 条：干净零误报 + 真实 15 工具全过 + 七类特征各检出 + schema 也扫 + 聚合统计）；
   前端 build 通过；红队 100%/0%/100% 不变；全套 pytest **363 全绿**（351→363）。
 - 下一步（按 docs/改进v2.md）：P3-5 加护栏 vs 不加护栏 量化 A/B 实验（量化最值钱）；P3-6 理论拔高文档。
+
+---
+
+### 2026-06-03 改进 P3-5：加护栏 vs 不加护栏 量化 A/B 实验
+- 背景：见 docs/改进v2.md §推荐1（「量化最值钱」「评委最看重用数据证明创新有效」）。前面 P0~P3-4 都在
+  「做能力」，这一项专门「用数据证明能力有效」——把护栏抽象成可开关中间层，跑红队语料对比「加护栏 vs 不加护栏」
+  的攻击成功率与正常完成率，对标 InjecAgent/AgentDojo/RedCode-Exec 的「有防御 vs 无防御」方法论。
+- 做了什么：
+  - 新增 `scripts/redteam_ab.py`：护栏可开关中间层（OFF 旁路放行=无确定性护栏基线；ON 走防线2 规则库+realpath、
+    防线3 注入扫描）；`compute_ab()` 纯函数算两档指标（攻击成功率 ASR / 危险拦截率 / 注入识别率 / 正常完成率）；
+    `build_markdown()` 渲染对比表 + **离线 ASCII 柱状图**（无图形依赖，LoongArch/断网也能进报告）。
+  - 生成 `docs/guardrail-ab.md`：49 攻击样本（41 危险 + 8 注入）+ 18 正常。结论：**ASR 100%→0%（净降 100%），
+    正常完成率维持 100%（误杀 0）**。附与文献量级对照（AgentDojo tool-filter→7.5%、Spotlighting >50%→<2%）。
+- 设计决策与理由（课程报告/答辩素材）：
+  - **量化护栏净贡献**：OFF 基线 ASR=100% 是「无护栏只有 LLM」的真实写照——正说明确定性护栏的价值不是锦上添花
+    而是从 100% 到 0% 的质变。这张「ASR 柱状对比图」是答辩最有冲击力的一页。
+  - **样本即用例、报告同源**：A/B 语料与 `tests/test_guardrail_redteam.py` 同源，`compute_ab()` 被 `test_guardrail_ab.py`
+    断言固化（OFF=100%/ON=0%/完成率不降），杜绝「报告说的≠代码做的」（与 P1-2 性能报告、P2-3 鲁棒性同一纪律）。
+  - **离线 ASCII 图**：刻意不用 matplotlib——既省 LoongArch 上图形栈适配，又保证断网答辩能现场重跑出图。
+  - **诚实定位**：方法论明确写「借鉴范式 + 适配运维语料，非跑原版基准满分」；结论强调「确定性规则掌握最终放行权
+    （不会被自适应攻击翻案）」+「护栏非银弹，纵深防御」（呼应改进v2 Caveats）。
+- 指标：新增 `scripts/redteam_ab.py` + `docs/guardrail-ab.md`；测试 `tests/test_guardrail_ab.py`（4 条）；
+  红队 100%/0%/100% 不变；全套 pytest **367 全绿**（363→367）。
+- 下一步（按 docs/改进v2.md）：P3-6 理论拔高文档（Plan-then-Execute + Dual-LLM + Context-Minimization 重述 +
+  Meta Rule of Two / 致命三要素 / 攻击者后动 作为引言锚点）——P3 收尾。
