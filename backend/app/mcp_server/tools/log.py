@@ -6,6 +6,8 @@ from __future__ import annotations
 import os
 import re
 
+from app.core.pathutil import path_under_any_root
+
 from ._shell import run_cmd
 
 # 审查整改⑤：tail_log 是「日志读取」工具，不是「任意文件读取」工具。
@@ -33,9 +35,10 @@ def tail_log(path: str, lines: int = 50) -> dict:
         含 lines 列表的字典；越权路径/敏感文件/文件不存在时优雅返回错误
     """
     lines = max(1, min(lines, 1000))
-    # 路径管控按软链解析后的真实路径判定，杜绝软链跳出允许根或绕过 denylist
+    # 路径管控按软链解析后的真实路径判定，杜绝软链跳出允许根或绕过 denylist。
+    # 用 commonpath 分量包含（path_under_any_root）替代 startswith：/var/log2 不再误判为 /var/log（P0-1）。
     real = os.path.realpath(path)
-    if not real.startswith(_ALLOWED_LOG_ROOTS):
+    if not path_under_any_root(path, _ALLOWED_LOG_ROOTS):
         return {"ok": False, "level": "READONLY",
                 "error": f"拒绝读取：{path} 不在允许的日志目录"
                          f"（{', '.join(_ALLOWED_LOG_ROOTS)}）内，越权读取已被拦截。"}
@@ -70,13 +73,24 @@ def query_journal(unit: str | None = None, since: str | None = None,
 
     Args:
         unit: 服务单元名，如 "sshd"、"nginx.service"
-        since: 起始时间，如 "1 hour ago"、"2026-06-01"
-        priority: 优先级过滤，如 "err"、"warning"
-        lines: 返回最多行数，默认 100，上限 1000
+        since: 起始时间，白名单格式：today/yesterday、-1h/-30m/-7d、或 "2026-06-01"
+        priority: 优先级过滤，0–7 或 syslog 级别名（如 "err"、"warning"）
+        lines: 返回最多行数，默认 100，上限 200
     Returns:
-        含日志文本的字典
+        含日志文本的字典；非法 unit/priority/since 直接结构化报错（P0-3 参数校验）
     """
-    lines = max(1, min(lines, 1000))
+    from ._validate import valid_priority, valid_since, valid_unit
+    # P0-3：白名单式入参校验。非法值不透传给 journalctl，杜绝参数注入与开销失控。
+    lines = max(1, min(lines, 200))   # journalctl 行数上限收紧到 200
+    if unit and not valid_unit(unit):
+        return {"ok": False, "level": "READONLY",
+                "error": f"非法 unit: {unit!r}（仅允许字母数字与 . _ @ : -，可选 .service 后缀）"}
+    if priority and not valid_priority(priority):
+        return {"ok": False, "level": "READONLY",
+                "error": f"非法 priority: {priority!r}（仅允许 0–7 或 syslog 级别名）"}
+    if since and not valid_since(since):
+        return {"ok": False, "level": "READONLY",
+                "error": f"非法 since: {since!r}（仅允许 today/yesterday、-1h/-30m/-7d 或 YYYY-MM-DD）"}
     args = ["journalctl", "--no-pager", "-n", str(lines)]
     if unit:
         args += ["-u", unit]

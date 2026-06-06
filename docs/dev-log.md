@@ -720,3 +720,43 @@
 - 指标：后端新增 4 条测试（动作 output 带沙箱字段 1 条 + sandbox-demo 端点 3 条），全套 pytest
   **475 → 479 全绿**；前端 `npm run build` 通过。红队/AB 指标不变（未碰护栏裁决逻辑）。
 - 下一步：纯前端联调留待 Week4 在虚机上 `npm run dev` + 后端连跑做端到端走查；P4 系列前端接入收口。
+
+### P0：外部代码审查 P0 必修加固（IMPROVEMENTS-v3，提交可信度命门）
+- 背景：整合一轮外部代码审查（GPT Pro）指出的 5 个 P0 安全/工程 bug，经核实在当时版本仍存在。
+  对一个主打安全的作品，这些是可信度命门，先于创新功能修。纪律不变：保守合并、只演示被拦、mock 可跑。
+- 做了什么：
+  - **P0-1 路径前缀判断 bug → commonpath 统一收口（最重要的一条）**：原 `diagnosis._is_critical/_is_cleanable`
+    与 `log.tail_log` 白名单用 `str.startswith(tuple)` 判路径包含——`"/var/log2".startswith("/var/log")` 为真，
+    `/tmpx`、`/var/lib/mysqlx` 同理被误判为受保护/可清理目录的子路径，安全判定可被「兄弟目录」绕过。
+    新增 `core/pathutil.py`：`is_path_within`（不解析软链、按 `os.path.commonpath` 分量包含）+
+    `path_under_any_root`（先 realpath 解析软链再判包含，用于白名单兼堵软链逃逸）。替换上述三处判断。
+    注：`guardrail/rules.py` 的 `_is_under_critical` 早已用 `resolved == cp or startswith(cp + "/")` 正确形式，无需改。
+  - **P0-2 root/容器环境测试稳定性**：`test_kill_child_process_executes` 的 `authorized` 改按运行身份取
+    （`os.geteuid()==0`），root 下子进程归 root 也能放行；沙箱内存限额测试归因放宽到 `{memory, cpu, killed}`
+    （容器里可能 cgroup OOM 被 SIGKILL 或先撞别的限额），断言改为「未逃逸 + 归因属集合之一」。
+  - **P0-3 只读工具资源硬上限 + 参数校验**：新增 `mcp_server/tools/_validate.py`——`find_large_files/dir_size`
+    的 `max_scan` 夹断到硬上限并在 `truncated` 时回报 `reason`；`/proc /sys /dev /run` 伪文件系统默认拒扫；
+    `service_status`/`query_journal` 的 unit 名按 `^[A-Za-z0-9_.@:-]+(\.service)?$` 校验、priority 限 0–7 或级别名、
+    since 限 `today/-1h/-30m/YYYY-MM-DD` 等白名单、journalctl 行数收紧到 ≤200。非法值结构化报错、不透传子进程。
+  - **P0-4 /action/execute 最小 token 鉴权（最小版，刻意不做 RBAC）**：唯一会改系统状态的端点挂
+    `require_operator` 依赖，配了 `OPERATOR_TOKEN` 时须带 `Authorization: Bearer <token>`（`secrets.compare_digest`
+    常量时间比较），未配则演示模式放行（配合默认只监听 127.0.0.1）。`.env.example` 增 `OPERATOR_TOKEN/API_BIND_HOST`，
+    `python -m app.main` 遵循 `API_BIND_HOST`；前端 axios 拦截器按 `VITE_OPERATOR_TOKEN` 注入 header。
+  - **P0-5 一键可复现 + 杂项修正**：新增 `scripts/ci_check.sh`（建 venv→装依赖→`LLM_PROVIDER=mock` 跑 pytest→前端
+    `npm ci && npm run build`）；`pip freeze` 生成 `backend/requirements.lock`（Py3.11）；`routes.ActionRequest.params`
+    可变默认 `{}` → `Field(default_factory=dict)`；`/diagnose` 用 `asyncio.to_thread` 包同步扫描，避免阻塞事件循环。
+- 设计决策与理由（报告素材）：
+  - **为何路径判断必须用 commonpath 而非 startswith**：字符串前缀 ≠ 目录包含。安全白/黑名单一旦用 startswith，
+    `兄弟目录` 即可零成本绕过。commonpath 按路径分量比较，是唯一正确的「在某目录之下」判定，且对软链有两种
+    明确语义（字面 / 解析后）供调用方按场景选——这是把一类隐蔽绕过从根上堵死，而非补丁式打地鼠。
+  - **鉴权刻意止于本机 token**：竞赛虚机不需要也跑不动账号体系/OIDC/RBAC（见反 bloat 清单）。默认只监听
+    回环 + 单 token + 演示模式放行，是「够用、可演、可信」的最小集；README 注明生产须配强 token。
+  - **只读 ≠ 无害**：超大目录扫描是事实上的 DoS、非法参数透传扩大注入面。把上限与白名单校验收口到一个
+    `_validate` 模块，复用、可测、好审计。
+- 指标：新增测试 `test_tool_limits.py`(P0-3)、`test_auth.py`(P0-4) 及 `test_path_hardening.py` 反例(P0-1)，
+  全套 pytest **479 → 518 全绿**（`LLM_PROVIDER=mock`，Python 3.11 + 非 root）。说明：root/容器环境曾有两处
+  环境差异（kill 授权、内存限额归因），已用兼容性断言覆盖，故「全绿」结论在两类环境下均成立。
+  红队/AB 指标不变（未碰护栏裁决逻辑）。
+- 暂缓项（诚实标注）：P0-6「提交包健壮性」中『把既有中文文档批量改英文名』churn 大、易断引用且属课程报告中文交付物，
+  暂缓批量重命名；新建文档一律英文名（security-design.md 等），并将「打包用 `python -m zipfile -e`」写入 README。
+

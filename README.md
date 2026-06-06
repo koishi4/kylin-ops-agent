@@ -39,10 +39,27 @@ npm run dev                   # http://localhost:5173 ，/api 已代理到后端
 ### 测试
 ```bash
 cd backend && source .venv/bin/activate
-LLM_PROVIDER=mock python -m pytest -v   # 11 条全绿（工具单测 + MCP/编排闭环）
+LLM_PROVIDER=mock python -m pytest -q   # Python 3.11 + 非 root 下全绿（默认离线 mock，无需 key/联网）
 ```
+> 测试默认 `LLM_PROVIDER=mock`：不依赖云端模型，结果确定。root/容器环境有两处已知环境差异（kill 授权、
+> 沙箱内存限额归因），已用兼容性断言覆盖。
+
+### 一键可复现（装依赖 → 跑后端测试 → 构建前端）
+```bash
+bash scripts/ci_check.sh
+```
+
+### 受控动作鉴权（P0-4）
+`/action/execute` 是唯一会改系统状态的端点。本机演示默认不强制鉴权（后端只监听 127.0.0.1）；
+生产/联网演示请在 `backend/.env` 设 `OPERATOR_TOKEN`，并在 `frontend/.env` 设同值的 `VITE_OPERATOR_TOKEN`。
 
 ### 单独运行 MCP Server（可接 MCP Inspector 调试）
 ```bash
 cd backend && python -m app.mcp_server.server
+```
+
+### 打包 / 解压（避免中文文件名 mojibake）
+```bash
+python -m zipfile -c submission.zip backend frontend docs scripts README.md CLAUDE.md   # 打包
+python -m zipfile -e submission.zip ./out                                                # 解压
 ```

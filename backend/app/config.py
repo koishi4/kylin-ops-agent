@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     # 生产应经环境变量注入并妥善保管（KMS/密钥库）；此默认值仅供开发与演示。
     audit_hmac_key: str = "kylin-ops-agent-audit-chain-v1"
 
+    # 受控动作鉴权（P0-4，最小版，刻意不做 RBAC/账号体系）。
+    # operator_token 为空 → 演示模式：本机可信控制台，不强制鉴权（配合默认只监听 127.0.0.1）。
+    # 生产/联网演示务必在 .env 设强随机 token；前端经 VITE_OPERATOR_TOKEN 注入同值。
+    operator_token: str = ""
+    # 后端默认只监听本机回环，避免受控动作端点暴露到外网（生产如需对外须显式改并配 token）。
+    api_bind_host: str = "127.0.0.1"
+
     # 执行账户（最小权限，非 root）
     exec_user: str = "opsagent"
     # 以 root 运行时是否拒绝启动（最小权限启动闸门，审查整改②）。

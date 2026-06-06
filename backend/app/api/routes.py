@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 import time
 import uuid
 from dataclasses import asdict, replace
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from app.audit import store
 from app.config import get_settings
@@ -18,6 +19,23 @@ from app.guardrail.tool_scan import scan_tools
 from app.guardrail.trifecta import capability_table
 
 router = APIRouter()
+
+
+def require_operator(authorization: str | None = Header(default=None)) -> None:
+    """受控动作的最小鉴权（P0-4）：校验 `Authorization: Bearer <operator_token>`。
+
+    刻意保持最小——只一个共享 operator token，不做账号/session/RBAC（见 IMPROVEMENTS-v3 P0-4）。
+    设计取舍：
+    - operator_token 未配置（空）→ 演示模式放行（配合默认只监听 127.0.0.1，本机可信控制台）；
+    - 已配置 → 强制 Bearer 校验，缺失/不匹配返回 401；
+    - 用 secrets.compare_digest 常量时间比较，避免计时侧信道。
+    """
+    token = get_settings().operator_token
+    if not token:
+        return  # 演示模式：未设 token 不强制（README 注明生产须配置）
+    expected = f"Bearer {token}"
+    if not authorization or not secrets.compare_digest(authorization, expected):
+        raise HTTPException(status_code=401, detail="缺少或无效的 operator token（受控动作需鉴权）")
 
 
 class ChatRequest(BaseModel):
@@ -32,7 +50,8 @@ class GuardCheckRequest(BaseModel):
 
 class ActionRequest(BaseModel):
     action: str                 # truncate_log / kill_process / clean_path
-    params: dict = {}           # 动作参数（path / pid+signal）
+    # 用 default_factory 而非可变默认 {}（P0-5：可变默认会在实例间共享、是经典陷阱）
+    params: dict = Field(default_factory=dict)  # 动作参数（path / pid+signal）
     confirmed: bool = False     # 用户是否二次确认（未确认绝不真执行）
     authorized: bool = False    # 是否对需提权操作显式授权（防线4）
     dry_run: bool = True        # 默认只校验不执行
@@ -212,16 +231,22 @@ async def trace_verify(trace_id: str) -> dict:
 
 @router.get("/diagnose")
 async def diagnose(topic: str = "all", path: str = "/") -> dict:
-    """智能根因分析（评分④）：disk/zombie/load/all。只分析给建议，绝不执行处置。"""
-    return diagnosis.diagnose(topic=topic, path=path)
+    """智能根因分析（评分④）：disk/zombie/load/all。只分析给建议，绝不执行处置。
+
+    诊断含同步的磁盘扫描/lsof/采样等阻塞调用，放线程池避免阻塞事件循环（P0-5）。
+    """
+    return await asyncio.to_thread(diagnosis.diagnose, topic, path)
 
 
-@router.post("/action/execute")
+@router.post("/action/execute", dependencies=[Depends(require_operator)])
 async def action_execute(req: ActionRequest) -> dict:
     """受控 MUTATING 动作端到端闭环（P0-3）：白名单动作 → 语义校验 → 护栏 → 执行。
 
     默认 dry_run / 未 confirmed 时只返回护栏裁决与 require_confirm 预览，绝不真正执行；
     每次动作产出五段思维链并落审计，可按返回的 trace_id 回放（评分②③④可演示项）。
+
+    鉴权（P0-4）：本端点是唯一会真正改系统状态的入口，挂 require_operator 依赖，
+    配置了 operator_token 时须带 `Authorization: Bearer <token>`。
     """
     trace_id = uuid.uuid4().hex
     # 动作内部会调 executor（同步子进程），放线程池避免阻塞事件循环

@@ -20,6 +20,7 @@ from enum import Enum
 
 import psutil
 
+from app.core.pathutil import is_path_within
 from app.mcp_server.tools.disk import disk_usage, find_large_files
 from app.mcp_server.tools.handle import list_open_files
 from app.mcp_server.tools.process import find_zombie_processes, process_detail
@@ -66,11 +67,13 @@ _CLEANABLE_NAME_RE = re.compile(
 
 
 def _is_critical(s: str) -> bool:
-    return s.startswith(_CRITICAL_DIR_PREFIXES) or bool(_CRITICAL_NAME_RE.search(s))
+    # 用 commonpath 分量包含替代 startswith：杜绝 /var/lib/mysqlx 误判为 /var/lib/mysql 子路径（P0-1）
+    return is_path_within(s, _CRITICAL_DIR_PREFIXES) or bool(_CRITICAL_NAME_RE.search(s))
 
 
 def _is_cleanable(s: str) -> bool:
-    return s.startswith(_CLEANABLE_DIR_PREFIXES) or bool(_CLEANABLE_NAME_RE.search(s))
+    # 同上：/var/log2、/tmpx 等兄弟目录不得误判为可清理（P0-1）
+    return is_path_within(s, _CLEANABLE_DIR_PREFIXES) or bool(_CLEANABLE_NAME_RE.search(s))
 
 
 def classify_file(path: str) -> tuple[FileClass, str]:

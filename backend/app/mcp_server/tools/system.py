@@ -57,6 +57,10 @@ def service_status(name: str) -> dict:
         含 active(是否运行)、enabled(是否开机自启) 的字典
     """
     from ._shell import run_cmd
+    from ._validate import valid_unit
+    if not valid_unit(name):
+        return {"ok": False, "level": "READONLY",
+                "error": f"非法服务名: {name!r}（仅允许字母数字与 . _ @ : -，可选 .service 后缀）"}
     active = run_cmd(["systemctl", "is-active", name])
     enabled = run_cmd(["systemctl", "is-enabled", name])
     # is-active/is-enabled 返回码非 0 表示 inactive/disabled，属正常语义而非执行错误

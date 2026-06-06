@@ -6,6 +6,13 @@ import os
 
 import psutil
 
+from ._validate import (
+    MAX_SCAN_DIR,
+    MAX_SCAN_FILES,
+    clamp_scan,
+    is_refused_scan_root,
+)
+
 
 def disk_usage(path: str = "/") -> dict:
     """查询指定挂载点的磁盘使用情况。READONLY。
@@ -40,9 +47,13 @@ def find_large_files(path: str = "/", top_n: int = 10, max_scan: int = 200000) -
     Returns:
         含 files 列表（path/size_mb）的字典，按大小降序
     """
+    if is_refused_scan_root(path):
+        return {"ok": False, "level": "READONLY",
+                "error": f"拒绝扫描伪文件系统/运行时目录: {path}（/proc、/sys、/dev、/run 不可遍历）"}
     if not os.path.isdir(path):
         return {"ok": False, "level": "READONLY", "error": f"目录不存在: {path}"}
     top_n = max(1, min(top_n, 100))
+    max_scan = clamp_scan(max_scan, MAX_SCAN_FILES)  # P0-3：硬上限夹断，防超大目录树拖垮服务
     heap: list[tuple[int, str]] = []  # 小顶堆维护当前最大的 top_n
     scanned = 0
     truncated = False
@@ -66,7 +77,7 @@ def find_large_files(path: str = "/", top_n: int = 10, max_scan: int = 200000) -
         if truncated:
             break
     largest = sorted(heap, key=lambda x: x[0], reverse=True)
-    return {
+    out = {
         "ok": True,
         "level": "READONLY",
         "path": path,
@@ -74,6 +85,9 @@ def find_large_files(path: str = "/", top_n: int = 10, max_scan: int = 200000) -
         "truncated": truncated,
         "files": [{"path": p, "size_mb": round(s / 1e6, 2)} for s, p in largest],
     }
+    if truncated:
+        out["reason"] = f"max_scan limit reached ({max_scan})"
+    return out
 
 
 def dir_size(path: str, max_scan: int = 500000) -> dict:
@@ -85,8 +99,12 @@ def dir_size(path: str, max_scan: int = 500000) -> dict:
     Returns:
         含 total_mb、file_count 的字典
     """
+    if is_refused_scan_root(path):
+        return {"ok": False, "level": "READONLY",
+                "error": f"拒绝扫描伪文件系统/运行时目录: {path}（/proc、/sys、/dev、/run 不可遍历）"}
     if not os.path.isdir(path):
         return {"ok": False, "level": "READONLY", "error": f"目录不存在: {path}"}
+    max_scan = clamp_scan(max_scan, MAX_SCAN_DIR)  # P0-3：硬上限夹断
     total = 0
     count = 0
     truncated = False
@@ -105,5 +123,8 @@ def dir_size(path: str, max_scan: int = 500000) -> dict:
                 break
         if truncated:
             break
-    return {"ok": True, "level": "READONLY", "path": path,
-            "total_mb": round(total / 1e6, 2), "file_count": count, "truncated": truncated}
+    out = {"ok": True, "level": "READONLY", "path": path,
+           "total_mb": round(total / 1e6, 2), "file_count": count, "truncated": truncated}
+    if truncated:
+        out["reason"] = f"max_scan limit reached ({max_scan})"
+    return out

@@ -8,8 +8,11 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from app.core import actions
 from app.core.diagnosis import FileClass, classify_file
+from app.core.pathutil import is_path_within, path_under_any_root
 from app.guardrail.privilege import is_running_as_root, least_privilege_check
 from app.mcp_server.tools.log import tail_log
 
@@ -107,3 +110,68 @@ class TestTailLogPathControl:
         key.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
         r = tail_log(str(key))
         assert r["ok"] is False and "敏感" in r["error"]
+
+
+# ----------------------------- P0-1 路径前缀 bug：兄弟目录不得误判 -----------------------------
+
+class TestSiblingDirNotMatched:
+    """startswith 把 /var/log2 当成 /var/log 子路径——commonpath 分量包含修掉它（P0-1）。"""
+
+    @pytest.mark.parametrize("sibling", [
+        "/var/log2/x.log",        # 兄弟目录，startswith('/var/log') 会误判
+        "/tmpx/y.tmp",            # 兄弟目录，startswith('/tmp') 会误判
+        "/var/lib/mysqlx/z",      # 兄弟目录，startswith('/var/lib/mysql') 会误判
+    ])
+    def test_sibling_dirs_not_within_roots(self, sibling):
+        roots = ("/var/log", "/tmp", "/var/lib/mysql", "/var/cache")
+        assert is_path_within(sibling, roots) is False
+
+    @pytest.mark.parametrize("inside", [
+        "/var/log/app.log",
+        "/var/log/nginx/access.log",
+        "/tmp/scratch/a",
+        "/var/lib/mysql/ibdata1",
+    ])
+    def test_real_subpaths_still_within(self, inside):
+        roots = ("/var/log", "/tmp", "/var/lib/mysql")
+        assert is_path_within(inside, roots) is True
+
+    def test_root_itself_is_within(self):
+        assert is_path_within("/var/log", ("/var/log",)) is True
+
+    def test_diagnosis_sibling_not_cleanable(self):
+        """/var/log2 不再被根因分析误判为可清理（回归 P0-1 的真实影响面）。"""
+        cls, _ = classify_file("/var/log2/whatever.bin")
+        assert cls is not FileClass.CLEANABLE
+
+    def test_diagnosis_var_log_still_cleanable(self):
+        cls, _ = classify_file("/var/log/app.log")
+        assert cls is FileClass.CLEANABLE
+
+    def test_tail_log_rejects_sibling_dir(self, tmp_path, monkeypatch):
+        """tail_log 白名单：/var/log2 这类兄弟目录被拒（即便文件存在）。"""
+        # 构造一个名字以允许根字符串为前缀、但实为兄弟目录的文件
+        sib = tmp_path.parent / (tmp_path.name + "_sib")
+        sib.mkdir(exist_ok=True)
+        f = sib / "fake.log"
+        f.write_text("x\n")
+        # 把允许根伪装成 tmp_path（则 sib = tmp_path+"_sib" 是其兄弟目录）
+        import app.mcp_server.tools.log as logmod
+        monkeypatch.setattr(logmod, "_ALLOWED_LOG_ROOTS", (str(tmp_path),))
+        r = tail_log(str(f))
+        assert r["ok"] is False and "允许" in r["error"]
+
+
+class TestPathUnderAnyRootResolvesSymlink:
+    def test_symlink_escaping_allowed_root_rejected(self, tmp_path):
+        """字面在允许根、软链实指根外 → realpath 后判否（堵软链逃逸）。"""
+        outside = tmp_path.parent / "outside_target.log"
+        outside.write_text("secret\n")
+        link = tmp_path / "inside.log"
+        link.symlink_to(outside)
+        assert path_under_any_root(str(link), (str(tmp_path),)) is False
+
+    def test_plain_file_under_root_accepted(self, tmp_path):
+        f = tmp_path / "real.log"
+        f.write_text("a\n")
+        assert path_under_any_root(str(f), (str(tmp_path),)) is True

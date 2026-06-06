@@ -136,11 +136,16 @@ class TestKillProcess:
         assert r2["executed"] is False  # dry_run
 
     def test_kill_child_process_executes(self):
-        """放行路径：spawn 自己的 sleep 子进程并真正 SIGTERM 终止（对系统无害）。"""
+        """放行路径：spawn 自己的 sleep 子进程并真正 SIGTERM 终止（对系统无害）。
+
+        P0-2 环境兼容：以 root 跑测试时子进程归 root，动作层防线4 要求显式 authorized；
+        故 authorized 按运行身份取（root → True），保证 root/非 root 下断言都成立。
+        """
         proc = subprocess.Popen(["sleep", "60"])
         try:
             r = actions.run_action("kill_process", {"pid": proc.pid, "signal": "SIGTERM"},
-                                   confirmed=True, dry_run=False)
+                                   confirmed=True, authorized=os.geteuid() == 0,
+                                   dry_run=False)
             assert r["executed"] is True
             assert r["blocked"] is False
             proc.wait(timeout=5)

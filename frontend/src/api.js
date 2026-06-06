@@ -3,6 +3,16 @@ import axios from 'axios'
 // 经 vite 代理 /api → 后端；生产可改为完整后端地址
 const http = axios.create({ baseURL: '/api', timeout: 60000 })
 
+// P0-4 受控动作鉴权：若构建时注入了 VITE_OPERATOR_TOKEN，则给每个请求带上
+// Authorization: Bearer <token>（后端 /action/execute 校验）。未注入则不带，走演示模式。
+const OPERATOR_TOKEN = import.meta.env.VITE_OPERATOR_TOKEN || ''
+if (OPERATOR_TOKEN) {
+  http.interceptors.request.use((config) => {
+    config.headers.Authorization = `Bearer ${OPERATOR_TOKEN}`
+    return config
+  })
+}
+
 export async function getHealth() {
   const { data } = await http.get('/health')
   return data

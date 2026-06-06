@@ -72,3 +72,12 @@ app.add_middleware(
 )
 
 app.include_router(router)
+
+
+if __name__ == "__main__":
+    # `python -m app.main` 启动时遵循 API_BIND_HOST（默认 127.0.0.1，只监听回环）。
+    # 直接用 `uvicorn app.main:app` 亦可，uvicorn 默认同样绑 127.0.0.1（P0-4）。
+    import uvicorn
+
+    st = get_settings()
+    uvicorn.run("app.main:app", host=st.api_bind_host, port=8000)
