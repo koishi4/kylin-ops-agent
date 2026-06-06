@@ -793,3 +793,28 @@
 - 指标：新增 `test_vuln_intel.py`(9) + `test_posture.py`(8) + 沙箱攻击面削减(5)，全套 pytest **518 → 540 全绿**。
   新增 2 个只读 MCP 工具（共 17 个），三要素结构性不变量仍成立（READONLY 路径能力 ≤2 腿、无『改状态』腿）。
 - 下一步：P1-4 威胁模型/OWASP 映射文档把三件套串成完整论证；前端评委模式（P1-5）把姿态告警喂到评委眼前。
+
+### P1-4/5/6：威胁模型文档 + 评委模式首页 + 双通道可靠性叙事（把创新讲清楚、喂到评委眼前）
+- 做了什么：
+  - **P1-4 安全设计文档**：新增 `docs/security-design.md`（威胁模型 A 运维操作安全 / B 系统沦陷；主线论点
+    「约束能力，而非检测内容」；用 Dirty Frag 作工作示例串起 P1-1/2/3；诚实标注「不防什么」与未来工作）
+    + `docs/security-mapping.md`（能力逐条映射 OWASP Top10 for LLM/Agentic 2026 与 MCP Security Cheat Sheet，
+    每条指向具体代码模块与可演示项；致命三要素/Rule of Two/human-in-loop 一并归位）。
+  - **P1-5 前端评委模式首页**：新增 `frontend/src/JudgeMode.vue` + 头部「🏆 评委模式」抽屉。四张卡正对评分
+    ①OS感知+MCP ②自然语言运维 ③安全护栏+内核遏制 ④根因分析+处置闭环，每张「▶ 运行演示」一键把
+    「输入→工具调用→安全判定→审计 trace→结果」整条链路渲染出来（复用 GuardVerdict 两栏 + TraceDetail 时间线）；
+    ③卡内嵌「内核姿态体检」直接展示本机命中 Dirty Frag 的告警。新增 api.js 的 `vulnIntel`/`checkPosture`。
+  - **P1-6 双通道可靠性叙事**：把现有三层兜底（云端 deepseek / 本地 ollama / mock 关键词路由）明确写成
+    「LLM 决定想做什么、确定性护栏决定能不能做」的**双通道**叙事（写入 security-design.md §4，正面回应赛题
+    「AI 推理不可控」）；并把内核漏洞遏制三件套也接入 MockProvider 关键词路由，保证离线 mock 下评委模式可走通。
+- 设计决策与理由：
+  - **评委模式 = 把评分表喂到眼前**：很多队功能散落各处、评委要自己找。四张卡按评分子项一一对应、一键演示，
+    把「这个功能对应哪一项、能不能演示」从口头承诺变成屏幕上可点的证据。
+  - **复用而非另造**：JudgeMode 直接调既有 `/chat` `/guardrail/check` `/posture` `/diagnose`，渲染复用
+    GuardVerdict/TraceDetail——演示看到的与真实链路是同一份数据，不造假。
+- 实测（mock 后端 8011 端到端）：17 个工具就位；`/chat 磁盘`→white+disk_usage+10 段 trace；
+  `/guardrail/check rm -rf /var/lib/mysql`→deny/critical（DEL-003+PATH-001）；`/posture`→本机 WSL 6.6 内核命中
+  Dirty Frag(kernel_only)、Copy Fail(exposed)；`/vuln-intel?component=esp4`→2 条同族 CVE。前端 `npm run build` 通过。
+- 指标：纯文档 + 前端，后端 pytest 仍 **540 全绿**（未碰后端逻辑，仅 MockProvider 加了两条关键词路由，
+  orchestrator/NL 测试不受影响）。
+- 至此 IMPROVEMENTS-v3 的 P0（P0-6 部分）与 P1（创新三件套 + 得分动作）全部落地；实机证明（虚机就绪）为并行轨。

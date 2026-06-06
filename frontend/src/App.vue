@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { chat, getHealth, listTools, listTraces, getTrace, verifyTrace, diagnose, executeAction, getRules, reloadRules, getTrifecta, getToolScan, checkCommand, sandboxDemo } from './api.js'
 import GuardVerdict from './GuardVerdict.vue'
 import TraceDetail from './TraceDetail.vue'
+import JudgeMode from './JudgeMode.vue'
 
 const provider = ref('-')
 const tools = ref([])
@@ -320,6 +321,9 @@ async function openProbe() {
   probeOpen.value = true
   if (!probeGuard.value) await doProbeCheck()  // 首开即给一个「AST 抓到变形」的镜头
 }
+
+// ---- P1-5 评委模式：四张卡对应评分四子项，一键演示整条链路 ----
+const judgeOpen = ref(false)
 </script>
 
 <template>
@@ -329,6 +333,7 @@ async function openProbe() {
       <div class="meta">
         <el-tag size="small" type="success">LLM: {{ provider }}</el-tag>
         <el-tag size="small" type="info">工具: {{ tools.length }}</el-tag>
+        <el-button size="small" type="warning" @click="judgeOpen = true">🏆 评委模式</el-button>
         <el-button size="small" @click="runDiagnose">🩺 一键体检</el-button>
         <el-button size="small" @click="openReplay">🔍 思维链回放</el-button>
         <el-button size="small" @click="openRules">🛡️ 规则库</el-button>
@@ -378,6 +383,11 @@ async function openProbe() {
         <el-button type="primary" :loading="loading" @click="send">发送</el-button>
       </div>
     </el-main>
+
+    <!-- 评委模式首页：四张卡对应评分四子项，一键演示整条链路（P1-5） -->
+    <el-drawer v-model="judgeOpen" title="🏆 评委模式 · 评分四子项一键演示" size="72%" direction="rtl">
+      <JudgeMode v-if="judgeOpen" />
+    </el-drawer>
 
     <!-- 思维链回放抽屉：左侧历史列表，右侧整条五段时间线 -->
     <el-drawer v-model="replayOpen" title="🔍 思维链回放（可追溯审计）" size="60%" direction="rtl">

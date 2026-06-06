@@ -85,6 +85,9 @@ class MockProvider(LLMProvider):
         (("磁盘", "硬盘", "空间", "disk", "df"), "disk_usage", {}),
         (("内存", "memory", "ram", "swap"), "memory_info", {}),
         (("进程", "cpu", "process", "占用", "top"), "list_processes", {}),
+        # 内核漏洞遏制三件套也接入确定性路由，保证离线 mock 下「评委模式」演示可走通（P1-6）
+        (("漏洞", "cve", "情报", "advisory"), "query_vuln_intel", {}),
+        (("内核", "posture", "姿态", "dirty frag", "提权", "模块"), "kernel_posture", {}),
     ]
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:

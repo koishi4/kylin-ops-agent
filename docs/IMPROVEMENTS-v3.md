@@ -114,7 +114,7 @@ GPT 审查指出的 P0 安全 bug **经核实在当前版本仍然存在**（详
 - **主线论点**「约束能力，而非检测内容」，用 Dirty Frag 作工作示例串起 P1-1/2/3。
 - 能力映射到 OWASP MCP Security Cheat Sheet 与 OWASP Top 10 for Agentic Applications 2026（tool poisoning / rug-pull / confused deputy / excessive agency / least privilege / auditability / sandbox / human-in-the-loop）。
 - 末尾「已知边界与未来工作」：不执行任意 shell、变更走受控 action、默认只读、高危需确认、本地模型有确定性 fallback、运行时行为检测（eBPF/auditd/Falco）列为未来工作。
-- [ ] P1-4 完成
+- [x] P1-4 完成（docs/security-design.md 威胁模型A/B + Dirty Frag 工作示例串三件套；docs/security-mapping.md OWASP Top10/Agentic/MCP Cheat Sheet 逐条映射到代码）
 
 ---
 
@@ -122,11 +122,11 @@ GPT 审查指出的 P0 安全 bug **经核实在当前版本仍然存在**（详
 
 ### P1-5　前端「评委模式」首页
 四张卡对应评分点（OS 感知+MCP / 自然语言运维 / 安全护栏 / 根因分析+处置闭环），每张一键 demo，展示输入→工具调用→安全判定→审计 trace→结果。把评分点喂到评委眼前。
-- [ ] P1-5 完成
+- [x] P1-5 完成（frontend/src/JudgeMode.vue + 头部「🏆 评委模式」抽屉；四卡一键演示整条链路；③卡内嵌内核姿态体检；mock 后端端到端实测通过）
 
 ### P1-6　三通道可靠性叙事（写进文档，不新增大功能）
 把现有「LLM 工具调用 / 确定性 NL 路由 / mock 演示」三层兜底明确写成：「LLM + 确定性安全路由双通道，关键安全判断不完全依赖模型输出」——正面呼应赛题「AI 推理不可控」。确认确定性 NL 路由在模型不稳时确实可走通即可。
-- [ ] P1-6 完成
+- [x] P1-6 完成（security-design.md §4 双通道叙事；MockProvider 接入三件套关键词路由；test_mcp_loop/test_nl_robustness 确认 mock 确定性路由可走通）
 
 ---
 

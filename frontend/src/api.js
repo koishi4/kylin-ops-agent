@@ -97,3 +97,15 @@ export async function sandboxDemo(scenario = 'cpu') {
   const { data } = await http.get('/guardrail/sandbox-demo', { params: { scenario } })
   return data // { scenario, description, command, backend, limits, ok, sandbox_killed, limit_hit, ... }
 }
+
+// 漏洞情报检索（P1-1）：本地优先、可联网增强；把内核新漏洞的时效从训练问题变检索问题。
+export async function vulnIntel({ component, cve, live = false } = {}) {
+  const { data } = await http.get('/vuln-intel', { params: { component, cve, live } })
+  return data // { feed_version, source, live, count, advisories:[{cve, aliases, modules, mitigations, ...}] }
+}
+
+// 内核 / 主机安全姿态检查（P1-2）：本机内核+已加载模块比对情报，命中给缓解建议（不自动执行）。
+export async function checkPosture(live = false) {
+  const { data } = await http.get('/posture', { params: { live } })
+  return data // { severity, kernel, matches:[{cve, status, loaded_modules_hit, mitigations}], scope_note, ... }
+}
