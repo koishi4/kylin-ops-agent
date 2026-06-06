@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .ast_analyzer import analyze_command_ast, ast_synthetic_rules
 from .rules import (
     Action,
     RiskLevel,
@@ -29,6 +30,8 @@ class GuardResult:
     risk: RiskLevel = RiskLevel.LOW
     reason: str = ""
     require_confirm: bool = False
+    # 防线2 增强：Bash AST 结构分析的逐项发现（供前端思维链「正则判定 / AST 结构分析」两栏对比）。
+    ast_findings: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -38,6 +41,7 @@ class GuardResult:
             "risk": self.risk.value,
             "reason": self.reason,
             "require_confirm": self.require_confirm,
+            "ast_findings": self.ast_findings,
         }
 
 
@@ -49,7 +53,10 @@ _PATH_RULE = Rule(
 
 
 def check_command(cmd: str, *, authorized: bool = False, confirmed: bool = False) -> GuardResult:
-    """对单条候选命令做护栏裁决。
+    """对单条候选命令做护栏裁决（正则规则 + realpath 路径兜底 + Bash AST 结构分析）。
+
+    三重判定**保守合并取更严**：把三者的命中都并入同一 hits 列表，再按「最高风险 + 授权/确认」
+    统一裁决。这从结构上保证 AST/路径兜底只能把判定抬高，绝不会把规则已判的 CRITICAL/DENY 调低。
 
     Args:
         cmd: 待执行的命令字符串（LLM 生成或用户给定）
@@ -58,18 +65,41 @@ def check_command(cmd: str, *, authorized: bool = False, confirmed: bool = False
     """
     hits: list[Rule] = list(match_rules(cmd))
 
-    # 第二重：路径规范化命中关键目录（捕获正则难覆盖的变形）
+    # 第二重：路径规范化命中关键目录（捕获正则难覆盖的相对路径/软链接变形）
     path_hits = hits_critical_path(cmd)
     if path_hits and _PATH_RULE.id not in {r.id for r in hits}:
         hits.append(_PATH_RULE)
 
+    # 第三重：Bash AST 结构分析（管道接 shell / 命令替换 / 重定向写关键路径 / 命令链 等）。
+    # 发现转成合成规则并入 hits，与正则共用裁决逻辑——只能升级，不能放松（见 ast_analyzer）。
+    ast = analyze_command_ast(cmd)
+    hits.extend(ast_synthetic_rules(ast))
+    ast_dicts = ast.to_dict()["findings"]
+
     if not hits:
         return GuardResult(
             allowed=True, action=Action.ALLOW, risk=RiskLevel.LOW,
-            reason="未命中任何高危规则，命令视为安全。",
+            reason="未命中任何高危规则，且 AST 结构分析未发现 shell 危险结构，命令视为安全。",
+            ast_findings=ast_dicts,
         )
 
-    highest = max(hits, key=lambda r: r.risk.order)
+    result = _decide(hits, path_hits, authorized=authorized, confirmed=confirmed)
+    result.ast_findings = ast_dicts
+    if ast.findings:
+        structs = "、".join(sorted({f.structure for f in ast.findings}))
+        result.reason += f" | AST 结构分析：检出 shell 结构（{structs}），需分解为结构化工具或显式确认。"
+    return result
+
+
+# 同风险等级内动作的「严格度」排序，破平局时取更严（DENY > CONFIRM > ALLOW），
+# 确保 AST 的 HIGH/CONFIRM 发现绝不会把同级正则规则的 HIGH/DENY 裁决降格。
+_ACTION_SEVERITY = {Action.DENY: 2, Action.CONFIRM: 1, Action.ALLOW: 0}
+
+
+def _decide(hits: list[Rule], path_hits: list[str], *,
+            authorized: bool, confirmed: bool) -> GuardResult:
+    """按命中规则集做四级裁决（正则/路径兜底/AST 合成规则统一走这里）。"""
+    highest = max(hits, key=lambda r: (r.risk.order, _ACTION_SEVERITY[r.action]))
     matched_ids = [r.id for r in hits]
     detail = "；".join(f"[{r.id}] {r.description}" for r in hits)
     if path_hits:

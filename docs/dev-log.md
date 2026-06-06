@@ -618,3 +618,37 @@
   危险命令拦截 / 注入识别 / 正常放行仍 **100% / 0%(ASR) / 100%** 不变。
 - 下一步：审查剩余 5 条（接口鉴权、HMAC 强制非默认、mock 默认、exec_user OS 级降权）在课程报告/部署文档里
   标为「已知范围决策 + 生产加固清单」；可落地的代码整改已收口。转 Week4 人工阻塞项。
+
+### P4-2：命令护栏从「正则 + realpath」升级为「正则 + realpath + Bash AST 结构分析」（防线2 增强）
+- 背景：评委对纯正则护栏几乎必问「能被变形绕过吗」。正则本质是**字符串模式匹配**，对**语法结构**层面的
+  变形天然吃力——把危险命令藏进命令替换 `$(...)`、用管道喂给 shell `... | sh`、把第二条拼在 `;`/`&&` 之后、
+  用进程替换 `<(...)` 引入额外执行……都能让「按字面写正则」出现盲区。实测两个真盲区：
+  `echo $(rm -rf /)`（`)` 令 DEL-001 的 `/(\s|$)` 锚点失配）、`cat x | bash`（非 curl/wget，INJ-* 不覆盖），
+  纯正则 `match_rules` 对二者均**失配放行**。本项补上第三重结构判定，正面回答这个必问题。
+- 做了什么（先红队测试后实现，`tests/test_ast_analyzer.py` 77 条）：
+  - 新增 `guardrail/ast_analyzer.py`：`analyze_command_ast(cmd) -> AstFindings`，用 **bashlex**（纯 Python 解析器）
+    把命令解析成语法树，从结构识别 9 类高危构造，每类给 `(结构类型, 风险等级, 人类可读原因)`：
+    命令替换/反引号、进程替换、管道接 shell（`pipe_to_shell`）、重定向写块设备/关键路径/普通文件、
+    命令链 `;`&&`||`、子 shell `(...)`、here-doc、对关键路径的危险 glob、被结构包裹的子命令复跑规则命中。
+  - 接进 `engine.check_command`：AST 发现经 `ast_synthetic_rules` 转成**合成规则**（id 前缀 `AST-`、category=`ast`）
+    并入 `hits`，与正则规则**共用同一套「取最高风险 + 授权/确认」裁决**。`GuardResult` 新增 `ast_findings` 字段
+    与 `to_dict()` 输出，供前端思维链「正则判定 / AST 结构分析」两栏对比。
+  - 把 3 条「正则漏网、AST 抓到」样本并入红队语料（`DANGEROUS` 41→44），重跑
+    `scripts/redteam_ab.py` 重生成 `docs/guardrail-ab.md`：ASR 仍 100%→0%、误杀仍 0。
+- 设计决策与理由（课程报告/答辩素材）：
+  - **为何选 bashlex 而非 tree-sitter-bash**：bashlex 是纯 Python、`pip` 即装、无原生 C 编译——
+    LoongArch + 麒麟上零折腾；tree-sitter 需编译 C 扩展，国产架构上构建链风险高。国产化优先的硬约束。
+  - **shell=False 与 AST 升级的对齐逻辑（灵魂）**：executor 用 `shlex.split + shell=False`，**根本不过 shell**。
+    所以一条命令但凡依赖 shell 解释结构（管道/重定向/替换/链），要么不会按预期执行、要么本身就是注入/绕过信号。
+    据此定基调：检出任何 shell 结构 → **至少 CONFIRM**（需分解为结构化工具或显式确认）；
+    危险结构（管道接 shell、写块设备/关键配置、子命令命中红线）→ **DENY**。这把「执行模型」与「护栏判定」对齐成一条逻辑。
+  - **保守合并如何保证不放松规则**：不另搞一套裁决，而是把 AST 发现**降维成合成规则并入 hits**，复用既有
+    `_decide`。`max()` 只会把风险**抬高**，叠加破平局取更严（`DENY > CONFIRM`，防同级 HIGH/CONFIRM 顶掉 HIGH/DENY）——
+    从结构上保证正则已判的 CRITICAL/DENY **永不被 AST 降格**，确定性正则对红线仍是最终权威。
+  - **解析失败 fail-safe 非 fail-open**：bashlex 对畸形构造（未闭合引号/括号）抛异常，一律**捕获并保守判 CONFIRM**
+    （`unparseable` 发现），退回纯正则结果且绝不放松；遍历中任何意外同样兜底为 CONFIRM。绝不因解析失败崩溃或放行。
+- 指标：新增 77 条 AST 测试 + 红队 3 条，全套 pytest **379 → 459 全绿**；红队危险命令拦截 / 注入识别 / 正常放行
+  在扩容后语料上仍 **100% / 100% / 0% 误杀**，A/B 的 ASR 100%→0% 不变。新增「正则漏网、AST 抓到」的可核验证据
+  （`TestRegexMissAstCatch`：先断言 `match_rules` 失配，再断言 `check_command` 拦下）。
+- 下一步：可选把 AST 的 `ast_findings` 两栏接到前端思维链回放界面（数据已在 `GuardResult.to_dict()` 就绪）；
+  规则/AST 双栏对比是答辩演示「能拦住变形绕过」的强镜头。转 Week4 人工阻塞项。

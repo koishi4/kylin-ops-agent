@@ -1,0 +1,300 @@
+"""护栏防线2 增强：Bash 语法树（AST）结构分析 —— 正面回答评委必问的
+「你的正则能被变形绕过吗」。
+
+正则规则库（rules.py）快、确定、可解释，但本质是「字符串模式匹配」，对**语法结构**层面的
+变形天然吃力：把危险命令藏进命令替换 `$(...)`、用管道喂给 shell `... | sh`、把第二条命令
+拼在 `;`/`&&` 之后、用进程替换 `<(...)` 引入额外执行……这些都能让「按字面写正则」的规则
+出现盲区。本模块用 **bashlex**（纯 Python 解析器，无原生编译，LoongArch 无障碍）把命令解析成
+语法树，从**结构**而非字面去识别这些高危构造。
+
+与执行模型对齐的关键判断（这是本模块的设计灵魂）：
+executor.py 执行时用 `shlex.split + shell=False`，根本不经过 shell。也就是说——
+**一条命令但凡依赖 shell 解释结构（管道/重定向/命令替换/命令链/子shell），要么不会按预期执行、
+要么本身就是注入/绕过信号**。因此本模块的裁决基调是：
+  - 检出任何 shell 结构 → 至少升级为 CONFIRM（需分解为结构化工具或显式确认）；
+  - 检出危险结构（管道接 shell、重定向写块设备/关键配置、子命令命中红线规则）→ 升级为 DENY。
+
+保守合并：本模块只产出「结构发现」，由 engine.check_command 把发现并入规则裁决并**取更严**，
+AST 只能把判定变严，绝不能把规则已判的 CRITICAL/DENY 放松（见 engine._merge / 安全不变量）。
+
+故障安全：bashlex 对某些构造会抛异常——**捕获并保守处理**（视为「无法解析的可疑命令」→ 至少
+CONFIRM），绝不因解析失败而崩溃或放行。
+"""
+from __future__ import annotations
+
+import os
+import re
+from dataclasses import dataclass
+
+import bashlex
+
+from .rules import Action, RiskLevel, Rule, match_rules
+
+# 解释器名单：命令出现在管道下游（`... | sh`）即「下载/解码即执行」范式，极高危。
+_SHELL_INTERPRETERS = {
+    "sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "ash",
+    "python", "python2", "python3", "perl", "ruby", "node", "php", "lua",
+}
+
+# 重定向写入这些目标即灾难：块设备（覆写磁盘）/ 系统关键路径（越权改配置）。
+_BLOCK_DEV_RE = re.compile(r"^/dev/(sd|nvme|vd|hd|mmcblk|loop|dm-|md)")
+_CRITICAL_WRITE_RE = re.compile(r"^/(etc|boot|sys|proc|usr|bin|sbin|lib|lib64|root)(/|$)")
+
+# 对这些命令使用作用于关键路径的通配符，影响面不可控（rm/chmod/chown/chgrp + 关键路径 glob）。
+_GLOB_CMDS = {"rm", "chmod", "chown", "chgrp"}
+# 调用某命令时应跳过的前缀词（取「真正被执行的命令」）。
+_SKIP_WORDS = {"sudo", "env", "command", "nice", "nohup", "time", "exec"}
+
+
+@dataclass(frozen=True)
+class AstFinding:
+    """一条 AST 结构发现。risk/action 与 rules.RiskLevel/Action 对齐，便于并入规则裁决。"""
+
+    structure: str       # 结构类型代码，如 pipe_to_shell / command_substitution
+    risk: RiskLevel      # 该结构的风险等级
+    action: Action       # 命中后动作（deny / confirm）
+    reason: str          # 人类可读原因
+
+    def to_dict(self) -> dict:
+        return {
+            "structure": self.structure,
+            "risk": self.risk.value,
+            "action": self.action.value,
+            "reason": self.reason,
+        }
+
+
+@dataclass
+class AstFindings:
+    """一次 AST 结构分析的完整结论，供 engine 合并裁决、供前端思维链「AST 结构分析」栏展示。"""
+
+    parse_ok: bool
+    findings: list[AstFinding]
+    parse_error: str = ""
+
+    @property
+    def has_shell_structure(self) -> bool:
+        """是否检出任何 shell 解释结构（含解析失败的保守判定）。"""
+        return bool(self.findings)
+
+    @property
+    def max_risk(self) -> RiskLevel:
+        if not self.findings:
+            return RiskLevel.LOW
+        return max((f.risk for f in self.findings), key=lambda r: r.order)
+
+    def to_dict(self) -> dict:
+        return {
+            "parse_ok": self.parse_ok,
+            "parse_error": self.parse_error,
+            "has_shell_structure": self.has_shell_structure,
+            "max_risk": self.max_risk.value if self.findings else None,
+            "findings": [f.to_dict() for f in self.findings],
+        }
+
+
+# --------------------------------------------------------------------------- #
+# 语法树遍历                                                                     #
+# --------------------------------------------------------------------------- #
+
+def _node_text(node, src: str) -> str:
+    """用节点在原串中的 pos 切回原文（最忠实的子命令重建，供对子命令复跑规则）。"""
+    try:
+        return src[node.pos[0]:node.pos[1]]
+    except (AttributeError, TypeError, IndexError):
+        return ""
+
+
+def _words(node) -> list[str]:
+    return [p.word for p in getattr(node, "parts", []) if getattr(p, "kind", "") == "word"]
+
+
+def _effective_cmd(node) -> str:
+    """命令的「真正可执行名」basename：跳过 sudo/env/赋值前缀，取第一个实命令词。"""
+    for w in _words(node):
+        if "=" in w.split("/")[-1] and not w.startswith("/"):  # FOO=bar 形式的前置赋值
+            continue
+        base = os.path.basename(w)
+        if base in _SKIP_WORDS:
+            continue
+        return base
+    return ""
+
+
+def _children(node) -> list:
+    """兜底：列出节点下所有子 AST 节点，供未显式处理的 kind 继续下探（绝不漏掉藏在里面的命令）。"""
+    out = []
+    for attr in ("parts", "list", "command", "output", "heredoc"):
+        v = getattr(node, attr, None)
+        if isinstance(v, list):
+            out.extend(x for x in v if hasattr(x, "kind"))
+        elif hasattr(v, "kind"):
+            out.append(v)
+    return out
+
+
+def _glob_on_critical(arg: str) -> bool:
+    """判断带通配符的参数是否作用于关键路径（根级 `/​*` 或 /etc /usr… 下的批量匹配）。"""
+    if not arg.startswith("/"):
+        return False
+    head = re.split(r"[*?\[]", arg, maxsplit=1)[0]          # 通配符前的固定前缀
+    head_dir = head if head.endswith("/") else os.path.dirname(head)
+    norm = os.path.normpath(head_dir or "/")
+    if norm == "/":                                          # 根级通配：/* 、/*.bak
+        return True
+    return bool(_CRITICAL_WRITE_RE.match(norm + ("" if norm.endswith("/") else "/")))
+
+
+def _handle_redirect(part, out: list[AstFinding]) -> None:
+    rtype = getattr(part, "type", "") or ""
+    if rtype in ("<<", "<<<") or getattr(part, "heredoc", None) is not None:
+        out.append(AstFinding("heredoc", RiskLevel.MEDIUM, Action.CONFIRM,
+                              "here-doc / here-string 注入多行内容（常用于写文件），依赖 shell，需确认"))
+        return
+    if not rtype.startswith(">"):       # 仅关注输出重定向；输入 `<` 读文件风险低
+        return
+    out_node = getattr(part, "output", None)
+    target = getattr(out_node, "word", "") if out_node is not None else ""
+    if not target:
+        return
+    norm = os.path.normpath(target)
+    if _BLOCK_DEV_RE.match(norm):
+        out.append(AstFinding("redirect_to_device", RiskLevel.CRITICAL, Action.DENY,
+                              f"重定向覆写块设备 {target}，将损坏磁盘/分区数据"))
+    elif _CRITICAL_WRITE_RE.match(norm):
+        out.append(AstFinding("redirect_to_critical", RiskLevel.HIGH, Action.DENY,
+                              f"重定向写入系统关键路径 {target}，可致系统损坏或越权改配置"))
+    else:
+        out.append(AstFinding("redirect_write", RiskLevel.MEDIUM, Action.CONFIRM,
+                              f"重定向写文件 {target}，依赖 shell 解释，需确认"))
+
+
+def _check_dangerous_glob(node, out: list[AstFinding]) -> None:
+    words = _words(node)
+    if not words or _effective_cmd(node) not in _GLOB_CMDS:
+        return
+    for w in words[1:]:
+        if ("*" in w or "?" in w) and _glob_on_critical(w):
+            out.append(AstFinding("dangerous_glob", RiskLevel.HIGH, Action.DENY,
+                                  f"对关键路径使用通配符（{w}）批量删除/改权限，影响面不可控"))
+
+
+def _handle_command(node, src: str, nested: bool, out: list[AstFinding]) -> None:
+    # 1) 重定向
+    for part in getattr(node, "parts", []):
+        kind = getattr(part, "kind", "")
+        if kind == "redirect":
+            _handle_redirect(part, out)
+        elif kind == "word":
+            for sub in getattr(part, "parts", []) or []:   # 词内可能藏命令替换/进程替换
+                _walk(sub, src, True, out)
+    # 2) 危险 glob
+    _check_dangerous_glob(node, out)
+    # 3) 对被 shell 结构包裹的子命令复跑正则规则——这正是「正则漏网、AST 抓到」的来源：
+    #    形如 echo $(rm -rf /) 的整串正则会因相邻标点错位而漏判，但隔离出的子命令必命中红线。
+    if nested:
+        text = _node_text(node, src).strip()
+        hits = match_rules(text)
+        if hits:
+            top = max(hits, key=lambda r: r.risk.order)
+            out.append(AstFinding("nested_dangerous_command", top.risk, top.action,
+                                  f"被 shell 结构包裹的子命令命中规则 [{top.id}]：{top.description}"
+                                  f"（子命令原文：{text}）"))
+
+
+def _handle_pipeline(node, src: str, nested: bool, out: list[AstFinding]) -> None:
+    cmds = [p for p in node.parts if getattr(p, "kind", "") == "command"]
+    out.append(AstFinding("pipeline", RiskLevel.MEDIUM, Action.CONFIRM,
+                          "管道 | 串联多条命令、依赖 shell 解释（executor 为 shell=False，不会按预期执行），需分解或确认"))
+    for i, c in enumerate(cmds):
+        if i > 0 and _effective_cmd(c) in _SHELL_INTERPRETERS:
+            out.append(AstFinding("pipe_to_shell", RiskLevel.CRITICAL, Action.DENY,
+                                  f"管道把上游输出直接喂给 {_effective_cmd(c)}（下载/解码即执行范式），极高风险"))
+        _walk(c, src, nested or i > 0, out)
+
+
+def _handle_list(node, src: str, nested: bool, out: list[AstFinding]) -> None:
+    ops = sorted({p.op for p in node.parts if getattr(p, "kind", "") == "operator"})
+    out.append(AstFinding("command_chain", RiskLevel.MEDIUM, Action.CONFIRM,
+                          f"命令链（{'、'.join(ops) or ';'}）串联多条命令，需对每条分别裁决/确认"))
+    for i, p in enumerate(node.parts):
+        if getattr(p, "kind", "") in ("command", "pipeline", "compound"):
+            _walk(p, src, nested or i > 0, out)   # 链上第 2 条起视为「拼接其后」的子命令
+
+
+def _walk(node, src: str, nested: bool, out: list[AstFinding]) -> None:
+    kind = getattr(node, "kind", "")
+    if kind == "pipeline":
+        _handle_pipeline(node, src, nested, out)
+    elif kind == "list":
+        _handle_list(node, src, nested, out)
+    elif kind == "compound":
+        out.append(AstFinding("subshell", RiskLevel.MEDIUM, Action.CONFIRM,
+                              "子 shell / 命令组 (...) 改变执行上下文，可隐藏副作用，需确认"))
+        for child in getattr(node, "list", []):
+            _walk(child, src, True, out)
+    elif kind == "command":
+        _handle_command(node, src, nested, out)
+    elif kind == "commandsubstitution":
+        out.append(AstFinding("command_substitution", RiskLevel.HIGH, Action.CONFIRM,
+                              "命令替换 $(...) / 反引号 可隐藏二次执行，需确认其内部命令"))
+        _walk(node.command, src, True, out)
+    elif kind == "processsubstitution":
+        out.append(AstFinding("process_substitution", RiskLevel.HIGH, Action.CONFIRM,
+                              "进程替换 <(...) >(...) 引入额外命令执行，需确认"))
+        _walk(node.command, src, True, out)
+    else:
+        for child in _children(node):          # 未显式处理的 kind：兜底下探，绝不漏掉藏着的命令
+            _walk(child, src, nested, out)
+
+
+def _dedup(findings: list[AstFinding]) -> list[AstFinding]:
+    seen: set[tuple[str, str]] = set()
+    out: list[AstFinding] = []
+    for f in findings:
+        key = (f.structure, f.reason)
+        if key not in seen:
+            seen.add(key)
+            out.append(f)
+    return out
+
+
+def analyze_command_ast(cmd: str) -> AstFindings:
+    """把命令解析成 Bash 语法树并识别高危结构。
+
+    解析失败 → 返回 parse_ok=False、并带一条 CONFIRM 级「无法解析」发现（保守，绝不放行）。
+    解析成功但遍历中出现意外 → 同样兜底为 CONFIRM，绝不崩溃。
+    """
+    text = (cmd or "").strip()
+    if not text:
+        return AstFindings(parse_ok=True, findings=[])
+    try:
+        trees = bashlex.parse(text)
+    except Exception as e:  # noqa: BLE001 bashlex 的多种解析异常 + 任何意外都保守兜底
+        return AstFindings(
+            parse_ok=False,
+            findings=[AstFinding("unparseable", RiskLevel.MEDIUM, Action.CONFIRM,
+                                 f"命令含无法解析的 shell 构造（{type(e).__name__}），"
+                                 "保守按『需确认』处理，绝不放行")],
+            parse_error=str(e),
+        )
+    out: list[AstFinding] = []
+    try:
+        for t in trees:
+            _walk(t, text, False, out)
+    except Exception as e:  # noqa: BLE001 遍历意外也兜底为需确认，绝不崩溃/放行
+        out.append(AstFinding("analysis_error", RiskLevel.MEDIUM, Action.CONFIRM,
+                              f"AST 结构分析异常（{type(e).__name__}），保守按『需确认』处理"))
+    return AstFindings(parse_ok=True, findings=_dedup(out))
+
+
+def ast_synthetic_rules(findings: AstFindings) -> list[Rule]:
+    """把 AST 发现转成合成规则，供 engine 并入 hits 走统一裁决（id 前缀 AST-，category=ast）。
+
+    这样 AST 发现与正则规则共用同一套「取最高风险 + 授权/确认」裁决逻辑，天然保证：
+    AST 只能把判定抬高，永远不会把规则已判的 CRITICAL/DENY 调低。
+    """
+    return [
+        Rule(f"AST-{f.structure.upper()}", "", f.risk, f.action, f.reason, "ast")
+        for f in findings.findings
+    ]

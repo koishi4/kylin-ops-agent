@@ -177,6 +177,8 @@
 
 - [x] **P4-1 路径加固：软链绕过 / 越权读文件 / 非 root 启动闸门**（2026-06-06）：修审查 ③②⑤ 三条高价值真问题。
   > 落地说明：**③ 软链绕过**——`classify_file` 改用 `realpath` 并集判关键性（字面∪软链解析，宁保守）、可清理只认真实目标，`_truncate_log` 无条件拒绝符号链接（`os.path.islink`，关掉 classify→执行 的 TOCTOU），杜绝「`/var/log/x`→`/etc/passwd`」写穿击穿关键性判断；**② 非 root 闸门**——把闲置的 `is_running_as_root()` 接进 `main.py`，新增纯函数 `least_privilege_check` + `config.refuse_root`（默认告警、`REFUSE_ROOT=true` 拒启），让「非必要不 root」从口号变强制；**⑤ tail_log 路径管控**——按 realpath 限定允许日志根（`/var/log` `/tmp` `/var/tmp` `/run/log`）+ 敏感名单拒读（shadow/sudoers/`.ssh`/私钥/证书），收敛致命三要素「访问敏感数据」腿源头。测试 `tests/test_path_hardening.py`（12 条），红队仍 100%/0%/100%，全套 **367→379 全绿**。
+- [x] **P4-2 命令护栏升级：正则 + realpath + Bash AST 结构分析**（2026-06-06）：正面回答评委必问「正则能被变形绕过吗」。
+  > 落地说明：新增 `guardrail/ast_analyzer.py`，用 **bashlex**（纯 Python、无原生编译，LoongArch 友好；刻意不用需编译 C 的 tree-sitter）把命令解析成语法树，从**结构**而非字面识别 9 类高危构造（命令替换 `$()`/反引号、进程替换 `<()`、管道接 shell `|sh`、重定向写块设备/关键路径、命令链 `;&&||`、子 shell、here-doc、关键路径危险 glob、被结构包裹的子命令复跑规则命中）。**与执行模型对齐**：executor 是 `shell=False`，任何 shell 结构要么不按预期跑、要么是绕过信号，故检出结构 → 至少 CONFIRM、危险结构 → DENY。接进 `engine.check_command` 时把 AST 发现**降维成合成规则并入 hits**、复用既有 `_decide`，`max()` + 破平局取更严（`DENY>CONFIRM`）从结构上保证 **AST 只能升级、绝不放松正则已判的 CRITICAL/DENY**；`GuardResult` 加 `ast_findings` 供前端两栏对比。解析失败 **fail-safe**（捕获→保守 CONFIRM，绝不崩溃/放行）。补「正则漏网、AST 抓到」铁证（`echo $(rm -rf /)`、`cat x|bash`：先证 `match_rules` 失配、再证 `check_command` 拦下），并入红队语料（44 条）重跑 A/B 仍 100%→0%。测试 `tests/test_ast_analyzer.py`（77 条），全套 **379→459 全绿**。
 - [ ] **P4-x 剩余 5 条（生产加固清单，文档标注）**：接口本地 token 鉴权、HMAC 强制非默认密钥、mock 友好默认、`exec_user` OS 级降权（setuid/helper）、扫描路径白名单+超时。属「单机演示 vs 生产部署」边界，列入部署文档的生产加固清单，按需实现。
 
 ---

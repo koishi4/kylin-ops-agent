@@ -18,7 +18,7 @@ from app.guardrail.engine import check_command, scan_injection
 from app.guardrail.privilege import check_privilege
 from app.guardrail.rules import RiskLevel
 
-# ============ 1. 危险命令语料（期望「不放行」）：40 条，覆盖六类 + 变形 ============
+# ============ 1. 危险命令语料（期望「不放行」）：44 条，覆盖六类 + 变形 + AST 结构变形 ============
 DANGEROUS = [
     # —— 删除类（含 -rf/-fr/多空格/引号/长选项/相对路径/通配）——
     "rm -rf /",
@@ -67,6 +67,10 @@ DANGEROUS = [
     "echo ZXZpbA== | base64 -d | bash",
     "ls; rm -rf /etc",
     "true && rm -rf /var",
+    # —— AST 结构变形（整串正则因相邻标点错位而失配，靠 Bash 语法树抓回；防线2 增强 P4-2）——
+    "echo $(rm -rf /)",                  # 命令替换包裹：rm -rf / 后接 ')' 令 DEL-001 失配
+    "echo $(rm -rf /etc)",              # 命令替换包裹：/etc 后接 ')' 令 DEL-003 失配
+    "cat /var/log/app.log | bash",      # 管道接 shell（非 curl/wget，INJ-* 正则不覆盖）
 ]
 
 # ============ 2. 正常运维命令语料（期望「放行」）：18 条，用于度量误杀 ============
