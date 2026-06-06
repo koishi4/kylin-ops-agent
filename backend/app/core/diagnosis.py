@@ -65,17 +65,35 @@ _CLEANABLE_NAME_RE = re.compile(
 )
 
 
+def _is_critical(s: str) -> bool:
+    return s.startswith(_CRITICAL_DIR_PREFIXES) or bool(_CRITICAL_NAME_RE.search(s))
+
+
+def _is_cleanable(s: str) -> bool:
+    return s.startswith(_CLEANABLE_DIR_PREFIXES) or bool(_CLEANABLE_NAME_RE.search(s))
+
+
 def classify_file(path: str) -> tuple[FileClass, str]:
     """判断单个文件的关键性，返回 (分类, 人类可读理由)。
 
     判定优先级：关键特征 > 可清理特征 > 未知。关键优先，宁可保守也不误导用户删数据。
+
+    安全（审查整改③）：normpath **不解析软链**，会被「字面 /var/log/x → 实指 /etc/passwd」
+    绕过——truncate/rm 跟随软链写真实目标。故这里解析到真实路径再判：
+    - 关键性取「字面 ∪ 软链解析后」的并集：任一命中关键即判关键（软链指向 /etc、*.db 也拦死）；
+    - 可清理只认**软链解析后的真实目标**落在可清理特征——因为清空/删除实际作用在真实文件上，
+      杜绝「字面在 /var/log、实写他处」的写穿。
     """
-    p = os.path.normpath(path)
+    literal = os.path.normpath(path)
+    real = os.path.normpath(os.path.realpath(path))
 
-    if p.startswith(_CRITICAL_DIR_PREFIXES) or _CRITICAL_NAME_RE.search(p):
-        return FileClass.CRITICAL, "位于系统/数据库关键路径或为数据库/启动文件，删除不可逆，禁止贸然清理"
+    if _is_critical(literal) or _is_critical(real):
+        why = "位于系统/数据库关键路径或为数据库/启动文件，删除不可逆，禁止贸然清理"
+        if real != literal:
+            why += "（软链解析后真实指向关键文件）"
+        return FileClass.CRITICAL, why
 
-    if p.startswith(_CLEANABLE_DIR_PREFIXES) or _CLEANABLE_NAME_RE.search(p):
+    if _is_cleanable(real):
         return FileClass.CLEANABLE, "属日志/缓存/临时文件，通常可安全清理（建议先确认无进程占用）"
 
     return FileClass.UNKNOWN, "无法自动判定关键性，建议人工确认用途后再决定是否清理"

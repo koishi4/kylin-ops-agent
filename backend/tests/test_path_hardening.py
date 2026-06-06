@@ -1,0 +1,109 @@
+"""路径加固红队测试（审查整改 ③②⑤）。
+
+固化三条被外部审查指出、且已修复的安全性质，防回归：
+  ③ 软链绕过：classify_file 解析软链后判类，truncate_log 直接拒绝符号链接——
+     杜绝「/var/log/x → /etc/passwd」这类『字面可清理、实指关键文件』的写穿。
+  ② 最小权限启动自检：以 root 运行至少告警，REFUSE_ROOT 时拒绝启动。
+  ⑤ tail_log 路径管控：仅允许读日志根下的文件，敏感文件（口令/私钥）一律拒读。
+"""
+from __future__ import annotations
+
+from app.core import actions
+from app.core.diagnosis import FileClass, classify_file
+from app.guardrail.privilege import is_running_as_root, least_privilege_check
+from app.mcp_server.tools.log import tail_log
+
+
+# ----------------------------- ③ 软链绕过：classify_file -----------------------------
+
+class TestClassifyResolvesSymlink:
+    def test_symlink_in_cleanable_dir_pointing_to_critical_is_critical(self, tmp_path):
+        """字面落在可清理名（.log），但软链实指 /etc/passwd → 解析后判关键，绕过被堵死。"""
+        link = tmp_path / "evil.log"
+        link.symlink_to("/etc/passwd")
+        cls, _ = classify_file(str(link))
+        assert cls is FileClass.CRITICAL
+
+    def test_symlink_to_critical_name_is_critical(self, tmp_path):
+        """软链指向 *.db（关键名特征），即便链名是 .log 也判关键。"""
+        target = tmp_path / "store.db"
+        target.write_text("data")
+        link = tmp_path / "access.log"
+        link.symlink_to(target)
+        assert classify_file(str(link))[0] is FileClass.CRITICAL
+
+    def test_plain_cleanable_file_unchanged(self, tmp_path):
+        """回归保护：普通非软链的可清理文件仍判可清理，加固不误伤正常路径。"""
+        f = tmp_path / "app.log"
+        f.write_text("x")
+        assert classify_file(str(f))[0] is FileClass.CLEANABLE
+
+
+# ----------------------------- ③ truncate_log 拒绝符号链接 -----------------------------
+
+class TestTruncateRefusesSymlink:
+    def test_symlink_blocked_and_target_intact(self, tmp_path):
+        """对软链 truncate 会写穿真实文件：直接拒绝，且确认+真执行下目标内容毫发无损。"""
+        target = tmp_path / "real.log"
+        target.write_text("keep-me\n")
+        link = tmp_path / "app.log"        # 链名可清理、链本身在 /tmp（可清理根）
+        link.symlink_to(target)
+
+        r = actions.run_action("truncate_log", {"path": str(link)},
+                               confirmed=True, dry_run=False)
+
+        assert r["blocked"] is True
+        assert "符号链接" in r["reason"] or "软链" in r["reason"]
+        assert target.read_text() == "keep-me\n"   # 未被清空，写穿被拦在执行之前
+
+    def test_symlink_to_critical_blocked(self, tmp_path):
+        """软链指向关键文件：被符号链接闸门拦下（执行前即拒，绝不触碰 /etc/passwd）。"""
+        link = tmp_path / "x.log"
+        link.symlink_to("/etc/passwd")
+        r = actions.run_action("truncate_log", {"path": str(link)},
+                               confirmed=True, dry_run=False)
+        assert r["blocked"] is True and r["executed"] is False
+
+
+# ----------------------------- ② 最小权限启动自检 -----------------------------
+
+class TestLeastPrivilegeStartup:
+    def test_non_root_allowed(self):
+        refuse, msg = least_privilege_check(is_root=False, refuse_root=True)
+        assert refuse is False and "非 root" in msg
+
+    def test_root_warns_by_default(self):
+        """默认（refuse_root=False）以 root 运行只告警、不阻断，避免误伤官方虚机演示。"""
+        refuse, msg = least_privilege_check(is_root=True, refuse_root=False)
+        assert refuse is False and "root" in msg and "最小权限" in msg
+
+    def test_root_refused_when_configured(self):
+        """隔离/生产环境置 REFUSE_ROOT=true → 以 root 启动被拒绝。"""
+        refuse, _ = least_privilege_check(is_root=True, refuse_root=True)
+        assert refuse is True
+
+    def test_is_running_as_root_returns_bool(self):
+        assert isinstance(is_running_as_root(), bool)
+
+
+# ----------------------------- ⑤ tail_log 路径管控 -----------------------------
+
+class TestTailLogPathControl:
+    def test_allows_file_under_allowed_root(self, tmp_path):
+        """tmp_path 落在 /tmp（允许的日志根）→ 正常读尾部。"""
+        f = tmp_path / "svc.log"
+        f.write_text("a\nb\nc\n")
+        r = tail_log(str(f), lines=2)
+        assert r["ok"] is True and r["lines"] == ["b", "c"]
+
+    def test_refuses_outside_allowlist(self):
+        """/etc/hostname 存在且可读，但不在允许日志根 → 拒读（防越权读任意文件）。"""
+        r = tail_log("/etc/hostname")
+        assert r["ok"] is False and "允许" in r["error"]
+
+    def test_refuses_sensitive_even_in_allowed_root(self, tmp_path):
+        """私钥落在 /tmp（允许根）内，仍命中敏感 denylist → 拒读（防口令/密钥泄露）。"""
+        key = tmp_path / "id_rsa"
+        key.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+        r = tail_log(str(key))
+        assert r["ok"] is False and "敏感" in r["error"]

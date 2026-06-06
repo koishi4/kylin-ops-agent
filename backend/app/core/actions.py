@@ -86,6 +86,16 @@ def _truncate_log(params: dict, *, confirmed: bool, authorized: bool, dry_run: b
     if not path or not isinstance(path, str):
         return _refuse("truncate_log", trace, "缺少参数 path，无法清空日志。")
 
+    # 审查整改③：truncate 会跟随软链写入其指向的真实文件——先无条件拒绝符号链接，
+    # 杜绝「软链指向关键文件」的写穿，并消除 classify→执行 之间换链的 TOCTOU 窗口。
+    if os.path.islink(path):
+        real = os.path.realpath(path)
+        trace.append({"stage": "感知环境", "detail": {"is_symlink": True, "realpath": real}})
+        return _refuse("truncate_log", trace,
+                       f"目标是符号链接（→ {real}），truncate 会写其指向的真实文件；"
+                       "为防『软链指向关键文件』绕过关键性判断，拒绝对符号链接清空。",
+                       precheck={"is_symlink": True, "realpath": real})
+
     cls, why = classify_file(path)
     exists = os.path.isfile(path)
     size = os.path.getsize(path) if exists else None

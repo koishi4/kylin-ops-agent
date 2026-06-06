@@ -83,6 +83,28 @@ def is_running_as_root() -> bool:
         return False
 
 
+def least_privilege_check(*, is_root: bool, refuse_root: bool) -> tuple[bool, str]:
+    """最小权限启动自检（审查整改②，纯函数便于测试）。
+
+    护栏的「非必要不 root」是评分③明示项，但此前 is_running_as_root() 写好却没接进启动，
+    服务可能不知不觉以 root 跑、护栏一旦误放行即 root 落地命令。这里把它接成启动闸门：
+
+    Args:
+        is_root: 当前是否以 root 运行（由 is_running_as_root() 提供）。
+        refuse_root: 是否在以 root 运行时拒绝启动（REFUSE_ROOT，隔离/生产环境置 true）。
+    Returns:
+        (should_refuse, message)：
+        - 非 root → (False, 符合最小权限的说明)；
+        - root 且未要求拒绝 → (False, 告警说明)，启动方应 logger.warning；
+        - root 且要求拒绝 → (True, 告警说明)，启动方应据此中止。
+    """
+    if not is_root:
+        return False, "非 root 运行，符合最小权限原则（防线4）。"
+    msg = ("检测到以 root 运行：护栏一旦误放行将以 root 落地命令，违背最小权限原则。"
+           "建议改用受限账户（如 opsagent）启动；隔离/生产环境可置 REFUSE_ROOT=true 强制拒绝以 root 启动。")
+    return refuse_root, msg
+
+
 def _safe_tokens(cmd: str) -> list[str]:
     """容错分词，供调用方需要时使用。"""
     try:

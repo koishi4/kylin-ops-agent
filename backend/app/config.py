@@ -29,6 +29,9 @@ class Settings(BaseSettings):
 
     # 执行账户（最小权限，非 root）
     exec_user: str = "opsagent"
+    # 以 root 运行时是否拒绝启动（最小权限启动闸门，审查整改②）。
+    # 默认仅告警不阻断（避免误伤官方虚机/容器里的 root 演示）；隔离/生产环境置 true 强制拒绝。
+    refuse_root: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"

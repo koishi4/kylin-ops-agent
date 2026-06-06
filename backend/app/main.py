@@ -14,7 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.audit import store
+from app.config import get_settings
 from app.core.orchestrator import Orchestrator
+from app.guardrail.privilege import is_running_as_root, least_privilege_check
 from app.guardrail.tool_scan import scan_tools
 from app.llm.provider import get_llm
 from app.mcp_server.client import MCPClient
@@ -24,6 +26,13 @@ logger = logging.getLogger("kylin-ops-agent")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 最小权限启动闸门（审查整改②）：非必要不 root；以 root 跑默认告警，REFUSE_ROOT=true 则拒绝启动。
+    refuse, msg = least_privilege_check(
+        is_root=is_running_as_root(), refuse_root=get_settings().refuse_root)
+    if refuse:
+        raise RuntimeError("拒绝启动（最小权限）：" + msg)
+    (logger.warning if is_running_as_root() else logger.info)(msg)
+
     # 启动：初始化审计库 + 连接 MCP 工具层 + 装配编排器
     store.init_db()
     mcp = MCPClient()

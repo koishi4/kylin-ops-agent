@@ -171,6 +171,16 @@
 
 ---
 
+## P4 — 外部代码审查整改
+
+> 一次外部代码审查按 file:line 列了 8 条问题，逐条核验后**无误报**；按「价值 ÷ 成本」挑高 ROI 的真问题整改，其余标为已知范围决策。
+
+- [x] **P4-1 路径加固：软链绕过 / 越权读文件 / 非 root 启动闸门**（2026-06-06）：修审查 ③②⑤ 三条高价值真问题。
+  > 落地说明：**③ 软链绕过**——`classify_file` 改用 `realpath` 并集判关键性（字面∪软链解析，宁保守）、可清理只认真实目标，`_truncate_log` 无条件拒绝符号链接（`os.path.islink`，关掉 classify→执行 的 TOCTOU），杜绝「`/var/log/x`→`/etc/passwd`」写穿击穿关键性判断；**② 非 root 闸门**——把闲置的 `is_running_as_root()` 接进 `main.py`，新增纯函数 `least_privilege_check` + `config.refuse_root`（默认告警、`REFUSE_ROOT=true` 拒启），让「非必要不 root」从口号变强制；**⑤ tail_log 路径管控**——按 realpath 限定允许日志根（`/var/log` `/tmp` `/var/tmp` `/run/log`）+ 敏感名单拒读（shadow/sudoers/`.ssh`/私钥/证书），收敛致命三要素「访问敏感数据」腿源头。测试 `tests/test_path_hardening.py`（12 条），红队仍 100%/0%/100%，全套 **367→379 全绿**。
+- [ ] **P4-x 剩余 5 条（生产加固清单，文档标注）**：接口本地 token 鉴权、HMAC 强制非默认密钥、mock 友好默认、`exec_user` OS 级降权（setuid/helper）、扫描路径白名单+超时。属「单机演示 vs 生产部署」边界，列入部署文档的生产加固清单，按需实现。
+
+---
+
 ## 执行顺序建议（给 Claude Code）
 
 1. **先 P0-3**（补 MUTATING + 闭环）：它让护栏从「空跑」变「实战」，是后续演示和很多测试的地基。

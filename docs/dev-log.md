@@ -584,3 +584,37 @@
 - 指标：纯文档项，无代码/测试变更；全套 pytest 仍 **367 全绿**。**至此 docs/改进v2.md 的 P3 系列 6 项全部完成。**
 - 下一步：改进v2.md 的可落地项已全部做完（P3-1~P3-6）。转 Week4 人工阻塞项——申请麒麟 LoongArch 虚机、
   合工大课程报告（se-report-docx skill，素材已在 dev-log + theory-alignment + 各报告文档备齐）、软件杯文档、演示视频。
+
+---
+
+## 三阶段：外部代码审查整改（P4 系列）
+
+### P4-1：路径加固——软链绕过 / 越权读文件 / 非 root 启动闸门（审查整改 ③②⑤）
+- 背景：一次外部代码审查（按 file:line 给证据）列了 8 条问题，逐条对照源码核验后判定：**无误报**，
+  区别仅在严重度与范围。其中 3 条是「高价值 × 低成本 × 正对评分③（非 root + 防越权）」的真问题，优先整改；
+  其余（接口无鉴权、HMAC 默认密钥、deepseek 无 key 启动失败、`exec_user` 未做 OS 级降权）属
+  「单机演示 vs 生产部署」的范围取舍，文档诚实标注、暂不强行实现。
+- 做了什么（先红队测试后实现，`tests/test_path_hardening.py` 12 条）：
+  - **③ 软链绕过（最该修）**：`classify_file`（`diagnosis.py`）原来只 `normpath` 不解析软链，
+    会被「字面 `/var/log/x.log` → 实指 `/etc/passwd`」绕过——truncate/rm 跟随软链写真实目标。
+    改为：关键性取「字面 ∪ `realpath` 解析后」并集（任一命中关键即关键），可清理只认**真实目标**落在可清理特征；
+    并在 `_truncate_log`（`actions.py`）**无条件拒绝符号链接**（`os.path.islink`），消除 classify→执行 间换链的 TOCTOU。
+  - **② 非 root 启动闸门**：`is_running_as_root()` 此前写好却从未被调用。新增纯函数
+    `least_privilege_check(is_root, refuse_root)` 并接进 `main.py` lifespan：以 root 跑默认**告警**、
+    `REFUSE_ROOT=true`（新增 `config.refuse_root`）则**拒绝启动**。让「非必要不 root」从口号变成强制闸门。
+  - **⑤ tail_log 路径管控**：`tail_log`（`tools/log.py`）原可读任意文件尾。改为「日志读取」工具语义——
+    按 `realpath` 判定须落在允许日志根（`/var/log`、`/tmp`、`/var/tmp`、`/run/log`），且命中敏感名单
+    （shadow/sudoers/`.ssh`/`id_rsa`/`*.pem|key|p12|pfx`/`/etc/ssl/private`）一律拒读。收敛致命三要素「访问敏感数据」腿的源头。
+- 设计决策与理由：
+  - **诚实接纳审查、不护短**：先逐条核验给「确认/部分确认/属取舍」的分级结论，再只挑高 ROI 的修——
+    这种「承认问题→分级→优先整改」本身就是课程报告「质量保证/安全工程」的好素材。
+  - **realpath 并集 + islink 双保险**：classify 用 realpath 防 clean_path/diagnosis 的软链写穿；
+    truncate 再加 islink 硬拒，双层覆盖且关掉 TOCTOU 窗口。可清理判定收紧为「真实目标可清理」，宁保守不写穿。
+  - **root 闸门默认告警而非硬拒**：官方 LoongArch 虚机/容器常以 root 起，硬拒会误伤答辩演示；
+    故默认响亮告警、留 `REFUSE_ROOT` 给隔离/生产强制。把「安全」与「可演示」都照顾到。
+  - **tail_log allowlist 含 `/tmp`**：pytest `tmp_path` 落在 `/tmp`，allowlist 含之既不破测试又符合「日志多在 /tmp/var/log」实情；
+    denylist 即便在允许根内也兜底拒读私钥，belt-and-suspenders。
+- 指标：新增 12 条测试，全套 pytest **367 → 379 全绿**；红队语料未动（改动不碰 rules/engine），
+  危险命令拦截 / 注入识别 / 正常放行仍 **100% / 0%(ASR) / 100%** 不变。
+- 下一步：审查剩余 5 条（接口鉴权、HMAC 强制非默认、mock 默认、exec_user OS 级降权）在课程报告/部署文档里
+  标为「已知范围决策 + 生产加固清单」；可落地的代码整改已收口。转 Week4 人工阻塞项。
