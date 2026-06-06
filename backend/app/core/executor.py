@@ -81,6 +81,7 @@ def execute(
         return {"executed": False, "blocked": False, "error": "空命令",
                 "guard": guard.to_dict()}
 
-    result = run_cmd(args, timeout=timeout)
+    # 真正落地：套轻量沙箱（资源/权限限额），即便护栏误放行也炸不了宿主机（P4-3）。
+    result = run_cmd(args, timeout=timeout, sandbox=True)
     return {"executed": True, "blocked": False, "guard": guard.to_dict(),
             "privilege": priv.to_dict(), **result}

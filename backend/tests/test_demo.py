@@ -80,8 +80,15 @@ class TestDemoRun:
         assert result["failures"] == []
 
     async def test_tamper_demo_trace_is_cleaned_up(self, tmp_db):
-        # 幕7 自建的篡改演示记录跑完应被清理，不残留损坏链在审计库
-        await demo.run_demo(provider="mock", auto=True, only=[7], color=False)
+        # 幕8 自建的篡改演示记录跑完应被清理，不残留损坏链在审计库
+        await demo.run_demo(provider="mock", auto=True, only=[8], color=False)
         leftover = [t for t in store.list_traces(limit=100)
                     if t["trace_id"].startswith("demo-tamper-")]
         assert leftover == [], f"演示残留了篡改记录：{leftover}"
+
+    async def test_sandbox_demo_trace_is_cleaned_up(self, tmp_db):
+        # 幕7 自建的沙箱演示记录跑完应被清理，不残留在审计库
+        await demo.run_demo(provider="mock", auto=True, only=[7], color=False)
+        leftover = [t for t in store.list_traces(limit=100)
+                    if t["trace_id"].startswith("demo-sandbox-")]
+        assert leftover == [], f"演示残留了沙箱记录：{leftover}"

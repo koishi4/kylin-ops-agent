@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     # 默认仅告警不阻断（避免误伤官方虚机/容器里的 root 演示）；隔离/生产环境置 true 强制拒绝。
     refuse_root: bool = False
 
+    # 执行沙箱（护栏放行后真正落地命令时套的资源/权限保险丝，P4-3）。
+    # 机制按可用性自动降级：bwrap/nsjail → 纯 rlimit 兜底（见 core/sandbox.py）。
+    sandbox_enabled: bool = True        # 总开关；关掉则真正执行退回无限额（仅排障用）
+    sandbox_cpu_seconds: int = 5        # RLIMIT_CPU：单命令 CPU 秒上限（防自旋）
+    sandbox_mem_mb: int = 256           # RLIMIT_AS：地址空间≈内存上限（防吃光内存）
+    sandbox_max_procs: int = 64         # RLIMIT_NPROC：进程/线程数上限（防 fork 炸弹）
+    sandbox_fsize_mb: int = 16          # RLIMIT_FSIZE：可写文件大小上限（防写爆磁盘）
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )

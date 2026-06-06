@@ -652,3 +652,43 @@
   （`TestRegexMissAstCatch`：先断言 `match_rules` 失配，再断言 `check_command` 拦下）。
 - 下一步：可选把 AST 的 `ast_findings` 两栏接到前端思维链回放界面（数据已在 `GuardResult.to_dict()` 就绪）；
   规则/AST 双栏对比是答辩演示「能拦住变形绕过」的强镜头。转 Week4 人工阻塞项。
+
+### P4-3：执行沙箱——护栏放行后「真正落地」命令的资源/权限保险丝（防线4 的 OS 级延伸）
+- 背景：护栏（防线1~3 规则/AST/注入）回答「这条命令**该不该**执行」，但有两类危险它天然看不见：
+  ① 命令本身无危险特征、却会**失控吃资源**（CPU 自旋、内存吃光、fork 炸弹、写爆磁盘）；
+  ② 规则有盲区或 LLM 被绕过导致**误放行**。两者都需要一层「就算放行也炸不了宿主机」的物理兜底。
+  这正对应 **OWASP LLM06「过度代理（Excessive Agency）」**：给 Agent 的执行能力套上资源/权限保险丝，
+  把最坏情况的爆炸半径收敛到一个被限额的子进程。本项顺带收口 P4 审查里延后的「`exec_user` OS 级降权」一条。
+- 做了什么（先红队测试后实现，`tests/test_sandbox.py` 15 条）：
+  - 新增 `core/sandbox.py`：`run_sandboxed(args, *, limits, timeout) -> dict`，返回结构与 `run_cmd` 一致
+    （`ok/stdout/stderr/error`），外加 `sandbox_killed/limit_hit/sandbox` 三字段。隔离机制**自动探测、按可用性降级**：
+    - 优先：`shutil.which` 探到 **bwrap/nsjail** 则包裹（只读 rootfs + tmpfs `/tmp` + `--unshare-net` 断网 + 独立 PID + die-with-parent）。
+    - 兜底（必有·纯标准库）：subprocess `preexec_fn` 里用 `resource.setrlimit` 施加 **RLIMIT_CPU/AS/NPROC/FSIZE**，
+      叠加 `Popen` 墙钟 `timeout` + `start_new_session` 整组击杀；以 root 运行且配了 `exec_user` 时，preexec 内
+      `setgroups([])→setgid→setuid` 降权到非特权账户、`close_fds=True` 关多余 fd。
+    - 任一机制不可用（CI 禁用 preexec/某 rlimit）→ try/except **best-effort 降级**：单项限额失败跳过、带 preexec 的
+      `Popen` 被拒则自动退回「无 preexec」重试一次。**绝不抛异常、绝不让调用方失败**。
+  - 退出码归因 `_classify_exit`：`rc<0` 或 `rc>128` 映射到信号（SIGKILL/SIGXCPU/SIGXFSZ/SIGSEGV）判为限额触发；
+    进程自报 `MemoryError`/`Cannot allocate memory`/`Killed` 归因 `limit_hit=memory`；超时单列 `limit_hit=timeout`。
+  - 接入执行链路：`run_cmd` 增 `sandbox: bool=False`（True 时延迟导入沙箱、按 `Settings` 限额跑）；
+    `executor.execute` 在「护栏放行、非 dry_run、真正执行」那步改走 `run_cmd(..., sandbox=True)`。
+    只读固定探针（df/ss/lsof）保持 `sandbox=False` 零开销不变，现有只读工具测试不受影响。
+  - 限额可配（`config.py`）：`sandbox_enabled`(默认 True) / `sandbox_cpu_seconds`(5) / `sandbox_mem_mb`(256)
+    / `sandbox_max_procs`(64) / `sandbox_fsize_mb`(16)，保守默认。
+  - `scripts/demo.py` 增「幕7 执行沙箱」：放行一条 CPU 自旋命令（护栏看不出危险→放行）→ 沙箱墙钟 2s 秒杀
+    → 写五段审计（含 `sandbox_killed/limit_hit`）→ 清理。对照组 `echo` 照常放行不误杀。
+- 设计决策与理由（课程报告/答辩素材）：
+  - **为何不上容器编排/microVM 而走 rlimit**：K8s/gVisor/Firecracker 在竞赛单机虚机上**跑不动也用不上**，
+    还引入重依赖与构建链风险。`resource` 是 Linux 标准库、LoongArch 原生可用、零外部依赖——这才是「轻量、能在
+    官方虚机上真跑」的正解。bwrap/nsjail 作为**可选增强层**自动探测，有则锦上添花、无则纯 rlimit 兜底，**永不硬依赖**。
+  - **纵深防御的两段分工**：护栏管「不该做的别做」（语义/规则层），沙箱管「就算做了也炸不了」（资源/权限层）。
+    单靠任一层都不够——规则挡不住「合法命令失控吃资源」，沙箱也不懂「这是删库」。叠起来才完整覆盖 LLM06。
+  - **降级永不失败**：每项 setrlimit、setuid、Popen 各自 try/except，带 preexec 失败退回无 preexec；
+    宁可「限额没施加全」也绝不崩溃或让命令跑不起来。安全加固不能反过来砸了可用性（这点在 CI 上尤其关键）。
+  - **收口「exec_user OS 级降权」**：此前 `config.exec_user` 只是个名字、从未真正 setuid。沙箱的 preexec 降权
+    就是它**演示友好的落地实现**——以 root 运行时把放行命令降权到 `opsagent` 再执行，非 root 运行则本就满足最小权限、跳过。
+- 指标：新增 15 条沙箱测试 + 1 条 demo 清理回归，全套 pytest **459 → 475 全绿**；红队 100%/100%/0% 与
+  A/B ASR 100%→0% 均不变（沙箱只加在「放行后执行」一步，不碰任何护栏裁决）。实测 rlimit 兜底在本机有效：
+  CPU 自旋撞墙钟超时被整组击杀、内存吃光撞 RLIMIT_AS 报 MemoryError、`echo/df` 正常不误杀。
+- 下一步：bwrap/nsjail 包裹路径在装有二者的麒麟 V11 上联调（本机走 rlimit 已验证）；
+  把 `limit_hit/sandbox_killed` 接进前端执行结果展示。转 Week4 人工阻塞项。
