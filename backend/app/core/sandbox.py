@@ -7,6 +7,13 @@
 对应 OWASP LLM06「过度代理（Excessive Agency）」：给 Agent 的执行能力套上资源/权限
 的「保险丝」，让最坏情况的爆炸半径收敛到一个被限额的子进程，而非整台机器。
 
+P1-3「沙箱即攻击面削减」——遏制对未知漏洞也有效：除资源限额外，再削减执行 runner 的
+**能力面**（drop CAP_NET_ADMIN/CAP_NET_RAW/CAP_SYS_MODULE/CAP_SYS_PTRACE、设 no_new_privs、
+以 root 运行时降权到非特权账户、bwrap 断网+丢全部能力）。这直接移除「看似无害的新内核
+漏洞利用」（如 Dirty Frag：需 esp/rxrpc 接口 + splice 操纵页缓存）的**前提条件**——
+一个非 root、无 CAP_NET_RAW/CAP_SYS_MODULE、断网的 runner，**在不认识该漏洞的前提下**
+就打不开 raw/xfrm 套接字、加载不了模块，遏制因此对未披露 0-day 同样成立。
+
 隔离机制按可用性自动降级（绝不硬依赖，竞赛虚机/CI 容器都能跑）：
   1. 优先：系统装有 bubblewrap(bwrap) 或 nsjail → 用其包裹（只读 rootfs + tmpfs /tmp
      + 断网 + 丢能力 + 独立 PID 空间）。靠 shutil.which 探测，没有就跳过。
@@ -25,6 +32,7 @@ LoongArch / 麒麟 V11 说明：resource 是 Linux 标准库，LoongArch 原生�
 """
 from __future__ import annotations
 
+import ctypes
 import os
 import shutil
 import signal
@@ -32,6 +40,23 @@ import subprocess
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Callable
+
+# ---------------------------------------------------------------------------
+# 运行时能力削减（P1-3）：prctl 常量 + 要丢弃的高危能力
+# ---------------------------------------------------------------------------
+# 在父进程加载 libc 句柄（CDLL(None) 拿主程序符号，含 libc 的 prctl）；preexec 里只调
+# prctl 这个纯系统调用包装，不做内存分配，post-fork 安全。加载失败则降级为 None。
+try:
+    _LIBC: ctypes.CDLL | None = ctypes.CDLL(None, use_errno=True)
+except Exception:  # noqa: BLE001 非 glibc/异构平台 → 没有 prctl，能力削减整体跳过
+    _LIBC = None
+
+_PR_SET_NO_NEW_PRIVS = 38   # 置 1 后即便 exec setuid 程序也无法提权
+_PR_CAPBSET_DROP = 24       # 从能力 bounding set 永久丢弃某能力
+
+# 与「内核 LPE 看似无害利用」前提相关的高危能力（Dirty Frag 需 NET_RAW/NET_ADMIN + 模块面）：
+#   CAP_NET_ADMIN=12  CAP_NET_RAW=13  CAP_SYS_MODULE=16  CAP_SYS_PTRACE=19
+_DROP_CAPS = (12, 13, 16, 19)
 
 # ---------------------------------------------------------------------------
 # 限额配置
@@ -92,9 +117,12 @@ def _wrap_with_isolation(args: list[str], backend: str, path: str | None) -> lis
             "--ro-bind", "/", "/",        # 整个根只读绑定
             "--tmpfs", "/tmp",            # /tmp 给一块可写 tmpfs
             "--proc", "/proc",
-            "--dev", "/dev",
-            "--unshare-net",              # 断网：放行命令也无法联网
+            "--dev", "/dev",              # 最小化 /dev，屏蔽宿主设备节点
+            "--unshare-net",              # 断网：放行命令也无法联网、打不开 raw/xfrm 套接字（P1-3）
             "--unshare-pid",              # 独立 PID 空间
+            "--unshare-ipc",              # 独立 IPC（隔离共享内存/信号量）
+            "--unshare-uts",              # 独立 UTS（主机名隔离）
+            "--cap-drop", "ALL",          # 丢弃全部 capability（含 SYS_MODULE/NET_RAW，P1-3）
             "--die-with-parent",          # 父死子亡，杜绝游离子进程
             "--new-session",              # 独立 session，防 TIOCSTI 注入
             "--",
@@ -130,6 +158,27 @@ def _resolve_drop_target(exec_user: str) -> tuple[int, int] | None:
         return ent.pw_uid, ent.pw_gid
     except (KeyError, AttributeError, OSError):
         return None                      # 账户不存在 / 非 POSIX → best-effort 跳过
+
+
+def _apply_runtime_hardening() -> None:
+    """preexec 内的能力削减（P1-3）：no_new_privs + 丢弃高危 capability。best-effort，绝不抛。
+
+    - PR_SET_NO_NEW_PRIVS：之后即便 exec 一个 setuid 程序也无法借此提权。
+    - PR_CAPBSET_DROP：把 NET_ADMIN/NET_RAW/SYS_MODULE/SYS_PTRACE 从 bounding set 永久丢弃，
+      与「降权到非 root」叠加，确保放行命令打不开 raw/xfrm 套接字、加载不了模块、ptrace 不了别人——
+      移除 Dirty Frag 这类内核 LPE 的利用前提（不依赖认识具体漏洞）。
+    """
+    if _LIBC is None:
+        return
+    try:
+        _LIBC.prctl(_PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+    except Exception:
+        pass
+    for cap in _DROP_CAPS:
+        try:
+            _LIBC.prctl(_PR_CAPBSET_DROP, cap, 0, 0, 0)
+        except Exception:
+            pass
 
 
 def _build_preexec(limits: SandboxLimits,
@@ -175,6 +224,8 @@ def _build_preexec(limits: SandboxLimits,
                 resource.setrlimit(res, soft_hard)
             except Exception:   # 该项不可用（如 CI 禁用某 rlimit）→ 跳过，不影响其余
                 pass
+        # 最后做能力削减（P1-3）：在 exec 前丢弃高危 capability 并设 no_new_privs
+        _apply_runtime_hardening()
 
     return preexec
 
@@ -223,6 +274,21 @@ def _classify_exit(returncode: int, stderr: str) -> tuple[bool, str | None]:
 # ---------------------------------------------------------------------------
 
 
+def _hardening_profile(backend: str, drop_to: tuple[int, int] | None,
+                       preexec_ok: bool) -> dict:
+    """本次执行实际套用的攻击面削减画像（P1-3），供前端/演示展示「runner 被削到什么程度」。"""
+    boxed = backend in ("bwrap", "nsjail")
+    return {
+        "backend": backend,
+        "network": "unshared" if boxed else "inherited（非 root 本就无法开 raw/xfrm 套接字）",
+        "no_new_privs": preexec_ok and _LIBC is not None,
+        "dropped_caps": list(_DROP_CAPS) if (preexec_ok and _LIBC is not None) else [],
+        "dropped_to_uid": drop_to[0] if drop_to else None,
+        "rationale": ("削减 runner 能力面以移除内核 LPE（如 Dirty Frag）的利用前提——"
+                      "对未披露 0-day 同样有效，因为遏制不依赖认识具体漏洞。"),
+    }
+
+
 def run_sandboxed(args: list[str], *, limits: SandboxLimits, timeout: int) -> dict:
     """在轻量沙箱内执行命令，返回与 _shell.run_cmd 一致的结构（外加沙箱字段）。
 
@@ -246,6 +312,7 @@ def run_sandboxed(args: list[str], *, limits: SandboxLimits, timeout: int) -> di
     except Exception:  # 极端：连 resource 都 import 不了 → 退化为无 preexec（仍有 timeout）
         preexec = None
     final_args = _wrap_with_isolation(args, backend, path)
+    hardening = _hardening_profile(backend, drop_to, preexec is not None)
 
     # start_new_session=True：子进程独立进程组，超时时可整组 SIGKILL（含 fork 出来的孙子进程）
     try:
@@ -286,12 +353,13 @@ def run_sandboxed(args: list[str], *, limits: SandboxLimits, timeout: int) -> di
     if killed_by_timeout:
         return {"ok": False, "stdout": stdout or "", "stderr": stderr or "",
                 "error": f"timeout after {timeout}s（沙箱墙钟超时，进程已被杀）",
-                "sandbox_killed": True, "limit_hit": "timeout", "sandbox": backend}
+                "sandbox_killed": True, "limit_hit": "timeout", "sandbox": backend,
+                "hardening": hardening}
 
     sandbox_killed, limit_hit = _classify_exit(rc, stderr or "")
     result = {"ok": rc == 0, "stdout": stdout or "", "stderr": stderr or "",
               "sandbox_killed": sandbox_killed, "limit_hit": limit_hit,
-              "sandbox": backend}
+              "sandbox": backend, "hardening": hardening}
     if limit_hit and rc != 0:
         result["error"] = f"命中沙箱限额（{limit_hit}），进程未正常完成（rc={rc}）"
     return result

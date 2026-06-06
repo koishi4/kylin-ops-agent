@@ -1,0 +1,70 @@
+{
+  "feed_version": "2026-06-01",
+  "source": "local-seed",
+  "note": "本地漏洞情报种子库（P1-1）。把内核新漏洞的『时效』从训练问题变检索问题：模型不知道训练截止后才公开的 CVE，但 Agent 可从本地 feed 检索（必要时联网刷新）。条目为 N-day 已披露漏洞，覆盖范围诚实标注于 posture 结果。",
+  "advisories": [
+    {
+      "cve": "CVE-2026-43284",
+      "aliases": ["Dirty Frag"],
+      "title": "Linux 内核 esp/rxrpc + splice 页缓存写本地提权（Dirty Frag）",
+      "components": ["esp4", "esp6", "rxrpc"],
+      "modules": ["esp4", "esp6", "rxrpc", "ah4", "ah6"],
+      "kernel_min": "5.10",
+      "kernel_max": "6.12.30",
+      "severity": "critical",
+      "cvss": 7.8,
+      "category": "local-privilege-escalation",
+      "harmless_looking": true,
+      "summary": "经 esp/rxrpc 接口配合 splice 操纵页缓存写，普通用户无需特殊命令即可提权到 root。利用过程使用的命令本身无害，无内容特征可供检测——内容检测对它无效，正确应对是最小权限 + 沙箱遏制 + 活情报。",
+      "mitigations": [
+        "升级内核到 6.12.31+ 或发行版对应补丁版本（根治）",
+        "未使用 IPsec/AF_RXRPC 时将相关模块加入 blacklist：写 /etc/modprobe.d/dirtyfrag.conf 内容 'blacklist esp4'（esp6/rxrpc 同理）",
+        "运行时卸载相关模块：modprobe -r esp4 esp6 rxrpc（须经护栏二次确认，绝不自动执行）",
+        "在受限 runner 中 drop CAP_NET_ADMIN/CAP_NET_RAW/CAP_SYS_MODULE 并禁模块加载，在不认识漏洞的前提下移除其利用前提"
+      ],
+      "references": ["https://www.cve.org/CVERecord?id=CVE-2026-43284"],
+      "published": "2026-05-12"
+    },
+    {
+      "cve": "CVE-2026-43500",
+      "aliases": ["Dirty Frag"],
+      "title": "Linux 内核 esp 分片重组越界写本地提权（Dirty Frag 同族）",
+      "components": ["esp4", "esp6", "rxrpc"],
+      "modules": ["esp4", "esp6", "rxrpc"],
+      "kernel_min": "5.10",
+      "kernel_max": "6.12.30",
+      "severity": "critical",
+      "cvss": 7.8,
+      "category": "local-privilege-escalation",
+      "harmless_looking": true,
+      "summary": "与 CVE-2026-43284 同族（Dirty Frag），经 esp 分片重组路径越界写实现提权。缓解一致：模块 blacklist + 打补丁，或受限 runner 削减能力。",
+      "mitigations": [
+        "升级内核到 6.12.31+ 或发行版对应补丁版本",
+        "blacklist 或卸载 esp4/esp6/rxrpc 模块（须经护栏二次确认）",
+        "受限非 root runner 移除 CAP_SYS_MODULE/CAP_NET_RAW，断其利用前提"
+      ],
+      "references": ["https://www.cve.org/CVERecord?id=CVE-2026-43500"],
+      "published": "2026-05-12"
+    },
+    {
+      "cve": "CVE-2026-31431",
+      "aliases": ["Copy Fail"],
+      "title": "Linux 内核 copy_from_user 错误路径 UAF 本地提权（Copy Fail）",
+      "components": ["core"],
+      "modules": [],
+      "kernel_min": "6.1",
+      "kernel_max": "6.11.8",
+      "severity": "high",
+      "cvss": 7.0,
+      "category": "local-privilege-escalation",
+      "harmless_looking": true,
+      "summary": "copy_from_user 错误处理路径中的释放后使用（UAF），可被本地用户用于提权。无关联可卸载模块，缓解以打补丁为主，遏制以最小权限沙箱为辅。",
+      "mitigations": [
+        "升级内核到 6.11.9+ 或发行版对应补丁版本（首选）",
+        "无可卸载模块兜底；以最小权限非 root runner + 沙箱限制系统调用面降低可利用性"
+      ],
+      "references": ["https://www.cve.org/CVERecord?id=CVE-2026-31431"],
+      "published": "2026-03-20"
+    }
+  ]
+}

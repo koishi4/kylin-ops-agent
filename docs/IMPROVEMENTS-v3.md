@@ -91,7 +91,7 @@ GPT 审查指出的 P0 安全 bug **经核实在当前版本仍然存在**（详
   - 本地 advisory feed（`data/advisories.json`），种子录入当前真实内核 LPE：Dirty Frag（CVE-2026-43284 / 43500，受影响模块 esp4/esp6/rxrpc，缓解=模块 blacklist + 打补丁）、Copy Fail（CVE-2026-31431）。字段：cve、别名、受影响组件/模块、内核版本范围、严重度、缓解步骤、来源 URL。
   - 可选 live fetcher：从 OSV.dev REST（无需 key）或 NVD API 2.0 拉取，带超时 + 失败回退到本地 feed（**离线也要能演**）。
   - 工具标 READONLY。
-- [ ] P1-1 完成
+- [x] P1-1 完成（MCP 工具 query_vuln_intel + app/data/advisories.json 种子；OSV.dev live 带超时回退本地；test_vuln_intel.py）
 
 ### P1-2　内核/主机姿态检查 + 缓解建议（可演示的高光）
 **做什么**：
@@ -99,14 +99,14 @@ GPT 审查指出的 P0 安全 bug **经核实在当前版本仍然存在**（详
 - 缓解必须走护栏 + 二次确认流程提出（如生成 `modprobe -r esp4 esp6 rxrpc` 或写 blacklist 配置），不自动执行。
 - **诚实标注范围**：覆盖已披露 N-day（feed 里有的），不覆盖未披露 0-day——后者由 P1-3 沙箱遏制兜底。这句话写进结果与文档。
 **测试**：构造「模块已加载 + 命中 CVE」场景断言告警与缓解建议；未命中不误报。
-- [ ] P1-2 完成
+- [x] P1-2 完成（core/posture.py 采集/推理分离 + MCP 工具 kernel_posture + /posture；缓解仅候选文本走护栏确认；诚实标注 N-day/0-day 边界；test_posture.py）
 
 ### P1-3　沙箱即攻击面削减（强化现有沙箱，直接掐断 Dirty Frag 前提）
 **做什么**：
 - 强化 `core/sandbox.py` 的隔离 profile：drop `CAP_NET_ADMIN`/`CAP_NET_RAW`/`CAP_SYS_MODULE`/`CAP_SYS_PTRACE` 等；限制 socket 族（执行 runner 无需 raw/xfrm 套接字）；禁模块加载；禁 ptrace；评估限制 `splice`/`sendfile`（确认不误伤正常运维命令再启用）。
 - **文档把它和 Dirty Frag 前提对应**：Dirty Frag 需要「访问 esp/rxrpc 接口 + splice 操纵页缓存」；一个 drop 掉相关能力/套接字族、禁模块加载的非 root 受限 runner，能在**不认识该漏洞**的前提下移除其前提条件——「遏制对未知漏洞有效，因为它不需要认识漏洞」。
 **测试**：正常运维命令（df/ps/journalctl/cat 日志）在强化 profile 下仍正常；尝试加载模块/打开 raw 套接字被拒；机制不可用时优雅降级不崩。
-- [ ] P1-3 完成
+- [x] P1-3 完成（bwrap --cap-drop ALL/--unshare-ipc/uts；rlimit 兜底 prctl no_new_privs + capbset drop NET_ADMIN/NET_RAW/SYS_MODULE/SYS_PTRACE；hardening 画像；实测非 root SOCK_RAW 被拒、no_new_privs=1；test_sandbox.py 攻击面削减组）
 
 ### P1-4　威胁模型 + OWASP 映射文档（免费且必写）
 **做什么**：新增 `docs/security-design.md` 与 `docs/security-mapping.md`：

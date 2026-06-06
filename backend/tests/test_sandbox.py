@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import os
 import subprocess
 
 import pytest
@@ -189,3 +190,55 @@ class TestSandboxDemoEndpoint:
         with pytest.raises(HTTPException) as ei:
             self._call("bogus")
         assert ei.value.status_code == 400
+
+
+# ============ 6. 攻击面削减（P1-3）：能力削减 + 正常命令不受损 + 降级不崩 ============
+
+class TestAttackSurfaceReduction:
+    """沙箱即攻击面削减：移除内核 LPE（如 Dirty Frag）利用前提，对未知漏洞也有效。"""
+
+    def test_hardening_profile_present(self):
+        r = run_sandboxed(["echo", "ok"], limits=SandboxLimits(), timeout=5)
+        assert "hardening" in r
+        h = r["hardening"]
+        assert "backend" in h and "no_new_privs" in h and "dropped_caps" in h
+
+    def test_benign_commands_unaffected_by_hardening(self):
+        """正常运维命令（cat/echo/df）在强化 profile 下仍正常，不被能力削减误伤。"""
+        for args in (["echo", "hi"], ["df", "-h", "/"], ["cat", "/etc/hostname"]):
+            r = run_sandboxed(args, limits=SandboxLimits(), timeout=5)
+            assert r["sandbox_killed"] is False
+            assert r["limit_hit"] is None
+
+    def test_no_new_privs_set_in_child(self):
+        """rlimit 兜底下，子进程应已置 no_new_privs=1（exec setuid 也无法提权）。"""
+        if sb._isolation_backend()[0] != "rlimit":
+            pytest.skip("非 rlimit 后端（bwrap/nsjail 自带更强隔离），no_new_privs 由其负责")
+        if sb._LIBC is None:
+            pytest.skip("本平台无 libc/prctl，能力削减整体降级")
+        # 子进程读自身 PR_GET_NO_NEW_PRIVS(39)；置位则返回 1
+        code = ("import ctypes;"
+                "print(ctypes.CDLL(None, use_errno=True).prctl(39,0,0,0,0))")
+        r = run_sandboxed(["python3", "-c", code], limits=SandboxLimits(), timeout=5)
+        assert r["ok"] is True
+        assert r["stdout"].strip() == "1", "子进程未置 no_new_privs"
+
+    def test_raw_socket_denied_for_nonroot(self):
+        """非 root runner 打不开 raw 套接字——这正是 Dirty Frag 利用前提之一被移除。"""
+        if os.geteuid() == 0:
+            pytest.skip("以 root 跑测试：真实降权靠 exec_user setuid（演示虚机用），此处不强断言")
+        code = ("import socket\n"
+                "try:\n"
+                "    s=socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)\n"
+                "    s.close(); print('OPENED')\n"
+                "except (PermissionError, OSError):\n"
+                "    print('DENIED')\n")
+        r = run_sandboxed(["python3", "-c", code], limits=SandboxLimits(), timeout=5)
+        assert "DENIED" in r["stdout"], "非 root 竟开出 raw 套接字"
+
+    def test_hardening_degrades_without_libc(self, monkeypatch):
+        """libc/prctl 不可用时能力削减整体跳过、绝不崩溃，命令仍正常执行。"""
+        monkeypatch.setattr(sb, "_LIBC", None)
+        r = run_sandboxed(["echo", "still-ok"], limits=SandboxLimits(), timeout=5)
+        assert r["ok"] is True and "still-ok" in r["stdout"]
+        assert r["hardening"]["no_new_privs"] is False

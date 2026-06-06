@@ -17,8 +17,10 @@ from .handle import list_open_files
 from .log import query_journal, tail_log
 from .memory import memory_info
 from .network import check_port, list_listening_ports
+from .posture_tool import kernel_posture
 from .process import find_zombie_processes, list_processes, process_detail
 from .system import service_status, system_load, uptime_info
+from .vuln_intel import query_vuln_intel
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,9 @@ REGISTRY: dict[str, ToolSpec] = {
     "query_journal": ToolSpec(query_journal, "READONLY"),
     # 句柄
     "list_open_files": ToolSpec(list_open_files, "READONLY"),
+    # 漏洞情报 / 内核姿态（P1：内核漏洞遏制三件套之「时效化情报」+「主机姿态」）
+    "query_vuln_intel": ToolSpec(query_vuln_intel, "READONLY"),
+    "kernel_posture": ToolSpec(kernel_posture, "READONLY"),
 }
 
 __all__ = [
@@ -59,4 +64,5 @@ __all__ = [
     "list_processes", "find_zombie_processes", "process_detail",
     "list_listening_ports", "check_port",
     "tail_log", "query_journal", "list_open_files",
+    "query_vuln_intel", "kernel_posture",
 ]

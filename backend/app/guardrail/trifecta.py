@@ -90,6 +90,9 @@ TOOL_CAPS: dict[str, ToolCaps] = {
     "tail_log": ToolCaps(untrusted=True, sensitive=True),
     "query_journal": ToolCaps(untrusted=True, sensitive=True),
     "list_open_files": ToolCaps(untrusted=True, sensitive=True),
+    # —— 漏洞情报 / 内核姿态：引入外部情报内容(A)，无敏感外泄面、不改状态 ——
+    "query_vuln_intel": ToolCaps(untrusted=True),
+    "kernel_posture": ToolCaps(untrusted=True),
     # —— 受控 MUTATING 动作：改状态(C) + 需读取分类/进程详情判定(B)；不接触外部不可信内容(A=F) ——
     "truncate_log": ToolCaps(sensitive=True, state_change=True),
     "kill_process": ToolCaps(sensitive=True, state_change=True),

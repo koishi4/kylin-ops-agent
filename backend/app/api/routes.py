@@ -229,6 +229,27 @@ async def trace_verify(trace_id: str) -> dict:
     return store.verify_chain(trace_id)
 
 
+@router.get("/vuln-intel")
+async def vuln_intel(component: str | None = None, cve: str | None = None,
+                     live: bool = False) -> dict:
+    """漏洞情报检索（P1-1）：把内核新漏洞的『时效』从训练问题变检索问题。
+
+    默认离线读本地种子库；live=true 时联网（OSV.dev）增强、失败回退本地。READONLY。
+    """
+    from app.mcp_server.tools.vuln_intel import query_vuln_intel
+    return await asyncio.to_thread(query_vuln_intel, component, cve, live)
+
+
+@router.get("/posture")
+async def posture(live: bool = False) -> dict:
+    """内核 / 主机安全姿态检查（P1-2）：本机内核+已加载模块比对情报，命中给缓解建议。
+
+    只研判、只建议，绝不自动执行缓解（缓解须走 /action/execute 护栏 + 二次确认）。READONLY。
+    """
+    from app.core import posture as posture_mod
+    return await asyncio.to_thread(posture_mod.check_posture, live)
+
+
 @router.get("/diagnose")
 async def diagnose(topic: str = "all", path: str = "/") -> dict:
     """智能根因分析（评分④）：disk/zombie/load/all。只分析给建议，绝不执行处置。

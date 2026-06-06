@@ -760,3 +760,36 @@
 - 暂缓项（诚实标注）：P0-6「提交包健壮性」中『把既有中文文档批量改英文名』churn 大、易断引用且属课程报告中文交付物，
   暂缓批量重命名；新建文档一律英文名（security-design.md 等），并将「打包用 `python -m zipfile -e`」写入 README。
 
+### P1（创新核心）：内核漏洞遏制三件套——答 Dirty Frag 这类「看似无害的新内核漏洞利用」
+- 背景与命题：外部审查（GPT）盲区在于——对训练截止后才公开、且利用过程命令本身无害的内核 LPE
+  （工作示例：Dirty Frag / CVE-2026-43284·43500，经 esp/rxrpc + splice 操纵页缓存写提权），
+  **内容特征检测必然失效**（无特征）+ **模型不知道新 CVE**（知识库不实时）。正确答案不是更努力地「检测内容」，
+  而是**遏制 + 时效化情报**。这把项目既有哲学「约束能力，而非检测内容」从「运维误操作/注入」一类威胁，
+  延伸到「系统沦陷」一类威胁——一套哲学，两类威胁。
+- 做了什么（三件套）：
+  - **P1-1 漏洞情报感知（把时效从训练问题变检索问题）**：新增 MCP 工具 `query_vuln_intel`
+    + 本地种子库 `app/data/advisories.json`（Dirty Frag 同族两条 + Copy Fail，字段含受影响模块/内核范围/
+    缓解步骤/来源）。本地优先、离线确定、演示安全；`live=True` 时查 OSV.dev（无 key）带超时，**任何网络异常
+    回退本地**。READONLY，外部 feed 视为不可信内容（A 腿），不直接驱动指令流。
+  - **P1-2 内核/主机姿态检查（可演示的高光）**：新增 `core/posture.py` + MCP 工具 `kernel_posture` + `/posture`
+    接口。读本机内核版本 + `/proc/modules` 已加载模块，与情报 feed 比对，命中产出告警
+    （「内核命中 CVE-2026-43284 且 esp/rxrpc 已加载」）。**采集/推理分离**：`assess_posture` 纯函数可做确定性测试。
+    缓解（`modprobe -r`/blacklist）仅作**候选文本**给出，须走 `/action/execute` 护栏 + 二次确认，**绝不自动执行**。
+    诚实标注覆盖边界：覆盖 feed 里的**已披露 N-day**，**不覆盖未披露 0-day**（后者由 P1-3 兜底）。
+  - **P1-3 沙箱即攻击面削减（直接掐断利用前提）**：强化 `core/sandbox.py` 隔离 profile——bwrap 路径加
+    `--cap-drop ALL`/`--unshare-ipc`/`--unshare-uts`；rlimit 兜底路径在 preexec 里经 prctl 设 `no_new_privs`
+    并从 capability bounding set 丢弃 `CAP_NET_ADMIN/NET_RAW/SYS_MODULE/SYS_PTRACE`；叠加既有「root 则 setuid
+    降权到非特权账户」。返回新增 `hardening` 画像。**关键论点**：一个非 root、无 NET_RAW/SYS_MODULE、断网的
+    runner，**在不认识 Dirty Frag 的前提下**就打不开 raw/xfrm 套接字、加载不了模块——遏制对未知漏洞同样成立。
+- 设计决策与理由（创新分素材）：
+  - **遏制 > 检测，针对的是「无特征 + 不实时」的双重失效**：能检测的（注入、危险命令）继续检测；不能检测的
+    （无害命令利用 0-day），靠最小权限 + 能力削减把利用前提物理移除。这不是放弃检测，是承认检测的边界并补上正确的那条腿。
+  - **情报是检索不是记忆**：让 Agent「查」而不是让模型「背」，从架构上解决知识时效问题——离线种子库保证可演，
+    联网增强保证可新，失败回退保证可靠。
+  - **诚实标注边界**：明确写出「不覆盖未披露 0-day」，既是学术诚实，也正好引出 P1-3 沙箱遏制为何必要——边界本身是论证的一环。
+  - **能力削减全程优雅降级**：prctl/libc 不可用、setrlimit 被禁、bwrap 缺失，逐项 try/except，绝不崩溃、绝不让命令跑不起来。
+- 实测（本机 rlimit 兜底）：子进程 `no_new_privs=1` 确已置位、非 root 下 `SOCK_RAW` 被 `PermissionError` 拒、
+  capability bounding set 丢弃 [12,13,16,19]；正常命令（echo/df/cat）不受削减影响。
+- 指标：新增 `test_vuln_intel.py`(9) + `test_posture.py`(8) + 沙箱攻击面削减(5)，全套 pytest **518 → 540 全绿**。
+  新增 2 个只读 MCP 工具（共 17 个），三要素结构性不变量仍成立（READONLY 路径能力 ≤2 腿、无『改状态』腿）。
+- 下一步：P1-4 威胁模型/OWASP 映射文档把三件套串成完整论证；前端评委模式（P1-5）把姿态告警喂到评委眼前。
