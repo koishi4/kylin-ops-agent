@@ -155,3 +155,33 @@ class TestExecutorUsesSandbox:
         r = execute("rm -rf /")
         assert r["blocked"] is True
         assert called["n"] == 0
+
+
+# ============ 5. /guardrail/sandbox-demo 端点：前端「沙箱击杀」演示的数据源 ============
+
+class TestSandboxDemoEndpoint:
+    """服务端预定义的无害场景：normal 放行、cpu 失控被掐死、未知场景 400。"""
+
+    def _call(self, scenario):
+        import asyncio
+        from app.api import routes
+        return asyncio.run(routes.guardrail_sandbox_demo(scenario=scenario))
+
+    def test_normal_scenario_not_killed(self):
+        r = self._call("normal")
+        assert r["ok"] is True
+        assert r["sandbox_killed"] is False and r["limit_hit"] is None
+        assert "sandbox-ok" in r["stdout_tail"]
+        assert r["command"] and r["limits"]["timeout_s"] >= 1
+
+    def test_cpu_scenario_killed(self):
+        r = self._call("cpu")
+        assert r["ok"] is False
+        assert r["sandbox_killed"] is True
+        assert r["limit_hit"] == "timeout"
+
+    def test_unknown_scenario_400(self):
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as ei:
+            self._call("bogus")
+        assert ei.value.status_code == 400

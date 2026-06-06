@@ -71,6 +71,17 @@ class TestTruncateLog:
         r = actions.run_action("truncate_log", {}, confirmed=True)
         assert r["blocked"] is True
 
+    def test_executed_output_carries_sandbox_fields(self, tmp_path):
+        """放行并真正执行的动作，其 output 须带沙箱处置字段（P4-3 前端可视化的数据来源）。"""
+        f = tmp_path / "app.log"
+        f.write_text("x" * 200)
+        r = actions.run_action("truncate_log", {"path": str(f)},
+                               confirmed=True, dry_run=False)
+        assert r["executed"] is True
+        out = r["output"]
+        assert {"sandbox", "sandbox_killed", "limit_hit"} <= out.keys()
+        assert out["sandbox_killed"] is False   # 无害 truncate 不该触发限额
+
 
 # ----------------------------- kill_process -----------------------------
 

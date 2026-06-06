@@ -74,3 +74,16 @@ export async function getToolScan() {
   const { data } = await http.get('/guardrail/tool-scan')
   return data // { ok, scanned, flagged, tools:[{name, suspicious, max_severity, findings}], note }
 }
+
+// 命令护栏检测（P4-2）：对一条命令做「正则 + 路径 + AST 结构分析」三重裁决，只校验绝不执行。
+// 用于前端「护栏检测台」做正则判定 / AST 结构分析两栏对比。
+export async function checkCommand(command, { authorized = false, confirmed = false } = {}) {
+  const { data } = await http.post('/guardrail/check', { command, authorized, confirmed })
+  return data // { allowed, action, matched_rules, risk, reason, require_confirm, ast_findings }
+}
+
+// 执行沙箱演示（P4-3）：跑服务端预定义的无害吃资源命令，看「失控进程被沙箱掐死」。
+export async function sandboxDemo(scenario = 'cpu') {
+  const { data } = await http.get('/guardrail/sandbox-demo', { params: { scenario } })
+  return data // { scenario, description, command, backend, limits, ok, sandbox_killed, limit_hit, ... }
+}

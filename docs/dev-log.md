@@ -692,3 +692,31 @@
   CPU 自旋撞墙钟超时被整组击杀、内存吃光撞 RLIMIT_AS 报 MemoryError、`echo/df` 正常不误杀。
 - 下一步：bwrap/nsjail 包裹路径在装有二者的麒麟 V11 上联调（本机走 rlimit 已验证）；
   把 `limit_hit/sandbox_killed` 接进前端执行结果展示。转 Week4 人工阻塞项。
+
+### P4-4：前端接入——护栏「正则/AST 双栏」+ 执行沙箱「失控击杀」可视化（收口 P4-2/P4-3 的前端下一步）
+- 背景：P4-2 的 `ast_findings`、P4-3 的 `sandbox_killed/limit_hit` 数据后端已就绪，但前端思维链回放
+  只把整段 `detail` 渲染成原始 JSON，评委看不到「正则 vs AST 双栏对比」与「失控进程被沙箱掐死」这两个强镜头。
+  本项把两者接到 B/S 界面，让数据变成可演示的画面。
+- 做了什么：
+  - 新增可复用组件 `frontend/src/GuardVerdict.vue`：把一次 `check_command` 拆成**两栏**——
+    ① 正则/路径规则判定（剔除 `AST-` 合成规则单列）② AST 结构分析（逐条 structure/risk/action/reason）；
+    当「正则字面失配、AST 结构命中」时高亮一条「变形绕过被语法树兜住」的提示，正面回答必问题。
+  - 新增 `frontend/src/TraceDetail.vue`：替换思维链时间线里两处原始 `<pre>{{ detail }}</pre>`——
+    安全校验段含 `detail.guard` → 渲染 GuardVerdict 两栏；执行结果段 `detail.output` 含沙箱字段 →
+    渲染「✓ 沙箱内安全落地 / ⛔ 失控被掐死（命中限额）」横幅；其余明细仍折叠保留原始 JSON。
+    内联对话 trace 与回放抽屉**共用同一组件**（DRY）。
+  - 新增「🧪 护栏检测台」抽屉：① 命令护栏检测——输入框 + 预置「正则漏网、AST 抓到」样本
+    （`echo $(rm -rf /etc)`、`cat x | bash`），调 `/guardrail/check` 实时出两栏；② 执行沙箱——三个
+    服务端预定义场景按钮（正常/CPU 失控/内存失控），调新端点 `/guardrail/sandbox-demo` 看失控进程被限额秒杀。
+  - 后端配套：① `actions._guarded_finish` 的 `output` 补齐 `sandbox_killed/limit_hit/sandbox`
+    三字段（原先被丢弃），让执行结果段能展示沙箱处置；② 新增受控端点 `/guardrail/sandbox-demo`——
+    **只跑服务端常量命令**（白名单 normal/cpu/memory，自限自灭），绝不接受前端任意命令，杜绝「演示功能反成 RCE」。
+- 设计决策与理由：
+  - **组件化复用而非复制**：GuardVerdict/TraceDetail 抽成独立 .vue，回放与检测台共用，改一处两处生效；
+    符合「演示即真实」——前端看到的两栏与后端 `GuardResult.to_dict()` 是同一份数据，不另造假数据。
+  - **沙箱演示走白名单常量、不开放任意执行**：前端能触发的吃资源命令是服务端固定的三条无害脚本，
+    既演到「失控被掐死」，又不把执行沙箱变成任意命令执行入口——安全演示的纪律一以贯之。
+  - **富视图 + 原始 JSON 并存**：结构化两栏/横幅给评委看结论，折叠里的原始 JSON 给技术评审查证，两不耽误。
+- 指标：后端新增 4 条测试（动作 output 带沙箱字段 1 条 + sandbox-demo 端点 3 条），全套 pytest
+  **475 → 479 全绿**；前端 `npm run build` 通过。红队/AB 指标不变（未碰护栏裁决逻辑）。
+- 下一步：纯前端联调留待 Week4 在虚机上 `npm run dev` + 后端连跑做端到端走查；P4 系列前端接入收口。

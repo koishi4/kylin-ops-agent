@@ -251,7 +251,11 @@ def _guarded_finish(action: str, trace: list[dict], command: str, rationale: str
 
     output = None
     if decided["executed"]:
-        output = {k: res[k] for k in ("ok", "stdout", "stderr", "error") if k in res}
+        # 含沙箱处置字段（sandbox_killed/limit_hit/sandbox，P4-3）：让前端「执行结果」段
+        # 能展示「这条命令是在资源/权限沙箱内落地的，是否触发限额」。
+        output = {k: res[k] for k in
+                  ("ok", "stdout", "stderr", "error",
+                   "sandbox_killed", "limit_hit", "sandbox") if k in res}
     trace.append({"stage": "执行结果", "detail": {
         "executed": decided["executed"], "blocked": decided["blocked"],
         "require_confirm": decided["require_confirm"], "reason": decided["reason"],

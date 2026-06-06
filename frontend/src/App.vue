@@ -1,7 +1,9 @@
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { chat, getHealth, listTools, listTraces, getTrace, verifyTrace, diagnose, executeAction, getRules, reloadRules, getTrifecta, getToolScan } from './api.js'
+import { chat, getHealth, listTools, listTraces, getTrace, verifyTrace, diagnose, executeAction, getRules, reloadRules, getTrifecta, getToolScan, checkCommand, sandboxDemo } from './api.js'
+import GuardVerdict from './GuardVerdict.vue'
+import TraceDetail from './TraceDetail.vue'
 
 const provider = ref('-')
 const tools = ref([])
@@ -44,9 +46,6 @@ onMounted(async () => {
   }
 })
 
-function pretty(detail) {
-  return typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2)
-}
 function fmtTime(ts) {
   return ts ? new Date(ts * 1000).toLocaleString() : ''
 }
@@ -267,6 +266,60 @@ async function runToolScan() {
     scanning.value = false
   }
 }
+
+// ---- P4-2/P4-3 护栏检测台：命令护栏「正则/AST 双栏」 + 执行沙箱「失控击杀」实测 ----
+const probeOpen = ref(false)
+
+// 命令护栏检测：输入一条命令 → 三重裁决（正则 + 路径 + AST）→ 两栏对比
+const probeCmd = ref('echo $(rm -rf /etc)')
+const probeChecking = ref(false)
+const probeGuard = ref(null)
+// 预置样本：含「正则漏网、AST 抓到」的变形绕过，一键演示
+const PROBE_SAMPLES = [
+  'echo $(rm -rf /etc)',
+  'cat /var/log/app.log | bash',
+  'rm -rf /var/lib/mysql',
+  'ls -la /etc',
+]
+async function doProbeCheck() {
+  const cmd = probeCmd.value.trim()
+  if (!cmd) return
+  probeChecking.value = true
+  try {
+    probeGuard.value = await checkCommand(cmd)
+  } catch (e) {
+    ElMessage.error('检测失败：' + (e.message || e))
+  } finally {
+    probeChecking.value = false
+  }
+}
+function useSample(s) { probeCmd.value = s; doProbeCheck() }
+
+// 执行沙箱演示：跑服务端预定义的无害吃资源命令，看失控进程被限额掐死
+const sbScenario = ref('')
+const sbResult = ref(null)
+const SB_SCENARIOS = [
+  { key: 'normal', label: '正常命令', tip: 'echo：秒回、不被误杀' },
+  { key: 'cpu', label: 'CPU 失控', tip: '死循环自旋：撞墙钟超时被击杀' },
+  { key: 'memory', label: '内存失控', tip: '申请 1GB：撞内存上限被阻断' },
+]
+async function runSandbox(scenario) {
+  sbScenario.value = scenario
+  sbResult.value = null
+  try {
+    sbResult.value = await sandboxDemo(scenario)
+  } catch (e) {
+    ElMessage.error('沙箱演示失败：' + (e.message || e))
+  } finally {
+    sbScenario.value = ''
+  }
+}
+const sbKilled = computed(() => !!sbResult.value && !!(sbResult.value.sandbox_killed || sbResult.value.limit_hit))
+
+async function openProbe() {
+  probeOpen.value = true
+  if (!probeGuard.value) await doProbeCheck()  // 首开即给一个「AST 抓到变形」的镜头
+}
 </script>
 
 <template>
@@ -280,6 +333,7 @@ async function runToolScan() {
         <el-button size="small" @click="openReplay">🔍 思维链回放</el-button>
         <el-button size="small" @click="openRules">🛡️ 规则库</el-button>
         <el-button size="small" @click="openTrifecta">⚖️ 能力面板</el-button>
+        <el-button size="small" @click="openProbe">🧪 护栏检测台</el-button>
       </div>
     </el-header>
 
@@ -303,7 +357,7 @@ async function runToolScan() {
                     :color="stageColor[s.stage] || '#909399'"
                   >
                     <span class="stage">{{ s.stage }}</span>
-                    <pre class="detail">{{ pretty(s.detail) }}</pre>
+                    <TraceDetail :detail="s.detail" />
                   </el-timeline-item>
                 </el-timeline>
               </el-collapse-item>
@@ -377,7 +431,7 @@ async function runToolScan() {
                 :timestamp="fmtTime(s.ts)"
               >
                 <span class="stage">{{ s.stage }}</span>
-                <pre class="detail">{{ pretty(s.detail) }}</pre>
+                <TraceDetail :detail="s.detail" />
               </el-timeline-item>
             </el-timeline>
           </template>
@@ -559,6 +613,78 @@ async function runToolScan() {
         </el-table>
       </div>
     </el-drawer>
+
+    <!-- P4-2/P4-3 护栏检测台：命令护栏「正则/AST 双栏」+ 执行沙箱「失控击杀」实测 -->
+    <el-drawer v-model="probeOpen" title="🧪 护栏检测台（正则/AST 双栏 · 执行沙箱）" size="56%" direction="rtl">
+      <div class="probe">
+        <!-- ① 命令护栏检测：正则 + 路径 + AST 三重裁决，两栏对比 -->
+        <div class="probe-sec">
+          <div class="probe-t">① 命令护栏检测 · 正则 vs AST 结构分析</div>
+          <div class="probe-hint">
+            正面回答「正则能被变形绕过吗」：把危险藏进 <code>$()</code>/管道接 shell 等结构，
+            纯正则字面失配，但 Bash 语法树照样抓得到。
+          </div>
+          <div class="probe-input">
+            <el-input
+              v-model="probeCmd" size="default" clearable
+              placeholder="输入一条命令，如 echo $(rm -rf /etc)"
+              @keydown.enter="doProbeCheck" />
+            <el-button type="primary" :loading="probeChecking" @click="doProbeCheck">检测</el-button>
+          </div>
+          <div class="probe-samples">
+            <span class="probe-hint">试试：</span>
+            <el-tag
+              v-for="s in PROBE_SAMPLES" :key="s"
+              size="small" effect="plain" class="probe-sample" @click="useSample(s)">{{ s }}</el-tag>
+          </div>
+          <GuardVerdict v-if="probeGuard" :guard="probeGuard" />
+        </div>
+
+        <el-divider />
+
+        <!-- ② 执行沙箱：护栏放行后真正落地命令的资源/权限保险丝 -->
+        <div class="probe-sec">
+          <div class="probe-t">② 执行沙箱 · 失控进程被限额掐死</div>
+          <div class="probe-hint">
+            护栏判「该不该执行」，沙箱保「就算放行也炸不了」。下面跑<b>服务端预定义的无害命令</b>，
+            看失控进程怎样被 rlimit/超时当场掐死（对应 OWASP LLM06 过度代理）。
+          </div>
+          <div class="probe-sb-btns">
+            <el-button
+              v-for="sc in SB_SCENARIOS" :key="sc.key"
+              size="small" :loading="sbScenario === sc.key"
+              :type="sc.key === 'normal' ? 'success' : 'danger'" plain
+              @click="runSandbox(sc.key)">{{ sc.label }}</el-button>
+            <span class="probe-hint">命令为服务端常量，不接受任意输入</span>
+          </div>
+
+          <el-alert
+            v-if="sbResult"
+            :type="sbKilled ? 'error' : 'success'" :closable="false" show-icon
+            :title="sbKilled
+              ? `⛔ 失控进程被沙箱掐死（命中限额：${sbResult.limit_hit || '未知'}）`
+              : `✓ 命令在沙箱内安全完成（${sbResult.backend || 'rlimit'}）`">
+            <div class="sb-detail">
+              <div><b>场景：</b>{{ sbResult.description }}</div>
+              <div><b>命令：</b><code>{{ sbResult.command }}</code></div>
+              <div>
+                <b>限额：</b>CPU {{ sbResult.limits.cpu_s }}s · 内存 {{ sbResult.limits.mem_mb }}MB ·
+                进程 {{ sbResult.limits.max_procs }} · 文件 {{ sbResult.limits.fsize_mb }}MB ·
+                墙钟 {{ sbResult.limits.timeout_s }}s
+              </div>
+              <div>
+                <b>结果：</b>后端 <code>{{ sbResult.backend }}</code> ·
+                被杀 {{ sbResult.sandbox_killed }} ·
+                命中限额 {{ sbResult.limit_hit || '无' }} ·
+                耗时 {{ sbResult.elapsed_s }}s
+              </div>
+              <div v-if="sbResult.stdout_tail"><b>输出：</b><code>{{ sbResult.stdout_tail }}</code></div>
+              <div v-if="sbResult.stderr_tail" class="sb-err"><b>错误：</b><code>{{ sbResult.stderr_tail }}</code></div>
+            </div>
+          </el-alert>
+        </div>
+      </div>
+    </el-drawer>
   </el-container>
 </template>
 
@@ -624,4 +750,17 @@ html, body, #app { height: 100%; margin: 0; }
 .tri-note { font-size: 12px; line-height: 1.7; }
 .tri-legend { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
 .tri-dash { color: #c0c4cc; }
+
+/* 护栏检测台抽屉（P4-2/P4-3） */
+.probe-sec { margin-bottom: 8px; }
+.probe-t { font-weight: 600; margin-bottom: 4px; }
+.probe-hint { font-size: 12px; color: #909399; line-height: 1.6; }
+.probe-hint code, .sb-detail code { background: #f0f2f5; padding: 0 4px; border-radius: 3px; }
+.probe-input { display: flex; gap: 8px; margin: 8px 0; }
+.probe-samples { margin-bottom: 10px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.probe-sample { cursor: pointer; font-family: monospace; }
+.probe-sample:hover { background: #ecf5ff; }
+.probe-sb-btns { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+.sb-detail { font-size: 12px; line-height: 1.8; word-break: break-all; }
+.sb-detail .sb-err { color: #c45656; }
 </style>

@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -117,6 +118,59 @@ async def guardrail_check(req: GuardCheckRequest) -> dict:
     """对一条命令做护栏裁决（只校验、绝不执行）—— 危险命令拦截 demo 的后端入口。"""
     return check_command(req.command, authorized=req.authorized,
                          confirmed=req.confirmed).to_dict()
+
+
+# 执行沙箱演示场景：**服务端预定义**的无害「吃资源」命令，绝不接受前端任意命令。
+# 命令均为服务端常量、自限自灭（CPU 自旋撞超时 / 1GB 内存撞 RLIMIT_AS / echo 秒回），对宿主机无害。
+# (args, 内存上限覆盖 MB 或 None, 墙钟超时秒, 说明)
+_SANDBOX_DEMO = {
+    "normal": (["echo", "sandbox-ok"], None, 5, "正常命令：秒回、不被误杀"),
+    "cpu": (["python3", "-c", "while True: pass"], None, 2,
+            "CPU 自旋失控：撞墙钟超时被整组击杀"),
+    "memory": (["python3", "-c", "x=bytearray(1024*1024*1024)"], 128, 10,
+               "申请 1GB 内存：撞 RLIMIT_AS 被限额阻断"),
+}
+
+
+@router.get("/guardrail/sandbox-demo")
+async def guardrail_sandbox_demo(scenario: str = "cpu") -> dict:
+    """执行沙箱演示（P4-3）：跑一条**服务端预定义**的无害吃资源命令，展示「失控进程被沙箱掐死」。
+
+    只在固定场景白名单（normal/cpu/memory）里选，命令为服务端常量、不接受任意输入——
+    护栏放行后真正落地的命令都套这层资源/权限沙箱（防线4 OS 级延伸，对应 OWASP LLM06）。
+    """
+    if scenario not in _SANDBOX_DEMO:
+        raise HTTPException(
+            status_code=400,
+            detail=f"未知场景：{scenario!r}（可选 {', '.join(_SANDBOX_DEMO)}）")
+
+    from app.core.sandbox import SandboxLimits, run_sandboxed
+
+    args, mem_override, timeout, desc = _SANDBOX_DEMO[scenario]
+    limits = SandboxLimits.from_settings(get_settings())
+    if mem_override:
+        limits = replace(limits, mem_mb=mem_override)
+
+    t0 = time.time()
+    res = await asyncio.to_thread(run_sandboxed, args, limits=limits, timeout=timeout)
+    elapsed = round(time.time() - t0, 2)
+
+    stderr = (res.get("stderr") or "").strip()
+    return {
+        "scenario": scenario,
+        "description": desc,
+        "command": " ".join(args),
+        "backend": res.get("sandbox"),
+        "limits": {"cpu_s": limits.cpu_seconds, "mem_mb": limits.mem_mb,
+                   "max_procs": limits.max_procs, "fsize_mb": limits.fsize_mb,
+                   "timeout_s": timeout},
+        "ok": res.get("ok"),
+        "sandbox_killed": res.get("sandbox_killed"),
+        "limit_hit": res.get("limit_hit"),
+        "stdout_tail": (res.get("stdout") or "").strip()[-200:],
+        "stderr_tail": stderr.splitlines()[-1][-200:] if stderr else "",
+        "elapsed_s": elapsed,
+    }
 
 
 @router.post("/chat")
