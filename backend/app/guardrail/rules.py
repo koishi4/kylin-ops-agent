@@ -87,6 +87,11 @@ _REDLINE_RULES: list[Rule] = [
          RiskLevel.CRITICAL, Action.DENY, "篡改 sudoers / 提权用户组，严重权限越界", "privilege"),
     Rule("PRIV-004", r"\b(useradd|adduser)\s+.*(-u\s*0|--uid\s*0)",
          RiskLevel.CRITICAL, Action.DENY, "创建 UID=0 的等价 root 账户，提权后门", "privilege"),
+    # P0-A：kill 命中 PID 1（init/systemd）或 PID -1（所有进程）→ 全系统崩溃，红线拒绝。
+    # 信号旗标（-9 / -s KILL）被前段吞掉，只在目标位精确匹配 1 / -1，绝不误伤 kill 12345。
+    Rule("KILL-001", r"\bkill\b(\s+-(\w+|s\s+\w+))*\s+(--\s+)?-?1(\s|$)",
+         RiskLevel.CRITICAL, Action.DENY,
+         "向 PID 1(init/systemd) 或 PID -1(所有进程) 发送信号，会导致系统/会话整体崩溃", "privilege"),
     Rule("CFG-001", r">\s*/etc/(passwd|shadow|fstab|sudoers|group|gshadow)",
          RiskLevel.CRITICAL, Action.DENY, "改写系统关键配置文件，可致系统无法登录/启动", "config"),
     Rule("INJ-003", r"(base64\s+-d|base64\s+--decode|xxd\s+-r)\s*\|\s*(sh|bash|zsh)",
@@ -263,12 +268,58 @@ def _is_under_critical(resolved: str) -> bool:
     return False
 
 
-def hits_critical_path(cmd: str) -> list[str]:
-    """正则之外的第二重判断：对 rm 删除命令提取路径参数并 realpath 规范化，
-    捕获 `rm -rf /etc/../etc`、相对路径、软链接绕过等正则难覆盖的变形。
+# P0-A：把 realpath 路径兜底从「只管 rm」推广到**一组不可逆的数据销毁动词**。
+# 选取标准——操作即**不可逆数据丢失/覆写**，且其文件操作数就是销毁目标：
+#   rm/unlink/rmdir 删除、shred 粉碎、truncate 截断、tee 覆写、dd 块写、mkfs 格式化、find -delete。
+# **刻意不纳入 chmod/chown/chgrp/mv/cp**：前者是可恢复的元数据变更（危险变形 chmod 777 / 递归改权
+#   已被 PERM-001/002/003 覆盖），把单文件 `chmod 644 /etc/hosts` 升级为 CRITICAL 会误杀常规运维、
+#   破坏本项目「误杀率 0%」的硬指标；后者(mv/cp/install) 操作数兼有「源(只读)/目的(写)」二义性，
+#   一律按目标拦会对读源产生假阳性。这是「保守合并取更严」的**有判断的**落地，非黑名单跑步机。
+#   详见 docs/dev-log.md 与 docs/security-design.md「为何不把 chmod/chown 一并升级 CRITICAL」。
+_DESTRUCTIVE_PATH_VERBS = {"rm", "unlink", "rmdir", "shred", "truncate", "tee"}
+# find 的销毁动作（-delete / -exec rm 等）才触发路径兜底；只读 find 不受影响。
+_FIND_EXEC_DESTRUCTIVE = {"rm", "unlink", "shred", "truncate", "dd", "mkfs"}
 
-    只针对 rm（删除不可逆，是路径绕过攻击的高价值目标）；chmod/chown 可恢复，
-    且已被 PERM-* 规则覆盖，若也在此升级为 CRITICAL 会误杀单文件 chmod 等正常运维。
+
+def _looks_like_path(tok: str) -> bool:
+    return tok.startswith(("/", ".", "~")) or "/" in tok
+
+
+def _plain_path_operands(args: list[str]) -> list[str]:
+    """取像路径的操作数：跳过旗标与非路径取值（如 truncate -s 0 里的 0）。"""
+    return [a for a in args if not a.startswith("-") and _looks_like_path(a)]
+
+
+def _find_is_destructive(tokens: list[str]) -> bool:
+    """find 表达式是否含 -delete 或 -exec/-execdir 接销毁命令。"""
+    if "-delete" in tokens:
+        return True
+    for i, tk in enumerate(tokens):
+        if tk in ("-exec", "-execdir", "-ok", "-okdir") and i + 1 < len(tokens):
+            if os.path.basename(tokens[i + 1]) in _FIND_EXEC_DESTRUCTIVE:
+                return True
+    return False
+
+
+def _destruction_operands(tokens: list[str]) -> list[str]:
+    """按动词取「真正会被销毁/覆写」的路径操作数；非销毁动词或只读 find 返回空。"""
+    verb = os.path.basename(tokens[0])
+    rest = tokens[1:]
+    if verb in _DESTRUCTIVE_PATH_VERBS:
+        return _plain_path_operands(rest)
+    if verb == "dd":                                   # dd 只有 of=PATH 是写目标
+        return [a[len("of="):] for a in rest if a.startswith("of=")]
+    if verb == "mkfs" or verb.startswith("mkfs."):
+        return _plain_path_operands(rest)
+    if verb == "find":
+        return _plain_path_operands(rest) if _find_is_destructive(tokens) else []
+    return []
+
+
+def hits_critical_path(cmd: str) -> list[str]:
+    """正则之外的第二重判断：对**不可逆数据销毁动词**提取路径操作数并 realpath 规范化，
+    捕获 `rm -rf /etc/../etc`、`truncate -s 0 /etc/passwd`、`find / -delete`、相对路径、
+    软链接绕过等正则难覆盖的变形。动词集与取舍见 _DESTRUCTIVE_PATH_VERBS 注释。
 
     返回命中的关键路径列表（规范化后落在 CRITICAL_PATHS 内的路径）。
     """
@@ -277,15 +328,11 @@ def hits_critical_path(cmd: str) -> list[str]:
         tokens = shlex.split(t)
     except ValueError:
         tokens = t.split()
-    if not tokens or tokens[0] != "rm":
+    if not tokens:
         return []
 
     hits: list[str] = []
-    for tok in tokens[1:]:
-        if tok.startswith("-"):
-            continue
-        if not (tok.startswith("/") or tok.startswith(".") or tok.startswith("~") or "/" in tok):
-            continue
+    for tok in _destruction_operands(tokens):
         expanded = os.path.expanduser(tok)
         resolved = os.path.normpath(os.path.realpath(expanded))
         if _is_under_critical(resolved):

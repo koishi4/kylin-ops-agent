@@ -818,3 +818,39 @@
 - 指标：纯文档 + 前端，后端 pytest 仍 **540 全绿**（未碰后端逻辑，仅 MockProvider 加了两条关键词路由，
   orchestrator/NL 测试不受影响）。
 - 至此 IMPROVEMENTS-v3 的 P0（P0-6 部分）与 P1（创新三件套 + 得分动作）全部落地；实机证明（虚机就绪）为并行轨。
+### P0-A：命令护栏绕过修复——解释器内联代码 + 破坏性动词推广 + 红队回归（IMPROVEMENTS-v4 核心卖点）
+- 背景：GPT Pro 二轮 review 用项目自己的 `check_command` 实测出**真实可执行的绕过**——8 条里 7 条以 LOW/ALLOW 通过：
+  `bash -c "rm -rf /"`、`sh -c "cat /etc/shadow"`、`python3 -c "shutil.rmtree('/')"`、`find / -delete`、
+  `find / -maxdepth 1 -delete`、`truncate -s 0 /etc/passwd`、`kill -9 1`。复现确认：整串正则因 `/"` 收尾失配，
+  bashlex 也不解析 `-c` 后的引号字符串；而 executor 是 `shlex.split + shell=False`，argv `['bash','-c','rm -rf /']`
+  执行时真会跑——是绕过，不是语义错位。
+- 做了什么（结构性三招，非黑名单跑步机）：
+  1. **解释器 + 内联代码 = 结构性 CRITICAL/DENY**（`ast_analyzer._check_interpreter_inline`）：命令首词匹配
+     sh/bash/zsh/dash/ksh/csh/tcsh/ash、python[0-9.]*、perl/ruby/node/nodejs/php/lua/awk，且按解释器家族识别
+     「就地执行代码」旗标（shell `-c`/`-s`/`-`、python `-c`/`-`、perl/ruby `-e`、node `-e/--eval/-p`、php `-r`、
+     lua `-e`、awk 位置程序串）即判 CRITICAL。**刻意不解析内层**：内层语言不定、内容无界，静态无法可信审查——
+     结构事实本身就是信号。CRITICAL 意味着即便授权+确认也拦死。
+  2. **realpath 路径兜底从「只管 rm」推广到不可逆数据销毁动词**（`rules.hits_critical_path`）：
+     rm/unlink/rmdir/shred/truncate/tee + dd(of=) + mkfs + find(-delete/-exec rm)，凡操作数 realpath 落在
+     CRITICAL_PATHS 即 CRITICAL。每动词按语义取「真正被销毁/覆写」的操作数（truncate 跳过 `-s 0`、dd 只取 of=、
+     find 仅在销毁动作下检查路径、只读 find 不受影响）。
+  3. **kill PID 1/-1 红线**（`KILL-001`，硬编码 `_REDLINE_RULES` + 镜像进 rules.yaml）：信号旗标被前段吞掉、
+     只在目标位精确匹配 `1`/`-1`，绝不误伤 `kill 12345`。
+  4. **红队回归固化**：新增 `tests/test_guardrail_bypass.py`——7 条原始绕过 + 27 条变形断言一律 allowed=False
+     且绝不停留 LOW/ALLOW；19 条正常/同形安全命令断言仍放行（守「误杀率 0%」）。
+- 设计决策与理由（报告/答辩素材）：
+  - **为何不解析 `-c` 内层**：内层可为 python/perl/任意脚本，bash AST 解析不了、内容无界——把「解释器带内联代码」
+    这个包装结构本身当高危信号，是唯一可靠的做法（呼应「约束能力，而非检测内容」哲学）。
+  - **为何刻意不把 chmod/chown/mv/cp 一并升 CRITICAL**（对 v4 字面建议的**有判断的保守偏离**，非偷懒）：
+    ① chmod/chown 是**可恢复的元数据变更**，危险变形（`chmod 777 /etc`、递归改权/改属主）已被 PERM-001/002/003
+       覆盖；把单文件 `chmod 644 /etc/hosts` 升 CRITICAL 会误杀常规运维、破坏本项目「误杀率 0%」硬指标与公信力。
+    ② mv/cp/install 操作数兼有「源(只读)/目的(写)」二义性，一律按目标拦会对「读源」假阳性。
+    取舍标准统一为「**不可逆 + 操作数即销毁目标**」，既更严又不过度——这正是「保守合并取更严」的正确边界。
+  - **find -delete 用 realpath 兜底而非一条 blanket 正则**：`find /tmp/cache -delete` 是合法清理，盲拦会误杀；
+    realpath 落关键路径才拦，既抓住 `find / -delete` 又放行临时目录，精度更高。
+  - **命令护栏 + 沙箱遏制闭环**：诚实承认命令护栏总可能被**新变形**绕过——故非 root 受限沙箱（P1-3）是兜底，
+    把「检测不到的绕过」的爆炸半径在 OS 层压住。发现并修补 N 类基础绕过 > 宣称 100% 通过。
+- 踩坑：把 KILL-001 镜像进 rules.yaml 后，`test_rules_config.py` 硬编码的「应加载 25 条」断言失败——更新为 26。
+- 实测：原始 7 条 + 27 变形全部 allowed=False（均判 critical），19 条正常/同形安全命令零误杀；
+  解释器内联代码授权+确认仍拦死。全套 pytest **540 → 631 全绿**（+91 红队回归用例）。
+- 下一步：P0-B 把 truncate_log 改 fd-safe（os.ftruncate，不再走 `truncate` 命令），与本项 truncate 推广闭环。

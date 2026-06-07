@@ -36,6 +36,16 @@ _SHELL_INTERPRETERS = {
     "python", "python2", "python3", "perl", "ruby", "node", "php", "lua",
 }
 
+# P0-A：解释器 + 内联代码的「结构性高危」识别。
+# 真实绕过的根源：executor 用 shlex.split + shell=False，`bash -c "rm -rf /"` 会被拆成
+# argv ['bash','-c','rm -rf /'] 真的执行——而整串正则因 `/"` 收尾失配、bashlex 也不会去解析
+# `-c` 后那段引号字符串（内层可为 python/perl，语言不定、内容无界，无法静态可信审查）。
+# 因此把「解释器携带内联代码」这个**结构事实本身**当高危信号，不去解析内层（见模块文档/security-design）。
+_SHELL_NAMES = {"sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "ash"}
+# 命令首词若匹配它即视为解释器（python3/python2.7 等带版本号一并覆盖）。
+_INTERPRETER_RE = re.compile(
+    r"^(sh|bash|zsh|dash|ksh|csh|tcsh|ash|python[0-9.]*|perl|ruby|node|nodejs|php|lua|awk)$")
+
 # 重定向写入这些目标即灾难：块设备（覆写磁盘）/ 系统关键路径（越权改配置）。
 _BLOCK_DEV_RE = re.compile(r"^/dev/(sd|nvme|vd|hd|mmcblk|loop|dm-|md)")
 _CRITICAL_WRITE_RE = re.compile(r"^/(etc|boot|sys|proc|usr|bin|sbin|lib|lib64|root)(/|$)")
@@ -109,16 +119,67 @@ def _words(node) -> list[str]:
     return [p.word for p in getattr(node, "parts", []) if getattr(p, "kind", "") == "word"]
 
 
+def _cmd_and_args(node) -> tuple[str, list[str]]:
+    """拆出命令的「真正可执行名」basename 与其后参数（跳过 sudo/env/赋值前缀）。"""
+    cmd = ""
+    args: list[str] = []
+    for w in _words(node):
+        if not cmd:
+            if "=" in w.split("/")[-1] and not w.startswith("/"):  # FOO=bar 前置赋值
+                continue
+            base = os.path.basename(w)
+            if base in _SKIP_WORDS:
+                continue
+            cmd = base
+        else:
+            args.append(w)
+    return cmd, args
+
+
 def _effective_cmd(node) -> str:
     """命令的「真正可执行名」basename：跳过 sudo/env/赋值前缀，取第一个实命令词。"""
-    for w in _words(node):
-        if "=" in w.split("/")[-1] and not w.startswith("/"):  # FOO=bar 形式的前置赋值
-            continue
-        base = os.path.basename(w)
-        if base in _SKIP_WORDS:
-            continue
-        return base
-    return ""
+    return _cmd_and_args(node)[0]
+
+
+def _has_inline_code(cmd: str, args: list[str]) -> bool:
+    """判断「解释器 + 内联代码」：按解释器家族识别其「就地执行代码」的旗标或位置程序串。
+
+    不解析内层代码（语言不定、内容无界，静态无法可信审查）——结构事实本身即信号。
+    """
+    aset = set(args)
+
+    def short_has(ch: str) -> bool:  # 组合短旗标里含某字母，如 -lc / -xec
+        return any(re.fullmatch(rf"-[a-z]*{ch}[a-z]*", a) for a in args)
+
+    if cmd in _SHELL_NAMES:                       # sh/bash… -c CMD、-s/读 stdin
+        return short_has("c") or "--command" in aset or "-s" in aset or "-" in aset
+    if cmd.startswith("python"):                  # python -c CODE、python - (stdin)
+        return "-c" in aset or "--command" in aset or "-" in aset
+    if cmd == "perl":                             # perl -e/-E CODE
+        return short_has("e") or "-E" in aset
+    if cmd == "ruby":                             # ruby -e CODE
+        return short_has("e")
+    if cmd in ("node", "nodejs"):                 # node -e/--eval/-p/--print CODE
+        return bool(aset & {"-e", "--eval", "-p", "--print"})
+    if cmd == "php":                              # php -r CODE
+        return "-r" in aset
+    if cmd == "lua":                              # lua -e CODE
+        return "-e" in aset
+    if cmd == "awk":                              # awk '程序串'（除非 -f 指定脚本文件）
+        return "-f" not in aset and any(not a.startswith("-") for a in args)
+    return False
+
+
+def _check_interpreter_inline(node, out: list[AstFinding]) -> None:
+    """P0-A 主修：命令首词是解释器且携带内联代码 → 结构性 CRITICAL/DENY。"""
+    cmd, args = _cmd_and_args(node)
+    if not cmd or not _INTERPRETER_RE.fullmatch(cmd) or not _has_inline_code(cmd, args):
+        return
+    out.append(AstFinding(
+        "interpreter_inline_code", RiskLevel.CRITICAL, Action.DENY,
+        f"解释器 {cmd} 携带内联代码（-c/-e/程序串/读 stdin）：内层代码语言不定、内容无界，"
+        "无法静态可信审查，按结构性高危拒绝。请改用结构化工具或执行受审计的脚本文件，"
+        "勿向 Agent 下发自由形态解释器命令。"))
 
 
 def _children(node) -> list:
@@ -190,6 +251,8 @@ def _handle_command(node, src: str, nested: bool, out: list[AstFinding]) -> None
                 _walk(sub, src, True, out)
     # 2) 危险 glob
     _check_dangerous_glob(node, out)
+    # 2.5) 解释器 + 内联代码（P0-A 主修绕过：bash -c "rm -rf /" / python3 -c "…"）
+    _check_interpreter_inline(node, out)
     # 3) 对被 shell 结构包裹的子命令复跑正则规则——这正是「正则漏网、AST 抓到」的来源：
     #    形如 echo $(rm -rf /) 的整串正则会因相邻标点错位而漏判，但隔离出的子命令必命中红线。
     if nested:
