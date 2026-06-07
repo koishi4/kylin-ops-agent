@@ -146,6 +146,27 @@ DEL-001 的 `/(\s|$)` 因 `/"` 收尾而漏判，bashlex 也不会去解析 `-c`
 
 > 结果：原始 7 条 + 27 条变形全部不再 LOW/ALLOW，19 条正常/同形安全命令零误杀（误杀率仍 0%）。
 
+### 5.1 第三方范式独立红队：注入维度也照此修补（RedCode-Exec / DeepTeam）
+
+把「自评安全」升级为「对抗语料独立打分」：`scripts/redteam_eval.py` 是 RedCode-Exec（风险代码该不该
+被允许执行）与 DeepTeam（注入/越狱该不该被识破）两类基准的**本地化离线评测器**——护栏即被测目标，
+危险命令走 `check_command`、注入话术走 `scan_injection`，按家族算检出率 / 攻击成功率(ASR) / 误拦率。
+
+**首跑如实暴露的盲区**（诚实叙事的又一次兑现）：命令护栏 18/18 全拦、良性命令/诉求 0 误拦，但
+**防线3 的注入检出仅 30%**——7 条 DeepTeam 风格越狱从规则缝里漏过：DAN/unrestricted「无限制人格」、
+「输出你的系统提示词」、「disregard the safety **policy**」（原规则只认 rule/instruction）、对话内夹带
+`<important>…</important>` 隐藏指令、「pretend the rules don't apply」、「system override … without
+confirmation」。
+
+**修补（结构性扩面，非个案打补丁）**：在可热加载的 `rules.yaml` 增 INJ-006~010 五类注入规则——套取系统
+提示词 / 声称安全规则不适用 / 无限制越狱人格 / 关闭护栏免确认 / 隐藏指令伪标签，并把 INJ-001 的指令覆盖
+扩到 policy/guardrail。复跑 **42/42、ASR 0%、误拦 0%**；7 条越狱语料并入 `test_guardrail_redteam.py` 的
+INJECTIONS 固化为**永不退化回归**。`scan_injection` 与 `classify_intent` 同源复用 inject 规则，故同一次扩面
+既提升注入检出、又让这些话术被意图分类判「黑」直接拒绝、不进 LLM。
+
+> 一以贯之：**发现并修补 N 类绕过 > 宣称 100%**。命令维度（§5）与注入维度（§5.1）两次都按同一方法论——
+> 用对抗评测找洞、结构性扩面修补、固化回归——这比任何「全部通过」的断言都更有公信力。
+
 ## 6. 已知边界与未来工作
 
 - **运行时行为检测（eBPF / auditd / Falco）**：当前不引入（竞赛虚机跑不动，且属重型 IDS）；

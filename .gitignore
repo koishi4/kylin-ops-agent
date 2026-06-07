@@ -5,6 +5,8 @@ __pycache__/
 audit.sqlite
 *.sqlite
 *.sqlite-*
+tool_baseline.json
+redteam-report.json
 node_modules/
 dist/
 .DS_Store

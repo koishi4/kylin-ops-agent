@@ -1,10 +1,12 @@
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, defineAsyncComponent } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { chat, getHealth, listTools, listTraces, getTrace, verifyTrace, diagnose, executeAction, getRules, reloadRules, getTrifecta, getToolScan, checkCommand, sandboxDemo } from './api.js'
 import GuardVerdict from './GuardVerdict.vue'
 import TraceDetail from './TraceDetail.vue'
-import JudgeMode from './JudgeMode.vue'
+// 评委模式面板只在抽屉打开时（v-if="judgeOpen"）才渲染，故懒加载：拆成独立 chunk，
+// 仅在点开「🏆 评委模式」时按需下载，首屏主包不含这块（连同其专属依赖）。P2 代码分割。
+const JudgeMode = defineAsyncComponent(() => import('./JudgeMode.vue'))
 
 const provider = ref('-')
 const tools = ref([])

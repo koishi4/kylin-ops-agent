@@ -16,7 +16,12 @@ from app.config import get_settings
 from app.core import actions, diagnosis
 from app.guardrail.engine import check_command
 from app.guardrail.rules import RULES, load_status, reload_rules, rules_fingerprint
-from app.guardrail.tool_scan import apply_quarantine, scan_tools
+from app.guardrail.tool_scan import (
+    baseline_fingerprint,
+    save_baseline,
+    scan_with_drift,
+    tool_fingerprint,
+)
 from app.guardrail.trifecta import capability_table
 
 router = APIRouter()
@@ -163,16 +168,35 @@ async def guardrail_rules_reload() -> dict:
 
 @router.get("/guardrail/tool-scan")
 async def guardrail_tool_scan(request: Request) -> dict:
-    """MCP 工具供应链扫描 + 处置（P3-4 + P0-C）：静态检测工具元数据里的投毒/影子/隐形载荷，
-    并标注每个工具的处置档位（已隔离 isolated / 需人工复核 review / 已放行 cleared）。
+    """MCP 工具供应链扫描 + 处置（P3-4 + P0-C + P2 rug-pull）：静态检测工具元数据里的
+    投毒/影子/隐形载荷，并对比已锚定基线检测 schema 漂移（rug-pull / 运行期新增工具），
+    标注每个工具的处置档位（已隔离 isolated / 需人工复核 review / 已放行 cleared）。
 
     本地分析 name/description/schema，绝不上传文件或凭据（致敬 mcp-scan）。
-    覆盖 2025 年 MCP 新攻击面：工具投毒（藏指令）、工具影子（跨工具篡改）、隐形 Unicode。
-    返回的 isolated 名单即「fail-closed 不进 LLM 上下文」的工具，与编排器实际过滤口径一致。
+    覆盖 2025 年 MCP 新攻击面：工具投毒（藏指令）、工具影子（跨工具篡改）、隐形 Unicode、
+    rug-pull（获信任后悄改 description/schema）。返回的 isolated 名单即「fail-closed 不进 LLM
+    上下文」的工具，与编排器实际过滤口径一致；drift 段汇报相对基线的 new/changed/removed。
     """
     mcp = request.app.state.mcp
-    return apply_quarantine(scan_tools(await mcp.list_tools()),
-                            allow_medium=get_settings().quarantine_allow_medium)
+    return await asyncio.to_thread(
+        scan_with_drift, await mcp.list_tools(),
+        allow_medium=get_settings().quarantine_allow_medium)
+
+
+@router.post("/guardrail/tool-scan/pin", dependencies=[Depends(require_operator)])
+async def guardrail_tool_scan_pin(request: Request) -> dict:
+    """把当前 MCP 工具集锚定为新基线（P2 rug-pull）：合法工具升级后由 operator 重锚。
+
+    敏感操作（改变「可信工具基线」），挂 require_operator 鉴权。锚定后再次扫描即以新内容为准，
+    旧的 rug-pull 告警随之消除——这是「合法变更」与「恶意变脸」的人工分界。
+    """
+    mcp = request.app.state.mcp
+    tools = await mcp.list_tools()
+    fingerprints = {t.get("name", ""): tool_fingerprint(
+        t.get("name", ""), t.get("description", ""), t.get("inputSchema")) for t in tools}
+    meta = await asyncio.to_thread(save_baseline, fingerprints)
+    return {"ok": True, "pinned": meta["count"], "pinned_at": meta["pinned_at"],
+            "path": meta["path"], "tools": sorted(fingerprints)}
 
 
 @router.get("/guardrail/trifecta")
@@ -280,6 +304,27 @@ async def trace_detail(trace_id: str) -> dict:
 async def trace_verify(trace_id: str) -> dict:
     """校验执行链哈希链完整性（防篡改）：返回 valid 及断裂点，供前端展示「可信审计」。"""
     return store.verify_chain(trace_id)
+
+
+@router.get("/traces/{trace_id}/evidence", dependencies=[Depends(require_operator)])
+async def trace_evidence(trace_id: str) -> dict:
+    """导出一条 trace 的自封口审计证据包（P2）：完整五段 + verify 结果 + 导出时的护栏规则指纹
+    + 工具 schema 基线指纹 + HMAC 封口（seal）。
+
+    用途：把可追溯性从「本系统内回放」升级为「可离线核验的取证材料」。证据包用同一 HMAC 密钥封口，
+    任何导出后的改动都会令 seal 失配（verify_evidence 检出）——与库内哈希链双重防篡改。
+    含完整 trace 明文（已脱敏），属敏感导出，挂 require_operator 鉴权。
+    """
+    st = load_status()
+    components = {
+        "rules": {"fingerprint": rules_fingerprint(), "count": st["count"], "source": st["source"]},
+        "tool_schema_baseline": {"fingerprint": baseline_fingerprint()},
+        "app": {"name": "kylin-ops-agent", "version": "0.1.0"},
+    }
+    pack = await asyncio.to_thread(store.export_evidence, trace_id, components=components)
+    if not pack.get("ok"):
+        raise HTTPException(status_code=404, detail=pack.get("error", f"trace 不存在: {trace_id}"))
+    return pack
 
 
 @router.get("/vuln-intel", dependencies=[Depends(require_operator)])

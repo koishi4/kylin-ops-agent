@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     # high 无条件隔离；medium 默认隔离，置 true 才作为 operator override 降级为「需人工复核」放行。
     quarantine_allow_medium: bool = False
 
+    # MCP 工具 schema 指纹基线（P2：rug-pull / 工具变脸检测）。TOFU：首次扫描通过即锚定，
+    # 之后工具 description/schema 被悄改→指纹变→自动隔离；合法升级经 /guardrail/tool-scan/pin 重锚。
+    tool_baseline_path: str = "./tool_baseline.json"
+
     # 执行账户（最小权限，非 root）
     exec_user: str = "opsagent"
     # 以 root 运行时是否拒绝启动（最小权限启动闸门，审查整改②）。

@@ -50,7 +50,7 @@ class TestShippedYaml:
         st = rules.load_status()
         assert st["source"] == "yaml", "默认应从 rules.yaml 加载"
         assert st["errors"] == []
-        assert st["count"] == 26, f"应加载 26 条规则，实际 {st['count']}"
+        assert st["count"] == 31, f"应加载 31 条规则，实际 {st['count']}"
 
     def test_dangerous_commands_still_blocked(self):
         # YAML 化后红队拦截能力不能退化
@@ -138,7 +138,7 @@ class TestFailSafe:
         assert st["applied"] is False, "坏配置不应被换入"
         assert any("正则" in e for e in st["errors"])
         # 维持出厂规则，拦截能力不受影响
-        assert st["count"] == 26
+        assert st["count"] == 31
         assert not check_command("rm -rf /").allowed
 
     def test_missing_field_rejected(self, tmp_path):

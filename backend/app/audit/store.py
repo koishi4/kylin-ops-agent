@@ -280,6 +280,69 @@ def verify_chain(trace_id: str) -> dict[str, Any]:
             "reason": "哈希链完整，未检测到篡改。"}
 
 
+# ---------------------------------------------------------------------------
+# P2：审计证据包导出 —— 把「一条 trace + 防篡改证明 + 当时的护栏/工具版本」打成一个**自封口**的
+# 可携带证据包。用途：把可追溯性从「只能在本系统里回放」升级为「可离线核验的取证材料」。
+# 内容：完整五段 trace + verify_chain 结果 + head_hash + 导出时的规则指纹/工具基线指纹 + 元数据，
+# 再用同一 HMAC 密钥对整包封口（seal）。任何对证据包内容的事后改动都会令 seal 重算不一致而被 verify_evidence
+# 检出——与库内哈希链「双重防篡改」：链证明库未被改，seal 证明导出后的这份材料未被改。
+# ---------------------------------------------------------------------------
+EVIDENCE_KIND = "kylin-ops-agent.evidence-pack"
+EVIDENCE_VERSION = "1"
+
+
+def _evidence_seal(body: dict[str, Any]) -> str:
+    """对证据包正文（不含 seal 自身）计算 HMAC-SHA256 封口。"""
+    canonical = json.dumps(body, sort_keys=True, ensure_ascii=False, default=str)
+    return hmac.new(_hmac_key(), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def export_evidence(trace_id: str, *, components: dict[str, Any] | None = None) -> dict[str, Any]:
+    """导出一条 trace 的自封口证据包。components 由调用方填入导出时的护栏/工具版本快照。
+
+    Returns: {ok, evidence:{kind,version,generated_at,trace_id,head_hash,hmac_alg,
+              components, trace, verify, seal}} 或 {ok:False,error}。
+    """
+    trace = get_trace(trace_id)
+    if trace is None:
+        return {"ok": False, "error": f"trace 不存在: {trace_id}", "trace_id": trace_id}
+    body = {
+        "kind": EVIDENCE_KIND,
+        "version": EVIDENCE_VERSION,
+        "generated_at": time.time(),
+        "trace_id": trace_id,
+        "head_hash": trace.get("head_hash"),
+        "hmac_alg": "HMAC-SHA256",
+        "components": components or {},   # 规则指纹 / 工具 schema 基线指纹 / 应用版本
+        "trace": trace,                   # 完整五段（detail 落库时已脱敏）
+        "verify": verify_chain(trace_id),  # 导出时刻的链完整性裁决
+    }
+    return {"ok": True, "evidence": {**body, "seal": _evidence_seal(body)}}
+
+
+def verify_evidence(pack: dict[str, Any]) -> dict[str, Any]:
+    """核验证据包封口（持有同一 HMAC 密钥方可验证）：重算 seal 与包内 seal 比对。
+
+    seal 不匹配 = 导出后这份材料被改过；seal 匹配再看包内 verify.valid（导出时链是否完整）。
+    """
+    ev = pack.get("evidence", pack)
+    seal = ev.get("seal")
+    if not seal:
+        return {"valid": False, "seal_matches": False, "chain_valid": False,
+                "reason": "证据包缺少 seal，无法核验。"}
+    body = {k: v for k, v in ev.items() if k != "seal"}
+    seal_ok = hmac.compare_digest(_evidence_seal(body), seal)
+    chain_valid = bool(ev.get("verify", {}).get("valid"))
+    if not seal_ok:
+        reason = "证据包 seal 不匹配——导出后内容被篡改。"
+    elif not chain_valid:
+        reason = "证据包封口完好，但导出时记录的哈希链 verify 为无效（库内链曾被破坏）。"
+    else:
+        reason = "证据包封口完好且导出时哈希链完整——材料可信。"
+    return {"valid": seal_ok and chain_valid, "seal_matches": seal_ok,
+            "chain_valid": chain_valid, "reason": reason}
+
+
 def _session_row(r: sqlite3.Row) -> dict[str, Any]:
     return {
         "trace_id": r["trace_id"],

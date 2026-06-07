@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -78,6 +79,7 @@ class Finding:
 class ToolScanResult:
     name: str
     findings: list[Finding] = field(default_factory=list)
+    fingerprint: str = ""   # name+description+schema 的内容指纹（P2：rug-pull 漂移检测用）
 
     @property
     def suspicious(self) -> bool:
@@ -92,6 +94,7 @@ class ToolScanResult:
     def to_dict(self) -> dict:
         return {"name": self.name, "suspicious": self.suspicious,
                 "max_severity": self.max_severity,
+                "fingerprint": self.fingerprint,
                 "findings": [f.to_dict() for f in self.findings]}
 
 
@@ -105,11 +108,27 @@ def _schema_text(schema) -> str:
         return str(schema)
 
 
+def tool_fingerprint(name: str, description: str, input_schema=None) -> str:
+    """工具元数据（name + description + inputSchema）的稳定内容指纹（SHA-256 前 16 字节 hex）。
+
+    用于 rug-pull / 工具投毒「事后变脸」检测：MCP 工具初次扫描通过即把指纹锚入基线（TOFU，
+    trust-on-first-use）；之后任一工具的 name/description/schema 被悄悄改动，指纹即变，可在
+    **不重新人工审查全部工具**的前提下精确指认「哪个工具变了」。schema 用 sort_keys 规范化，
+    保证「同内容不同键序」不会误报漂移。
+    """
+    canonical = json.dumps(
+        {"name": name or "", "description": description or "", "schema": input_schema},
+        sort_keys=True, ensure_ascii=False, default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
+
+
 def scan_tool(name: str, description: str, input_schema=None,
               *, peer_names: set[str] | None = None) -> ToolScanResult:
     """对单个工具的 name/description/schema 做投毒/影子/隐形启发式扫描。"""
     res = ToolScanResult(name=name)
     desc = description or ""
+    res.fingerprint = tool_fingerprint(name, desc, input_schema)
     blob = f"{desc}\n{_schema_text(input_schema)}"
 
     # 1) 注入话术（复用防线3 检测，不重复维护正则）
@@ -227,4 +246,143 @@ def apply_quarantine(report: dict, *, allow_medium: bool = False) -> dict:
     report["allow_medium"] = allow_medium
     report["note"] = report.get("note", "") + \
         "｜处置：high 无条件隔离 / medium 默认隔离(需 operator override) / low 告警可用。"
+    return report
+
+
+# ---------------------------------------------------------------------------
+# P2：工具 schema 指纹基线 + rug-pull / 变更告警。
+# 威胁：MCP 工具初次审查无害、获信任后，恶意 server **悄悄改 description/schema**（rug-pull），
+# 或在运行期**新增**一个夹带影子指令的工具——静态启发式扫的是「此刻的内容」，挡不住「事后变脸」。
+# 对策（TOFU，trust-on-first-use）：首次扫描通过即把每个工具的指纹锚入基线；之后每次扫描与基线比对：
+#   - 指纹变了（changed）→ TP-RUGPULL（high）→ 经 apply_quarantine 自动**隔离**，不再进 LLM 上下文。
+#   - 基线里没有的新工具（new）→ TP-NEW（medium）→ 默认隔离待人工复核（可能是工具影子的新载体）。
+#   - 基线里有、现在没了（removed）→ 仅记入 drift 摘要（工具消失不构成上下文注入风险）。
+# 合法变更（如工具升级）由 operator 经 /guardrail/tool-scan/pin 重新锚定基线。
+# ---------------------------------------------------------------------------
+_DRIFT_SEV_ORDER = {"high": 3, "medium": 2, "low": 1, "none": 0}
+
+
+def _bump_finding(tool: dict, code: str, severity: str, detail: str) -> None:
+    """给（已 to_dict 的）工具补一条 finding，并同步 suspicious / max_severity。"""
+    tool.setdefault("findings", []).append(
+        {"code": code, "severity": severity, "detail": detail})
+    tool["suspicious"] = True
+    cur = tool.get("max_severity", "none")
+    if _DRIFT_SEV_ORDER.get(severity, 0) > _DRIFT_SEV_ORDER.get(cur, 0):
+        tool["max_severity"] = severity
+
+
+def diff_fingerprints(current: dict[str, str], baseline: dict[str, str]) -> dict:
+    """对比当前指纹表与基线，分出 new / removed / changed / unchanged（纯函数，无副作用）。"""
+    cur_names, base_names = set(current), set(baseline)
+    changed = sorted(n for n in cur_names & base_names if current[n] != baseline[n])
+    unchanged = sorted(n for n in cur_names & base_names if current[n] == baseline[n])
+    return {
+        "new": sorted(cur_names - base_names),
+        "removed": sorted(base_names - cur_names),
+        "changed": changed,
+        "unchanged": unchanged,
+    }
+
+
+def annotate_drift(report: dict, baseline: dict[str, str]) -> dict:
+    """据基线给扫描报告标注 rug-pull / 新增告警（就地补 findings + drift 摘要）。
+
+    必须在 apply_quarantine **之前**调用——这样 changed→TP-RUGPULL(high) 会被隔离逻辑接住。
+    baseline 为空（首次/未锚定）时不产生漂移告警，仅在 drift.baseline_pinned=False 中体现。
+    """
+    current = {t["name"]: t.get("fingerprint", "") for t in report.get("tools", [])}
+    pinned = bool(baseline)
+    diff = diff_fingerprints(current, baseline) if pinned else {
+        "new": [], "removed": [], "changed": [], "unchanged": sorted(current)}
+
+    by_name = {t["name"]: t for t in report.get("tools", [])}
+    for name in diff["changed"]:
+        _bump_finding(by_name[name], "TP-RUGPULL", "high",
+                      f"工具元数据指纹相对已锚定基线发生变化（rug-pull）：基线 "
+                      f"{baseline.get(name, '')[:12]}… → 当前 {current.get(name, '')[:12]}…，"
+                      "description/schema 在获信任后被改动，已隔离待重新审查。")
+    for name in diff["new"]:
+        _bump_finding(by_name[name], "TP-NEW", "medium",
+                      "基线中不存在的新出现工具（运行期新增），可能是工具影子的新载体，默认隔离待复核。")
+
+    report["drift"] = {
+        "baseline_pinned": pinned,
+        "new": diff["new"], "removed": diff["removed"],
+        "changed": diff["changed"], "unchanged": diff["unchanged"],
+        "note": ("已与锚定基线比对：changed=rug-pull(隔离) / new=运行期新增(复核) / removed=工具消失。"
+                 if pinned else
+                 "尚未锚定基线（首次扫描即 TOFU 锚定后方可检测 rug-pull）。"),
+    }
+    return report
+
+
+# ---- 基线持久化（JSON 文件，零依赖、麒麟上零配置；与审计库同一存储哲学）----
+
+def _baseline_path() -> str:
+    from app.config import get_settings
+    return get_settings().tool_baseline_path
+
+
+def load_baseline(path: str | None = None) -> dict[str, str]:
+    """读基线 {tool_name: fingerprint}；文件不存在/损坏返回空表（视为未锚定）。"""
+    import json as _json
+    from pathlib import Path
+    p = Path(path or _baseline_path()).expanduser()
+    if not p.exists():
+        return {}
+    try:
+        data = _json.loads(p.read_text(encoding="utf-8"))
+        return dict(data.get("fingerprints", {}))
+    except (ValueError, OSError):
+        return {}
+
+
+def save_baseline(fingerprints: dict[str, str], path: str | None = None) -> dict:
+    """把当前指纹表锚定为基线（覆盖写）。返回 {pinned_at, count, path}。"""
+    import json as _json
+    import time as _time
+    from pathlib import Path
+    p = Path(path or _baseline_path()).expanduser()
+    if str(p.parent) not in ("", "."):
+        p.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"pinned_at": _time.time(), "fingerprints": dict(fingerprints)}
+    p.write_text(_json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"pinned_at": payload["pinned_at"], "count": len(fingerprints), "path": str(p)}
+
+
+def baseline_fingerprint(path: str | None = None) -> str:
+    """整份基线的聚合指纹（供审计证据包标注「当时锚定的是哪一版工具集」）。空基线返回 ''。"""
+    base = load_baseline(path)
+    if not base:
+        return ""
+    canonical = json.dumps(base, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
+
+
+def scan_with_drift(tools: list[dict], *, allow_medium: bool = False,
+                    auto_pin: bool = True, path: str | None = None) -> dict:
+    """扫描 + 漂移检测 + 处置的一站式入口（端点/编排器用）。
+
+    流程：scan_tools → annotate_drift（对基线）→ apply_quarantine。
+    TOFU：基线为空且 auto_pin 时，把**本次通过静态扫描的工具**锚定为基线（high 命中的不锚定，
+    避免把一个本就投毒的工具当成「可信基线」）。
+    """
+    report = scan_tools(tools)
+    baseline = load_baseline(path)
+    first_pin = False
+    annotate_drift(report, baseline)
+    report = apply_quarantine(report, allow_medium=allow_medium)
+    if not baseline and auto_pin:
+        # 仅锚定未被隔离（cleared/review）的工具，绝不把已判 high 的投毒工具写进可信基线
+        trustworthy = {t["name"]: t.get("fingerprint", "")
+                       for t in report.get("tools", []) if t.get("status") != STATUS_ISOLATED}
+        meta = save_baseline(trustworthy, path)
+        first_pin = True
+        report["drift"]["baseline_pinned"] = True
+        report["drift"]["first_pin"] = True
+        report["drift"]["pinned_at"] = meta["pinned_at"]
+        report["drift"]["note"] = (
+            f"首次扫描已 TOFU 锚定 {meta['count']} 个可信工具为基线；后续扫描即可检测 rug-pull。")
+    report["drift"]["auto_pinned"] = first_pin
     return report

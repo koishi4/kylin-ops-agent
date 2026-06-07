@@ -17,7 +17,7 @@ from app.audit import store
 from app.config import get_settings
 from app.core.orchestrator import Orchestrator
 from app.guardrail.privilege import is_running_as_root, least_privilege_check
-from app.guardrail.tool_scan import apply_quarantine, scan_tools
+from app.guardrail.tool_scan import scan_with_drift
 from app.llm.provider import get_llm
 from app.mcp_server.client import MCPClient
 
@@ -48,13 +48,20 @@ async def lifespan(app: FastAPI):
     app.state.mcp = mcp
     app.state.orchestrator = Orchestrator(llm=get_llm(), mcp=mcp)
 
-    # P3-4 + P0-C 供应链防线：连接后立即静态扫描工具元数据（投毒/影子/隐形载荷），
-    # 命中后**隔离**（fail-closed：可疑工具不进 LLM 上下文），而非只告警。
+    # P3-4 + P0-C + P2 供应链防线：连接后立即静态扫描工具元数据（投毒/影子/隐形载荷），
+    # 并对比 schema 指纹基线检测 rug-pull（首次启动即 TOFU 锚定基线）。
+    # 命中后**隔离**（fail-closed：可疑/已变脸工具不进 LLM 上下文），而非只告警。
     # 不信任工具元数据——与「不信任 LLM 输出 / 不信任外部数据」三位一体。
     try:
-        report = apply_quarantine(scan_tools(await mcp.list_tools()),
-                                  allow_medium=get_settings().quarantine_allow_medium)
+        report = scan_with_drift(await mcp.list_tools(),
+                                 allow_medium=get_settings().quarantine_allow_medium)
         app.state.tool_scan = report
+        drift = report.get("drift", {})
+        if drift.get("changed"):
+            logger.warning("MCP 工具基线漂移（rug-pull）：%s 的 description/schema 较基线已变，已隔离。",
+                           drift["changed"])
+        elif drift.get("first_pin"):
+            logger.info("MCP 工具 schema 基线首次锚定（TOFU）：%d 个可信工具。", drift.get("unchanged") and len(drift["unchanged"]) or report["scanned"])
         # 编排器据此过滤工具：被隔离的可疑工具绝不进入喂给模型的 tools 列表。
         app.state.orchestrator.quarantined_tools = set(report["quarantined"])
         if report["quarantined"]:

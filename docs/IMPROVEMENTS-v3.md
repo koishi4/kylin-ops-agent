@@ -133,12 +133,20 @@ GPT 审查指出的 P0 安全 bug **经核实在当前版本仍然存在**（详
 ## 实机证明（并行轨，虚机就绪后做；GPT 与既有结论都强调）
 新增 `docs/kylin-deployment.md`：Kylin V11 版本、CPU 架构（是否 LoongArch）、Python/Node 版本、systemd unit、opsagent 低权限用户、MCP server 启动日志，以及截图：`/health`、`/tools`、一次完整 `/chat` trace、一次危险命令拦截、一次 HMAC trace verify、姿态检查命中 Dirty Frag 的告警。这是「麒麟作品」而非「通用 Linux demo」的关键证据。
 
-## P2 — 有余力再做
-- [ ] MCP 工具 schema hash + 变更告警（对应 rug-pull / tool poisoning，增强现有 tool_scan）
-- [ ] 审计证据包导出（trace JSON + HMAC head + rules/schema 版本 + verify 结果）
-- [ ] 完整磁盘处置闭环 demo：disk_usage → find_large_files → classify → dry-run → confirm → truncate → 再 disk_usage 验证 → trace 闭环
-- [ ] 前端代码分割 / 懒加载（主 chunk ~1MB，演示专业度）
-- [ ] 接入前面《第三方安全测试》方案的 DeepTeam / RedCode-Exec 独立评测
+## P2 — 有余力再做（全部完成）
+- [x] MCP 工具 schema hash + 变更告警（对应 rug-pull / tool poisoning，增强现有 tool_scan）
+  → `tool_fingerprint`/`scan_with_drift` + TOFU 基线 + `TP-RUGPULL`(high 自动隔离)/`TP-NEW`(medium)；
+    `POST /guardrail/tool-scan/pin` 重锚（require_operator）；启动即锚定。test_tool_drift.py（18 例）。
+- [x] 审计证据包导出（trace JSON + HMAC head + rules/schema 版本 + verify 结果）
+  → `store.export_evidence`/`verify_evidence` + `GET /traces/{id}/evidence`：trace+verify+规则指纹+
+    工具基线指纹+应用版本，HMAC 封口；与库内哈希链双层防篡改。test_evidence_pack.py（6 例）。
+- [x] 完整磁盘处置闭环 demo：disk_usage → find_large_files → classify → dry-run → confirm → truncate → 再 disk_usage 验证 → trace 闭环
+  → `scripts/demo_disk_closure.py`（/tmp 自建无害日志，结束即清理；落审计+verify+证据包封口）。非 pytest。
+- [x] 前端代码分割 / 懒加载（主 chunk ~1MB，演示专业度）
+  → `JudgeMode.vue` 改 `defineAsyncComponent` 动态 import，Vite 切出独立 async chunk（6.55kB），首屏主包瘦身。
+- [x] 接入前面《第三方安全测试》方案的 DeepTeam / RedCode-Exec 独立评测
+  → `scripts/redteam_eval.py`（护栏=被测目标，检出率/ASR/误拦率+JSON 报告，`--corpus` 接外部语料）+
+    `docs/third-party-redteam.md`。**首跑诚实暴露防线3 漏过 7 条越狱→补强 INJ-006~010→42/42、ASR 0%**。
 
 ---
 

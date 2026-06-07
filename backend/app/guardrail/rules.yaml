@@ -163,8 +163,8 @@ rules:
   category: inject
   risk: high
   action: deny
-  pattern: (忽略[^。\n]{0,12}(规则|指令|设定|提示|限制|约束)|ignore\s+(all\s+)?(previous\s+|prior\s+|the\s+)?(instruction|rule|prompt)|disregard.*(rule|instruction)|forget.*(instruction|rule))
-  description: 疑似提示词注入：指令覆盖（忽略既有规则）
+  pattern: (忽略[^。\n]{0,12}(规则|指令|设定|提示|限制|约束)|ignore\s+(all\s+)?(previous\s+|prior\s+|the\s+)?(instruction|rule|prompt)|disregard.*(rule|instruction|policy|guardrail|guideline)|forget.*(instruction|rule))
+  description: 疑似提示词注入：指令覆盖（忽略既有规则/策略）
 - id: INJ-002
   category: inject
   risk: high
@@ -189,3 +189,33 @@ rules:
   action: deny
   pattern: '[;&|]\s*(rm|mkfs|dd|chmod|chown)\s'
   description: 命令拼接夹带危险指令（; && | 后接破坏性命令）
+- id: INJ-006
+  category: inject
+  risk: high
+  action: deny
+  pattern: ((reveal|show|print|output|repeat|dump|leak)\s+(me\s+|us\s+)?(your\s+|the\s+)?(system\s*prompt|initial\s+(instruction|prompt)|hidden\s+(instruction|prompt))|(系统提示词?|提示词|初始指令).{0,8}(输出|显示|告诉|打印|发(给|出)|泄露|重复|原样))
+  description: 疑似提示词注入：套取/泄露系统提示词
+- id: INJ-007
+  category: inject
+  risk: high
+  action: deny
+  pattern: ((pretend|assume|imagine|act\s+as\s+if)\s+(that\s+)?(the\s+)?(safety\s+|security\s+)?(rule|policy|policies|guardrail|restriction|guideline)s?\s+(do\s*not|don.?t|does\s*not|doesn.?t|no\s+longer)\s+apply|(safety\s+)?(rule|policy|guardrail)s?\s+(do\s*not|don.?t)\s+apply\s+to\s+you|假装(规则|安全|限制).{0,6}(不|无效|失效|不适用))
+  description: 疑似提示词注入：声称安全规则/策略不再适用
+- id: INJ-008
+  category: inject
+  risk: high
+  action: deny
+  pattern: (do\s+anything\s+now|unrestricted|no\s+(restriction|guardrail|limit|filter|rule)s?\b|without\s+(any\s+)?(restriction|guardrail|limit|filter)s?|无限制|不受限制|没有任何限制|无视(规则|限制|安全))
+  description: 疑似提示词注入：诱导无限制/越狱人格
+- id: INJ-009
+  category: inject
+  risk: high
+  action: deny
+  pattern: (system\s+override|override\s+(the\s+)?(safety|security|guardrail|system|rule)s?|bypass\s+(the\s+)?(safety|security|guardrail|confirmation|approval|check)s?|disable\s+(the\s+)?(safety|security|guardrail|protection)s?|without\s+(confirmation|approval|asking|prompting)|关闭(护栏|安全|校验|防护)|绕过(护栏|安全|校验|确认)|跳过(确认|校验))
+  description: 疑似提示词注入：要求关闭/绕过安全护栏或免确认执行
+- id: INJ-010
+  category: inject
+  risk: high
+  action: deny
+  pattern: <\s*(important|system|instruction|admin|secret|prompt)s?\s*>
+  description: 疑似提示词注入：把指令藏进 <important>/<system> 等伪标签

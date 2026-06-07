@@ -983,3 +983,41 @@
   空 argv 结构化报错不执行。全套 pytest **644 → 656 全绿**。
 - 至此 IMPROVEMENTS-v4 的 P0-A 第 4 项（executor argv 原生化）亦完成；「别做」清单中仅余 ruff/pre-commit
   （刻意不引入以免给评委环境加工具链依赖）与重型运行时 IDS（列未来工作）。
+
+### P2：余力项五件套（IMPROVEMENTS-v3 P2 全做）
+- 背景：P0/P1 全部落地后清 P2「有余力再做」。五项都按「轻量、可演示、不 bloat」收口，并坚持
+  「评测/演示脚本不纳入 pytest」「只演被拦不演破坏」纪律。
+- **① MCP 工具 schema 指纹基线 + rug-pull 检测（增强 tool_scan）**：
+  - 新增 `tool_fingerprint(name,desc,schema)`（sort_keys 规范化，键序无关）+ `diff_fingerprints` +
+    `annotate_drift` + `scan_with_drift`（一站式：扫描→对基线标注漂移→隔离）+ 文件基线 `load/save_baseline`。
+  - **威胁模型补全**：原 tool_scan 扫「此刻内容」，挡不住「获信任后悄改 description/schema」（rug-pull）。
+    TOFU（trust-on-first-use）：首次扫描通过即锚定基线；之后指纹变→`TP-RUGPULL`(high)→经既有 apply_quarantine
+    **自动隔离**（不进 LLM 上下文）；运行期新增工具→`TP-NEW`(medium)→默认隔离待复核。
+  - **关键决策**：首次锚定**只把未被隔离的可信工具写进基线**——绝不把一个本就投毒(high)的工具当成「可信基线」。
+    合法升级由 operator 经 `POST /guardrail/tool-scan/pin` 重锚（敏感操作，挂 require_operator）。
+  - main.py 启动扫描、`/guardrail/tool-scan` 端点均切到 `scan_with_drift`（启动即 TOFU 锚定）。
+  - 测试 `tests/test_tool_drift.py`（18 例）：指纹性质/diff/annotate_drift/漂移→隔离/持久化/TOFU 二次检出。
+- **② 审计证据包导出（store.export_evidence/verify_evidence + /traces/{id}/evidence）**：
+  - 把可追溯性从「只能本系统回放」升级为「可离线核验的取证材料」：完整五段 trace + verify_chain 结果 +
+    head_hash + 导出时的**护栏规则指纹 / 工具 schema 基线指纹 / 应用版本** + HMAC **封口(seal)**。
+  - **双层防篡改**：库内哈希链证明「库未被改」，证据包 seal 证明「导出后这份材料未被改」——`verify_evidence`
+    分别给出 seal_matches / chain_valid。端点含完整 trace 明文（已脱敏），属敏感导出，挂 require_operator。
+  - 测试 `tests/test_evidence_pack.py`（6 例）：导出结构/未改判有效/改 trace 或 components→seal 失配/
+    库内链断→seal 仍匹配但 chain_valid=False（双层各司其职）/缺失 trace。
+- **③ 完整磁盘处置闭环 demo（scripts/demo_disk_closure.py）**：
+  - 一条命令在 /tmp 自建无害日志上跑通评分④全闭环：disk_usage→find_large_files→classify→dry-run(护栏预览不执行)
+    →confirm(fd-safe ftruncate 清空)→复查大小回收→落审计+哈希链 verify+证据包封口。非 pytest（演示脚本纪律）。
+- **④ 前端代码分割/懒加载**：评委模式面板 `JudgeMode.vue`（抽屉内才渲染）改 `defineAsyncComponent` 动态 import，
+  Vite 自动切出独立 async chunk（实测 6.55kB JS + 2.21kB CSS），首屏主业务包不再含这块；配合既有 vendor 拆分。
+- **⑤ 第三方安全测试 · 独立红队评测（scripts/redteam_eval.py）**：
+  - RedCode-Exec/DeepTeam 范式的本地化离线评测器：护栏即「被测目标」，危险命令走 check_command、注入话术走
+    scan_injection，按家族算检出率/ASR/误拦率，输出记分牌+逐例表+JSON 报告；`--corpus` 接外部语料、
+    `guardrail_as_target()` 供 DeepTeam 等外部 runner 适配（详见 docs/third-party-redteam.md）。
+  - **诚实叙事兑现**：首跑即如实暴露**防线3 漏过 7 条 DeepTeam 风格越狱**（命令护栏 18/18、良性 0 误拦，但
+    注入检出仅 30%）。据此补强 `rules.yaml` 注入规则 **INJ-006~010**（套取系统提示词 / 声称规则不适用 /
+    无限制人格(DAN/unrestricted/no guardrails) / 关闭护栏免确认 / 隐藏指令标签）+ 扩展 INJ-001（policy/guardrail）；
+    再跑 **42/42、ASR 0%、误拦 0%**。新越狱语料并入 `test_guardrail_redteam.py` 的 INJECTIONS 固化为永不退化回归。
+  - 这正是 security-design §5「发现并修补 > 宣称 100%」方法论在**注入维度**的又一次兑现（命令维度此前已做）。
+- 测试：rules.yaml 规则数 26→31，同步两处 `test_rules_config.py` 计数断言；全套 pytest **656 → 690 全绿**；
+  前端 `npm run build` 通过（JudgeMode 独立 async chunk）。redteam_eval / demo_disk_closure 两脚本实跑通过。
+- 至此 IMPROVEMENTS-v3 的 P2 五项全部完成。
