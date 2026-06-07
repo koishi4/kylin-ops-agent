@@ -854,3 +854,28 @@
 - 实测：原始 7 条 + 27 变形全部 allowed=False（均判 critical），19 条正常/同形安全命令零误杀；
   解释器内联代码授权+确认仍拦死。全套 pytest **540 → 631 全绿**（+91 红队回归用例）。
 - 下一步：P0-B 把 truncate_log 改 fd-safe（os.ftruncate，不再走 `truncate` 命令），与本项 truncate 推广闭环。
+
+### P0-B：fd-safe 文件操作——消除 tail_log / truncate_log 的 TOCTOU
+- 背景：两处「先校验路径、再用原始 path 开文件」存在 check→exec 竞态：校验（allowlist/敏感名单/关键性 classify）
+  通过后、真正 open 之前，攻击者可把目标换成软链指向 /etc/shadow 等，让校验对象 ≠ 操作对象。
+- 做了什么：
+  - `tools/log.py::tail_log`：改 `os.open(path, O_RDONLY|O_NOFOLLOW)` → `fstat` 确认普通文件 → 经该 fd 读取
+    （`os.fdopen(closefd=True)`，fd 移交后置 -1 防 finally 二次 close）。末段软链直接被 O_NOFOLLOW(ELOOP) 拒。
+    保留原 `path_under_any_root` 白名单 + 敏感 denylist（在 open 之前先判）。
+  - `core/actions.py::truncate_log`：**不再调外部 `truncate` 命令**，新增 `_fd_safe_truncate`：
+    `os.open(O_WRONLY|O_NOFOLLOW)` → `fstat` 普通文件 → 同 fd 上 `os.ftruncate(fd, 0)`，校验与操作绑定同一 inode。
+    新增 `_fd_truncate_finish` 接管收尾（保留二次确认/dry_run/五段 trace），不经命令护栏与子进程沙箱。
+- 设计决策与理由：
+  - **为何 truncate 不再走命令护栏 + executor**：① fd-safe 才能真正消 TOCTOU（外部 `truncate path` 会重新按
+    路径解析，仍有竞态）；② P0-A 后 `truncate -s 0 /var/log/...` 会被命令护栏判 CRITICAL（/var 关键路径），
+    白名单动作的安全性本应由**动作层语义闸门 + fd-safe 落地**保证，而非「恰好不被命令护栏拦」。这是把防护
+    放到正确的层（Action-Selector 范式），也修正了旧 docstring「日志走 truncate 不走 rm 因为 truncate 不被拦」
+    的过时假设——现在的理由是 truncate 可 fd-safe 原子落地、rm 不可。
+  - **ftruncate 无需沙箱**：它是 syscall、不会失控吃资源，故 truncate 的 output 不再带 sandbox 字段；
+    沙箱可视化由仍走 executor 的 clean_path(rm -f) 承接（测试相应迁移）。
+  - **诚实边界**：O_NOFOLLOW 仅护**末段**组件；中间目录软链调包由 `path_under_any_root` 的 realpath 判定覆盖，
+    完整 per-component openat 防护属未来工作（已在代码注释与本日志标注）。
+- 踩坑：`os.fdopen` 接管 fd 后若 finally 再 `os.close` 会 EBADF——用 `fd=-1` 哨兵区分「已移交/未移交」。
+- 测试：新增 `test_fd_safe_refuses_symlinked_final_component`（末段软链被 O_NOFOLLOW 拒、真实文件不被触碰）；
+  truncate 执行断言改为 `fd_safe=True / method=os.ftruncate / 无 sandbox 字段`；沙箱字段断言迁到 clean_path。
+  全套 pytest **631 → 633 全绿**。

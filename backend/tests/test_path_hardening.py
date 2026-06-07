@@ -111,6 +111,17 @@ class TestTailLogPathControl:
         r = tail_log(str(key))
         assert r["ok"] is False and "敏感" in r["error"]
 
+    def test_fd_safe_refuses_symlinked_final_component(self, tmp_path):
+        """P0-B：末段是软链（即便指向允许根内的普通文件）也被 O_NOFOLLOW 拒——
+        这正是 classify/allowlist 通过后「文件被换成软链」TOCTOU 调包的防线。"""
+        real = tmp_path / "real.log"
+        real.write_text("a\nb\nc\n")
+        link = tmp_path / "app.log"          # 链名在 /tmp（允许根），realpath 仍落在 /tmp 内 → 过 allowlist
+        link.symlink_to(real)
+        r = tail_log(str(link))
+        assert r["ok"] is False and "fd-safe" in r["error"]
+        assert real.read_text() == "a\nb\nc\n"   # 真实文件未被触碰
+
 
 # ----------------------------- P0-1 路径前缀 bug：兄弟目录不得误判 -----------------------------
 

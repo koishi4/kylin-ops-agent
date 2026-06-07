@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 
 from app.core.pathutil import path_under_any_root
 
@@ -47,9 +48,22 @@ def tail_log(path: str, lines: int = 50) -> dict:
                 "error": f"拒绝读取：{path} 命中敏感文件名单（口令/私钥/SSH 凭据），不可读取。"}
     if not os.path.isfile(path):
         return {"ok": False, "level": "READONLY", "error": f"文件不存在或非普通文件: {path}"}
+    # P0-B：fd-safe 读取消除 TOCTOU。校验（allowlist/敏感名单/isfile）通过后，文件可能在 open 前
+    # 被换成软链指向 /etc/shadow 等——用 O_NOFOLLOW 拒绝软链末段、再 fstat 确认 fd 指向的就是普通文件，
+    # 把「校验的对象」与「真正读取的对象」绑定到同一个 inode。注：O_NOFOLLOW 仅护末段，中间目录软链
+    # 已由 path_under_any_root 的 realpath 判定覆盖（诚实边界，见 docs/dev-log.md）。
     try:
-        # 高效读尾部：从文件末尾按块回读，避免整文件载入内存
-        with open(path, "rb") as f:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as e:   # ELOOP=末段是软链（疑似 TOCTOU 调包）；其它=权限/竞态删除
+        return {"ok": False, "level": "READONLY",
+                "error": f"拒绝读取：fd-safe 打开失败（{e.__class__.__name__}），疑似软链调包或竞态。"}
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return {"ok": False, "level": "READONLY",
+                    "error": "拒绝读取：目标经 fd 校验不是普通文件（疑似设备/管道/被换）。"}
+        # 高效读尾部：从文件末尾按块回读，避免整文件载入内存（全程基于已校验的 fd）
+        with os.fdopen(fd, "rb", closefd=True) as f:
+            fd = -1   # fdopen 接管后由 with 负责关闭，避免 finally 二次 close
             f.seek(0, os.SEEK_END)
             size = f.tell()
             block = 8192
@@ -65,6 +79,9 @@ def tail_log(path: str, lines: int = 50) -> dict:
                 "lines": text[-lines:], "count": min(lines, len(text))}
     except OSError as e:
         return {"ok": False, "level": "READONLY", "error": str(e)}
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def query_journal(unit: str | None = None, since: str | None = None,

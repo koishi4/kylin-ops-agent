@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import stat
 from typing import Any, Callable
 
 from app.core import executor
@@ -112,11 +113,86 @@ def _truncate_log(params: dict, *, confirmed: bool, authorized: bool, dry_run: b
                        "目标文件不存在，truncate 会新建空文件，已拒绝以免误建。",
                        precheck=precheck)
 
-    command = f"truncate -s 0 {shlex.quote(path)}"
-    rationale = ("可清理日志 → 用 truncate -s 0 清空而非 rm，保留文件 inode/句柄，"
-                 "写日志的进程无需重启即可继续写（与 diagnosis 建议同源）。")
-    return _guarded_finish("truncate_log", trace, command, rationale, precheck,
-                           confirmed=confirmed, authorized=authorized, dry_run=dry_run)
+    # P0-B：真实落地用 fd-safe 的 os.ftruncate，**不再调外部 `truncate` 命令**。
+    # 理由有二：① 消除 classify→执行 之间「软链/文件被换」的 TOCTOU（O_NOFOLLOW + fstat 普通文件，
+    #   在同一个 fd 上截断，校验与操作绑定同一 inode）；② P0-A 后 `truncate -s 0 /var/log/...` 会被
+    #   命令护栏判 CRITICAL（/var 关键路径），白名单动作的安全性本就应由**动作层语义闸门 + fd-safe 落地**
+    #   保证，而非依赖「truncate 恰好不被命令护栏拦」。这是把防护放到正确的层（Action-Selector 范式）。
+    command = f"os.ftruncate(0): {path}"
+    rationale = ("可清理日志 → fd-safe os.ftruncate 原子清空（O_NOFOLLOW + fstat 普通文件，"
+                 "消除 TOCTOU），保留 inode/句柄，写日志进程无需重启即可继续写（与 diagnosis 建议同源）。")
+    return _fd_truncate_finish("truncate_log", trace, path, command, rationale, precheck,
+                               confirmed=confirmed, dry_run=dry_run)
+
+
+def _fd_safe_truncate(path: str) -> dict:
+    """以 fd 级防护原子清空文件：O_NOFOLLOW 拒绝软链、fstat 确认普通文件、同 fd 上 ftruncate(0)。
+
+    若 path 在前面的 classify/symlink 校验之后被换成软链或特殊文件，open(O_NOFOLLOW)/fstat
+    会在此直接拒绝——校验与操作绑定同一 fd/inode，攻击者无法在中间「换文件」。
+    """
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_NOFOLLOW)
+    except OSError as e:   # ELOOP=是软链；ENOENT/EACCES=不存在/无权限
+        return {"ok": False, "fd_safe": True, "method": "os.ftruncate",
+                "error": f"fd-safe 打开失败（{e.__class__.__name__}）：{e}"}
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return {"ok": False, "fd_safe": True, "method": "os.ftruncate",
+                    "error": "目标经 fd 校验不是普通文件（疑似设备/管道/被换），拒绝清空。"}
+        os.ftruncate(fd, 0)
+        return {"ok": True, "fd_safe": True, "method": "os.ftruncate", "bytes_after": 0}
+    except OSError as e:
+        return {"ok": False, "fd_safe": True, "method": "os.ftruncate", "error": str(e)}
+    finally:
+        os.close(fd)
+
+
+def _fd_truncate_finish(action: str, trace: list[dict], path: str, command: str,
+                        rationale: str, precheck: Any, *,
+                        confirmed: bool, dry_run: bool) -> dict:
+    """truncate_log 专用收尾：动作层语义校验已过 → 据 confirmed/dry_run 决定是否 fd-safe 落地。
+
+    与 _guarded_finish 的区别：不经命令护栏/子进程沙箱（ftruncate 是 syscall，不会失控，无需沙箱），
+    安全性由动作层语义闸门 + fd-safe 落地共同保证；guard/privilege 字段为 None（如实表示未走命令护栏）。
+    """
+    trace = list(trace)
+    trace.append({"stage": "推理决策", "detail": {"command": command, "rationale": rationale}})
+
+    output = None
+    if not confirmed:
+        decided = {"executed": False, "blocked": False, "require_confirm": True, "ok": False,
+                   "reason": "动作语义校验通过，等待用户二次确认后执行。"}
+    elif dry_run:
+        decided = {"executed": False, "blocked": False, "require_confirm": False, "ok": True,
+                   "reason": "动作语义校验与二次确认均通过（dry_run，未真正执行）。"}
+    else:
+        res = _fd_safe_truncate(path)
+        output = res
+        if res["ok"]:
+            decided = {"executed": True, "blocked": False, "require_confirm": False, "ok": True,
+                       "reason": "日志已 fd-safe 清空（os.ftruncate，O_NOFOLLOW 防软链写穿）。"}
+        else:
+            decided = {"executed": False, "blocked": True, "require_confirm": False, "ok": False,
+                       "reason": f"fd-safe 清空失败：{res.get('error')}"}
+
+    trace.append({"stage": "安全校验", "detail": {
+        "layer": "动作语义校验（关键性/软链/存在性）+ fd-safe 落地（O_NOFOLLOW + fstat 普通文件，消除 TOCTOU）",
+        "passed": not decided["blocked"], "precheck": precheck,
+        "guard": None, "privilege": None, "require_confirm": decided["require_confirm"]}})
+    trace.append({"stage": "执行结果", "detail": {
+        "executed": decided["executed"], "blocked": decided["blocked"],
+        "require_confirm": decided["require_confirm"], "reason": decided["reason"],
+        "output": output}})
+
+    return {
+        "ok": decided["ok"], "action": action,
+        "executed": decided["executed"], "blocked": decided["blocked"],
+        "require_confirm": decided["require_confirm"], "dry_run": dry_run or not confirmed,
+        "reason": decided["reason"], "command": command, "precheck": precheck,
+        "guard": None, "privilege": None, "output": output, "trace": trace,
+    }
 
 
 def _kill_process(params: dict, *, confirmed: bool, authorized: bool, dry_run: bool) -> dict:

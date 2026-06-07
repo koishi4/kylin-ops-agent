@@ -30,7 +30,7 @@ class TestTruncateLog:
         assert r["blocked"] is False
         assert r["ok"] is True
         assert f.stat().st_size == 0  # 已被清空
-        assert r["command"].startswith("truncate -s 0")
+        assert "ftruncate" in r["command"]  # P0-B：fd-safe os.ftruncate 落地，不再走 truncate 命令
 
     def test_truncate_requires_confirm(self, tmp_path):
         """未确认：只预览不执行，require_confirm=True，文件不动。"""
@@ -71,16 +71,20 @@ class TestTruncateLog:
         r = actions.run_action("truncate_log", {}, confirmed=True)
         assert r["blocked"] is True
 
-    def test_executed_output_carries_sandbox_fields(self, tmp_path):
-        """放行并真正执行的动作，其 output 须带沙箱处置字段（P4-3 前端可视化的数据来源）。"""
+    def test_executed_truncate_is_fd_safe_no_sandbox(self, tmp_path):
+        """P0-B：truncate 落地走 fd-safe os.ftruncate（O_NOFOLLOW），不经子进程沙箱。
+
+        output 应表明 fd_safe + method=os.ftruncate，且**不**含 sandbox 字段
+        （ftruncate 是 syscall、不会失控，无需沙箱；这是把防护放到正确层的体现）。
+        """
         f = tmp_path / "app.log"
         f.write_text("x" * 200)
         r = actions.run_action("truncate_log", {"path": str(f)},
                                confirmed=True, dry_run=False)
         assert r["executed"] is True
         out = r["output"]
-        assert {"sandbox", "sandbox_killed", "limit_hit"} <= out.keys()
-        assert out["sandbox_killed"] is False   # 无害 truncate 不该触发限额
+        assert out.get("fd_safe") is True and out.get("method") == "os.ftruncate"
+        assert "sandbox" not in out   # fd-safe 落地不经子进程沙箱
 
 
 # ----------------------------- kill_process -----------------------------
@@ -197,6 +201,18 @@ class TestCleanPath:
         assert r["require_confirm"] is True
         assert r["executed"] is False
         assert f.exists() is True  # 未确认不删
+
+    def test_executed_output_carries_sandbox_fields(self, tmp_path):
+        """clean_path 经 executor 子进程沙箱落地（rm -f），其 output 须带沙箱处置字段
+        （P4-3 前端「执行结果」段可视化的数据来源；truncate 走 fd-safe 故由本测试承接沙箱断言）。"""
+        f = tmp_path / "junk.tmp"
+        f.write_text("x" * 200)
+        r = actions.run_action("clean_path", {"path": str(f)},
+                               confirmed=True, dry_run=False)
+        assert r["executed"] is True
+        out = r["output"]
+        assert {"sandbox", "sandbox_killed", "limit_hit"} <= out.keys()
+        assert out["sandbox_killed"] is False   # 无害 rm 不该触发限额
 
 
 # ----------------------------- dispatcher -----------------------------
