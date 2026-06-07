@@ -879,3 +879,25 @@
 - 测试：新增 `test_fd_safe_refuses_symlinked_final_component`（末段软链被 O_NOFOLLOW 拒、真实文件不被触碰）；
   truncate 执行断言改为 `fd_safe=True / method=os.ftruncate / 无 sandbox 字段`；沙箱字段断言迁到 clean_path。
   全套 pytest **631 → 633 全绿**。
+
+### P0-C：MCP 工具投毒——命中后隔离（fail-closed），而非只告警
+- 背景：工具投毒的核心风险是「恶意 description 不必被调用，只要进 LLM 上下文就生效」。旧实现仅
+  `logger.warning` 告警，可疑工具仍被 `openai_tools()` 喂给模型——等于检测了却没处置。
+- 做了什么：
+  - `tool_scan.apply_quarantine(report, allow_medium)` 给每个工具补处置档位 status 并汇总名单：
+    high → `isolated`（无条件不进上下文）；medium → 默认 `isolated`，operator override 才降 `review` 放行；
+    low → `cleared`（告警可用）。`report["quarantined"]` 即「不进 LLM 上下文」的工具名集合。
+  - `main.py` 启动扫描后 `apply_quarantine` 并把隔离名单注入 `orchestrator.quarantined_tools`；隔离工具记 warning。
+  - `orchestrator.chat`：取 `openai_tools()` 后**先过滤掉 quarantined 工具**再喂模型，命中则在 trace 写一段
+    「MCP 工具投毒隔离（P0-C）」（回放可见处置）。
+  - 新增 config `quarantine_allow_medium`（默认 False，演示模式安全）。
+  - `/guardrail/tool-scan` 端点改为返回带 status 的处置报告；前端面板按「已隔离/需人工复核/已放行」分档展示
+    + 「🚫 已隔离 N（不进 LLM 上下文）」标签，而非只列报告。
+- 设计决策与理由：
+  - **fail-closed 优先于可用性**：可疑工具默认不进上下文，high 即便 operator 也不放行（投毒强信号不容人为放松）；
+    medium 留 operator override 口子兼顾误报；low（仅 description 过长）不影响可用。这是「不信任工具元数据」
+    供应链防线从「检测」升级到「处置」，补齐与「不信任 LLM 输出 / 不信任外部数据」三位一体的最后一环。
+  - **过滤点放在编排器取 tools 之后、喂模型之前**：这是工具元数据进入上下文的唯一入口，单点强制，最难绕过。
+- 测试：`TestQuarantinePolicy`（三档处置 + operator override 仅释放 medium）；
+  `TestOrchestratorEnforcesQuarantine` 用假 LLM/MCP 端到端断言被隔离工具不出现在传给 LLM 的 tools 列表、
+  且 trace 留隔离记录。全套 pytest **633 → 637 全绿**；前端 `npm run build` 通过。

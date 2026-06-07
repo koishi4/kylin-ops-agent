@@ -249,9 +249,12 @@ async function openTrifecta() {
   }
 }
 
-// ---- P3-4 MCP 工具供应链扫描（投毒/影子/隐形载荷）----
+// ---- P3-4 + P0-C MCP 工具供应链扫描（投毒/影子/隐形载荷）+ 命中后处置 ----
 const scanning = ref(false)
-const scanData = ref(null)  // { ok, scanned, flagged, tools, note }
+const scanData = ref(null)  // { ok, scanned, flagged, tools, quarantined, review, cleared, ... }
+// 处置档位 → 标签样式/中文（P0-C：已隔离 / 需人工复核 / 已放行）
+const scanStatusType = { isolated: 'danger', review: 'warning', cleared: 'success' }
+const scanStatusLabel = { isolated: '已隔离', review: '需人工复核', cleared: '已放行' }
 async function runToolScan() {
   scanning.value = true
   try {
@@ -579,13 +582,20 @@ const judgeOpen = ref(false)
                 ? `✓ ${scanData.scanned} 工具均无投毒/影子/隐形载荷`
                 : `✗ 命中 ${scanData.flagged}/${scanData.scanned} 个可疑工具` }}
           </el-tag>
-          <span class="rules-hint">本地静态扫描，不上传文件/凭据（致敬 mcp-scan）</span>
+          <el-tag v-if="scanData && scanData.quarantined && scanData.quarantined.length"
+                  size="small" type="danger" effect="dark">
+            🚫 已隔离 {{ scanData.quarantined.length }}（不进 LLM 上下文）
+          </el-tag>
+          <span class="rules-hint">本地静态扫描，不上传文件/凭据（致敬 mcp-scan）；命中即隔离（fail-closed）</span>
         </div>
+        <!-- P0-C：命中后「隔离/复核/放行」处置，而非只展示报告 -->
         <el-alert
           v-if="scanData && !scanData.ok" type="error" :closable="false" style="margin-bottom:10px"
-          title="检出可疑工具元数据">
+          title="检出可疑工具元数据——已按档位处置（high 隔离 / medium 默认隔离 / low 告警可用）">
           <div v-for="t in scanData.tools.filter(x => x.suspicious)" :key="t.name" class="rules-err">
-            · {{ t.name }}（{{ t.max_severity }}）：{{ t.findings.map(f => f.code).join(', ') }}
+            <el-tag size="small" :type="scanStatusType[t.status] || 'info'" effect="dark"
+                    style="margin-right:6px">{{ scanStatusLabel[t.status] || t.status }}</el-tag>
+            {{ t.name }}（{{ t.max_severity }}）：{{ t.findings.map(f => f.code).join(', ') }}
           </div>
         </el-alert>
 

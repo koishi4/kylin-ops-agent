@@ -181,3 +181,50 @@ def scan_tools(tools: list[dict]) -> dict:
         "note": ("本地静态扫描工具元数据（name/description/schema），不上传任何文件或凭据；"
                  "致敬 mcp-scan，覆盖工具投毒/工具影子/隐形载荷三类 2025 年 MCP 供应链攻击面。"),
     }
+
+
+# ---------------------------------------------------------------------------
+# P0-C：命中后**隔离**，而非只告警。
+# 工具投毒的核心风险是「恶意 description 不必被调用，只要进 LLM 上下文就生效」——故对可疑工具
+# 默认 fail-closed：不进入喂给模型的 tools 列表。分三档处置：
+#   high   → 隔离（isolated）：无条件不进上下文（投毒/影子/注入/敏感凭据/隐藏指令等强信号）。
+#   medium → 默认隔离，需 operator 显式 override（allow_medium=True）才降级为「需人工复核」放行。
+#   low    → 放行（cleared）：仅 description 过长等弱信号，告警但可用。
+# ---------------------------------------------------------------------------
+STATUS_ISOLATED = "isolated"   # fail-closed：不进模型上下文
+STATUS_REVIEW = "review"       # operator override 放行的 medium，仍标「需人工复核」
+STATUS_CLEARED = "cleared"     # 无发现或仅 low：放行
+
+
+def _status_for(max_severity: str, suspicious: bool, *, allow_medium: bool) -> str:
+    if not suspicious:
+        return STATUS_CLEARED
+    if max_severity == "high":
+        return STATUS_ISOLATED
+    if max_severity == "medium":
+        return STATUS_REVIEW if allow_medium else STATUS_ISOLATED
+    return STATUS_CLEARED   # low：告警但可用
+
+
+def apply_quarantine(report: dict, *, allow_medium: bool = False) -> dict:
+    """据扫描报告给每个工具补处置档位 status，并汇总隔离/复核/放行名单（就地补字段并返回）。
+
+    `quarantined` 即「不进 LLM 上下文」的工具名集合（编排器据此过滤 openai_tools）。
+    """
+    isolated: list[str] = []
+    review: list[str] = []
+    cleared: list[str] = []
+    for t in report.get("tools", []):
+        st = _status_for(t.get("max_severity", "none"), t.get("suspicious", False),
+                         allow_medium=allow_medium)
+        t["status"] = st
+        (isolated if st == STATUS_ISOLATED else
+         review if st == STATUS_REVIEW else cleared).append(t["name"])
+    report["isolated"] = isolated
+    report["review"] = review
+    report["cleared"] = cleared
+    report["quarantined"] = isolated        # 不进模型上下文的名单
+    report["allow_medium"] = allow_medium
+    report["note"] = report.get("note", "") + \
+        "｜处置：high 无条件隔离 / medium 默认隔离(需 operator override) / low 告警可用。"
+    return report

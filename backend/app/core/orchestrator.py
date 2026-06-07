@@ -61,9 +61,13 @@ class ChatResult:
 
 
 class Orchestrator:
-    def __init__(self, llm: LLMProvider, mcp: MCPClient) -> None:
+    def __init__(self, llm: LLMProvider, mcp: MCPClient,
+                 quarantined_tools: set[str] | None = None) -> None:
         self.llm = llm
         self.mcp = mcp
+        # P0-C：MCP 工具投毒扫描判定为「隔离」的工具名集合，启动时由 main.py 注入。
+        # 这些可疑工具的元数据绝不进入喂给 LLM 的 tools 列表（投毒的核心风险是只要进上下文就生效）。
+        self.quarantined_tools: set[str] = quarantined_tools or set()
 
     async def chat(self, user_input: str) -> ChatResult:
         trace_id = uuid.uuid4().hex
@@ -106,7 +110,18 @@ class Orchestrator:
                 return await self._finish(trace_id, user_input, answer, trace, [],
                                           blocked=True, intent=intent.intent.value)
 
-        tools = await self.mcp.openai_tools()
+        # P0-C：过滤掉被投毒扫描隔离的工具——它们的元数据绝不进入 LLM 上下文（fail-closed）。
+        all_tools = await self.mcp.openai_tools()
+        tools = [t for t in all_tools if t["function"]["name"] not in self.quarantined_tools]
+        quarantined_hit = sorted(
+            {t["function"]["name"] for t in all_tools} & self.quarantined_tools)
+        if quarantined_hit:
+            trace.append(TraceStep("安全校验", {
+                "phase": "MCP 工具投毒隔离（P0-C）",
+                "quarantined": quarantined_hit,
+                "decision": "fail-closed：可疑工具元数据不进入 LLM 上下文",
+                "reason": "工具投毒不必被调用，只要进上下文即可影响模型，故命中即隔离。",
+            }))
         trace.append(TraceStep("感知环境", {
             "available_tools": [t["function"]["name"] for t in tools],
             "intent": intent.intent.value,

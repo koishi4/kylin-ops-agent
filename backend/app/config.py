@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # 后端默认只监听本机回环，避免受控动作端点暴露到外网（生产如需对外须显式改并配 token）。
     api_bind_host: str = "127.0.0.1"
 
+    # MCP 工具投毒处置（P0-C）：扫描命中的可疑工具默认 fail-closed 不进 LLM 上下文。
+    # high 无条件隔离；medium 默认隔离，置 true 才作为 operator override 降级为「需人工复核」放行。
+    quarantine_allow_medium: bool = False
+
     # 执行账户（最小权限，非 root）
     exec_user: str = "opsagent"
     # 以 root 运行时是否拒绝启动（最小权限启动闸门，审查整改②）。

@@ -17,7 +17,7 @@ from app.audit import store
 from app.config import get_settings
 from app.core.orchestrator import Orchestrator
 from app.guardrail.privilege import is_running_as_root, least_privilege_check
-from app.guardrail.tool_scan import scan_tools
+from app.guardrail.tool_scan import apply_quarantine, scan_tools
 from app.llm.provider import get_llm
 from app.mcp_server.client import MCPClient
 
@@ -40,15 +40,21 @@ async def lifespan(app: FastAPI):
     app.state.mcp = mcp
     app.state.orchestrator = Orchestrator(llm=get_llm(), mcp=mcp)
 
-    # P3-4 供应链防线：连接后立即静态扫描工具元数据（投毒/影子/隐形载荷），命中则告警。
+    # P3-4 + P0-C 供应链防线：连接后立即静态扫描工具元数据（投毒/影子/隐形载荷），
+    # 命中后**隔离**（fail-closed：可疑工具不进 LLM 上下文），而非只告警。
     # 不信任工具元数据——与「不信任 LLM 输出 / 不信任外部数据」三位一体。
     try:
-        report = scan_tools(await mcp.list_tools())
+        report = apply_quarantine(scan_tools(await mcp.list_tools()),
+                                  allow_medium=get_settings().quarantine_allow_medium)
         app.state.tool_scan = report
-        if report["flagged"]:
-            logger.warning("MCP 工具供应链扫描命中 %d/%d 个可疑工具：%s",
-                           report["flagged"], report["scanned"],
-                           [t["name"] for t in report["tools"] if t["suspicious"]])
+        # 编排器据此过滤工具：被隔离的可疑工具绝不进入喂给模型的 tools 列表。
+        app.state.orchestrator.quarantined_tools = set(report["quarantined"])
+        if report["quarantined"]:
+            logger.warning("MCP 工具投毒扫描：隔离 %d 个可疑工具（不进 LLM 上下文）：%s；需人工复核：%s",
+                           len(report["quarantined"]), report["quarantined"], report["review"])
+        elif report["flagged"]:
+            logger.warning("MCP 工具投毒扫描：%d 个工具命中弱信号（low，告警但可用）。",
+                           report["flagged"])
         else:
             logger.info("MCP 工具供应链扫描通过：%d 个工具元数据均无投毒/影子/隐形载荷。",
                         report["scanned"])
