@@ -6,15 +6,16 @@ import secrets
 import time
 import uuid
 from dataclasses import asdict, replace
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.audit import store
 from app.config import get_settings
 from app.core import actions, diagnosis
 from app.guardrail.engine import check_command
-from app.guardrail.rules import RULES, load_status, reload_rules
+from app.guardrail.rules import RULES, load_status, reload_rules, rules_fingerprint
 from app.guardrail.tool_scan import apply_quarantine, scan_tools
 from app.guardrail.trifecta import capability_table
 
@@ -38,23 +39,39 @@ def require_operator(authorization: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="缺少或无效的 operator token（受控动作需鉴权）")
 
 
+# P1：请求模型加边界约束（min/max_length、Literal 动作名、按动作校验 params），
+# 把畸形/超大入参挡在业务逻辑之外（早 422，不进护栏/动作层），收敛 DoS 与误用面。
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(min_length=1, max_length=4000)
 
 
 class GuardCheckRequest(BaseModel):
-    command: str
+    command: str = Field(min_length=1, max_length=4000)
     authorized: bool = False
     confirmed: bool = False
 
 
 class ActionRequest(BaseModel):
-    action: str                 # truncate_log / kill_process / clean_path
+    # Literal 收敛到三个白名单动作：未知动作名在入口即 422，不进 run_action。
+    action: Literal["truncate_log", "kill_process", "clean_path"]
     # 用 default_factory 而非可变默认 {}（P0-5：可变默认会在实例间共享、是经典陷阱）
     params: dict = Field(default_factory=dict)  # 动作参数（path / pid+signal）
     confirmed: bool = False     # 用户是否二次确认（未确认绝不真执行）
     authorized: bool = False    # 是否对需提权操作显式授权（防线4）
     dry_run: bool = True        # 默认只校验不执行
+
+    @model_validator(mode="after")
+    def _check_params(self) -> "ActionRequest":
+        """按动作校验 params 形状（独立 schema 的轻量落地）：缺必填项即 422。
+        细粒度语义校验（关键性/受保护进程/信号白名单）仍在 actions.py，比 schema 更全。"""
+        if self.action in ("truncate_log", "clean_path"):
+            p = self.params.get("path")
+            if not isinstance(p, str) or not p:
+                raise ValueError(f"{self.action} 需要非空字符串参数 path")
+        elif self.action == "kill_process":
+            if "pid" not in self.params:
+                raise ValueError("kill_process 需要参数 pid")
+        return self
 
 
 @router.get("/health")
@@ -82,31 +99,64 @@ def _rules_payload() -> list[dict]:
 async def guardrail_rules() -> dict:
     """列出护栏规则库，供前端「规则可视化」展示（评分③可演示项）。
 
-    source/errors 反映规则来自 YAML 配置还是红线兜底集（P2-1 可配置化）。
+    source/errors 反映规则来自 YAML 配置还是红线兜底集（P2-1 可配置化）；
+    fingerprint 是当前生效规则集的内容指纹（P1：答辩证明此刻在用哪一版规则）。
     """
     st = load_status()
     return {
         "count": len(RULES),
         "source": st["source"],
         "errors": st["errors"],
+        "fingerprint": rules_fingerprint(),
         "rules": _rules_payload(),
     }
 
 
-@router.post("/guardrail/rules/reload")
+@router.post("/guardrail/rules/reload", dependencies=[Depends(require_operator)])
 async def guardrail_rules_reload() -> dict:
     """热加载规则库：从 rules.yaml 重新读取并校验（P2-1 插件化/可扩展）。
 
     故障安全：校验不过则【不换入】、维持现有规则并回报 errors，护栏绝不因坏配置出现空窗。
     红线规则（CRITICAL+DENY 绝命操作）硬编码兜底，无法经配置削弱或删除。
+
+    P1 加固：① 挂 require_operator——改变生效护栏是敏感操作，须 operator 鉴权（demo 模式豁免）；
+    ② 结果写审计（actor/时间/prev→new 指纹/applied/errors），谁在何时换了哪版规则可回放追责。
     """
+    prev_fp = rules_fingerprint()
     st = reload_rules()
+    new_fp = rules_fingerprint()
+
+    # 把这次热加载写审计：规则是护栏的「法律」，改它必须留痕（who/when/prev→new/applied/errors）。
+    try:
+        trace_id = uuid.uuid4().hex
+        steps = [
+            {"stage": "接收指令", "detail": {
+                "action": "guardrail.rules.reload", "actor": "operator(token-authenticated)"}},
+            {"stage": "安全校验", "detail": {
+                "prev_fingerprint": prev_fp, "new_fingerprint": new_fp,
+                "applied": st["applied"], "source": st["source"], "errors": st["errors"]}},
+            {"stage": "执行结果", "detail": {
+                "count": st["count"], "applied": st["applied"],
+                "changed": prev_fp != new_fp}},
+        ]
+        await asyncio.to_thread(
+            store.save_trace, trace_id, "[护栏规则热加载]",
+            "applied" if st["applied"] else "rejected(kept previous)",
+            steps, intent="rules_reload", blocked=not st["applied"],
+            tainted=False, llm_provider=get_settings().llm_provider)
+    except Exception:  # noqa: BLE001 审计旁路失败不阻断热加载本身
+        trace_id = ""
+
     return {
         "ok": not st["errors"],
         "source": st["source"],
         "count": st["count"],
         "applied": st["applied"],
         "errors": st["errors"],
+        "fingerprint": new_fp,
+        "prev_fingerprint": prev_fp,
+        "changed": prev_fp != new_fp,
+        "trace_id": trace_id,
         "rules": _rules_payload(),
     }
 
@@ -154,7 +204,7 @@ _SANDBOX_DEMO = {
 }
 
 
-@router.get("/guardrail/sandbox-demo")
+@router.get("/guardrail/sandbox-demo", dependencies=[Depends(require_operator)])
 async def guardrail_sandbox_demo(scenario: str = "cpu") -> dict:
     """执行沙箱演示（P4-3）：跑一条**服务端预定义**的无害吃资源命令，展示「失控进程被沙箱掐死」。
 
@@ -197,7 +247,7 @@ async def guardrail_sandbox_demo(scenario: str = "cpu") -> dict:
 
 @router.post("/chat")
 async def chat(req: ChatRequest, request: Request) -> dict:
-    """自然语言运维对话，返回最终答复 + 思维链 trace（含 trace_id 供回放）。"""
+    """自然语言运维对话，返回最终答复 + 执行链 trace（含 trace_id 供回放）。"""
     orch = request.app.state.orchestrator
     result = await orch.chat(req.message)
     return {
@@ -213,13 +263,13 @@ async def chat(req: ChatRequest, request: Request) -> dict:
 
 @router.get("/traces")
 async def traces(limit: int = 50) -> dict:
-    """列出最近会话，供前端「思维链回放」历史列表（评分：可追溯闭环）。"""
+    """列出最近会话，供前端「执行链回放」历史列表（评分：可追溯闭环）。"""
     return {"traces": store.list_traces(limit=limit)}
 
 
 @router.get("/traces/{trace_id}")
 async def trace_detail(trace_id: str) -> dict:
-    """按 trace_id 取完整思维链五段，供前端回放整条推理链路。"""
+    """按 trace_id 取完整执行链五段，供前端回放整条推理链路。"""
     t = store.get_trace(trace_id)
     if t is None:
         raise HTTPException(status_code=404, detail=f"trace 不存在: {trace_id}")
@@ -228,11 +278,11 @@ async def trace_detail(trace_id: str) -> dict:
 
 @router.get("/traces/{trace_id}/verify")
 async def trace_verify(trace_id: str) -> dict:
-    """校验思维链哈希链完整性（防篡改）：返回 valid 及断裂点，供前端展示「可信审计」。"""
+    """校验执行链哈希链完整性（防篡改）：返回 valid 及断裂点，供前端展示「可信审计」。"""
     return store.verify_chain(trace_id)
 
 
-@router.get("/vuln-intel")
+@router.get("/vuln-intel", dependencies=[Depends(require_operator)])
 async def vuln_intel(component: str | None = None, cve: str | None = None,
                      live: bool = False) -> dict:
     """漏洞情报检索（P1-1）：把内核新漏洞的『时效』从训练问题变检索问题。
@@ -243,7 +293,7 @@ async def vuln_intel(component: str | None = None, cve: str | None = None,
     return await asyncio.to_thread(query_vuln_intel, component, cve, live)
 
 
-@router.get("/posture")
+@router.get("/posture", dependencies=[Depends(require_operator)])
 async def posture(live: bool = False) -> dict:
     """内核 / 主机安全姿态检查（P1-2）：本机内核+已加载模块比对情报，命中给缓解建议。
 
@@ -253,7 +303,7 @@ async def posture(live: bool = False) -> dict:
     return await asyncio.to_thread(posture_mod.check_posture, live)
 
 
-@router.get("/diagnose")
+@router.get("/diagnose", dependencies=[Depends(require_operator)])
 async def diagnose(topic: str = "all", path: str = "/") -> dict:
     """智能根因分析（评分④）：disk/zombie/load/all。只分析给建议，绝不执行处置。
 
@@ -267,7 +317,7 @@ async def action_execute(req: ActionRequest) -> dict:
     """受控 MUTATING 动作端到端闭环（P0-3）：白名单动作 → 语义校验 → 护栏 → 执行。
 
     默认 dry_run / 未 confirmed 时只返回护栏裁决与 require_confirm 预览，绝不真正执行；
-    每次动作产出五段思维链并落审计，可按返回的 trace_id 回放（评分②③④可演示项）。
+    每次动作产出五段执行链并落审计，可按返回的 trace_id 回放（评分②③④可演示项）。
 
     鉴权（P0-4）：本端点是唯一会真正改系统状态的入口，挂 require_operator 依赖，
     配置了 operator_token 时须带 `Authorization: Bearer <token>`。

@@ -926,3 +926,32 @@
 - 测试：新增 `test_startup_guard.py`——回环 demo 放行 / 非回环空 token 拒 / 非回环默认 HMAC 拒 / 全配置放行；
   审计不可用时改状态动作被拒且文件不被清空、dry_run 预览不受影响。全套 pytest **637 → 643 全绿**。
 - 至此 IMPROVEMENTS-v4 的 P0-A/B/C/D 全部落地（540→643，+103 用例）。下一步：P1 便宜硬化项。
+
+### P1：便宜的硬化（GPT 其余项一并折叠）
+- 做了什么：
+  1. **请求模型约束**：`ChatRequest.message`/`GuardCheckRequest.command` 加 `Field(min_length=1,max_length=4000)`；
+     `ActionRequest.action` 改 `Literal["truncate_log","kill_process","clean_path"]`（未知动作入口即 422）；
+     加 `model_validator` 按动作校验 params 形状（truncate/clean 需非空 path、kill 需 pid）。早 422、不进业务层。
+  2. **rules/reload 鉴权 + 审计**：`POST /guardrail/rules/reload` 挂 `require_operator`；新增 `rules_fingerprint()`
+     （生效规则集 id|pattern|risk|action 的 sha256），`/guardrail/rules` 与 reload 都回报指纹；reload 写一条
+     审计 trace（actor / prev→new 指纹 / applied / errors / changed），谁何时换了哪版规则可回放追责。
+  3. **只读高消耗端点**：`/diagnose`、`/posture`、`/vuln-intel`、`/guardrail/sandbox-demo` 挂 `require_operator`。
+     复用既有依赖即达成「demo 豁免、prod 要 token」——demo 空 token 自动 no-op，prod 非回环已被 P0-D 强制配 token。
+  4. **审计脱敏**：`store._redact` 落库前抹掉凭据明文（Bearer/Authorization、token/key/password/secret 键值、
+     PEM 私钥块）→ `***REDACTED***`。脱敏发生在计哈希**之前**，存库与哈希链同一份文本，verify_chain 仍自洽。
+  5. **工程化**：README 安装改 `requirements.lock`（锁定版本可复现）；`ci_check.sh` 缺 python3.11 直接 `exit 1`
+     不再 fallback 到任意 python3（静默降级会让「可复现」名不副实）。
+  6. **命名**：README/路由注释/前端用户可见标签「思维链」统一改「执行链（trace）」——本项目记录的是五段执行链路
+     （感知→决策→护栏→结果），并非模型原始 chain-of-thought，改名更准确、避免评委误解。
+  7. **（可选）前端代码分割**：`vite.config.js` 加 manualChunks 拆 element-plus / vue 为独立 vendor chunk，
+     主业务 chunk 1.08MB→76KB（业务改动不再使整个大包失效缓存）。
+- 设计决策与理由：
+  - **P1.3 复用 require_operator 而非新造限流**：require_operator 在空 token 时天然 no-op、配 token 时强制；
+    叠加 P0-D「非回环必须配 token」，自动满足「demo 顺滑 + 联网必鉴权」，零新增机制（反 bloat）。
+  - **指纹用生效规则集而非 yaml 文件 hash**：热加载失败时维持旧规则，文件已变但生效集没变——指纹取自内存
+    实际规则，才真实反映「此刻在用哪一版」。
+  - **脱敏先于哈希**：保证审计库即便被读也不泄露凭据，同时不破坏防篡改链（链覆盖的是脱敏后内容）。
+  - **ruff/pre-commit 不引入**：doc 标「可加」，本轮克制——避免给评委环境增加额外工具链依赖。
+- 测试：新增 `test_audit_redacts_credentials`（凭据不入库 + 链仍自洽）；请求约束/端点鉴权复用既有路由测试覆盖。
+  全套 pytest **643 → 644 全绿**；前端 `npm run build` 通过（主 chunk 显著缩小）。
+- 至此 IMPROVEMENTS-v4 的 P0-A/B/C/D + P1 全部落地（540→644，+104 用例）。

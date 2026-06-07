@@ -9,10 +9,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-echo "==> [1/4] 检查 Python 版本（要求 3.11）"
+echo "==> [1/4] 检查 Python 版本（要求 3.11，可复现性硬约束）"
 PY="${PYTHON:-python3.11}"
 if ! command -v "$PY" >/dev/null 2>&1; then
-  PY="python3"
+  # P1：缺 python3.11 直接失败，不再 fallback 到任意 python3——
+  # 静默降级会让「可复现」名不副实（不同小版本行为可能不同）。
+  echo "ERROR: 需要 python3.11 以保证可复现。请安装后重试，或显式指定 PYTHON=/path/to/python3.11。" >&2
+  exit 1
 fi
 "$PY" --version
 

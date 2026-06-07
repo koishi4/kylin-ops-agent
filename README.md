@@ -19,13 +19,13 @@
 ```bash
 cd backend
 python3.11 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.lock   # 锁定版本，可复现；开发升级依赖时才用 requirements.txt
 cp .env.example .env          # 填 DEEPSEEK_API_KEY；或在 .env 设 LLM_PROVIDER=mock 离线跑
 uvicorn app.main:app --reload --port 8000
 ```
 - `GET /health`：存活 + 当前 LLM provider
 - `GET /tools`：列出 MCP 工具（评分①「列工具」）
-- `POST /chat` `{"message": "磁盘还剩多少"}`：返回 answer + 五段思维链 trace
+- `POST /chat` `{"message": "磁盘还剩多少"}`：返回 answer + 五段执行链 trace
 
 LLM 三模式（环境变量 `LLM_PROVIDER`）：`deepseek`（云端，开发默认）/ `ollama`（本地 Qwen3，答辩离线）/ `mock`（无 key 无网，演示与 CI）。
 

@@ -243,6 +243,19 @@ def load_status() -> dict:
     return dict(_load_status)
 
 
+def rules_fingerprint() -> str:
+    """当前**生效**规则集的内容指纹：sha256(每条 id|pattern|risk|action 串接)。
+
+    比 rules.yaml 文件 hash 更准——反映红线合并/故障安全后**实际在用**的规则集合，
+    答辩时可证明「此刻生效的是哪一版规则」，热加载前后对比指纹即可看出是否真换入。
+    """
+    import hashlib
+    h = hashlib.sha256()
+    for r in RULES:
+        h.update(f"{r.id}|{r.pattern}|{r.risk.value}|{r.action.value}\x1f".encode("utf-8"))
+    return h.hexdigest()
+
+
 def normalize(cmd: str) -> str:
     """命令规范化，压缩绕过空间：去首尾空白、折叠多空格、去掉成对引号包裹。"""
     t = cmd.strip()

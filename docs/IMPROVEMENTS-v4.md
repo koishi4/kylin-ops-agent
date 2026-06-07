@@ -83,19 +83,25 @@ find / -delete  /  find / -maxdepth 1 -delete  /  truncate -s 0 /etc/passwd  /  
 1. 启动守卫（DEMO/PROD 分界）：当 `api_bind_host != 127.0.0.1`（视为联网/生产）**且**（`operator_token` 为空 **或** `audit_hmac_key` 仍是默认值）→ 直接拒绝启动并报清晰错误。本机 demo（127.0.0.1 + 空 token）保持顺滑不变。
 2. `/action/execute` 改"审计先于执行"：**先写 pending audit → 执行状态变更 → 写 result audit**；若 pending audit 写入失败，则**不执行**状态变更动作（普通 /chat 的 best-effort 审计可保持现状）。
 3. `audit/store._connect` 补 `PRAGMA journal_mode=WAL` 与 `busy_timeout`，避免并发 `database is locked`。
-- [ ] P0-D 完成
+- [x] P0-D 完成 —— 失败安全启动守卫（非回环+弱默认→拒启）；/action/execute 审计先于执行（改状态调用
+      pending 审计写不下就拒执行）；审计库 WAL+busy_timeout。test_startup_guard.py 固化。637→643 全绿。
 
 ---
 
 ## P1　便宜的硬化（GPT 其余项，一并折叠）
 
-- [ ] **请求模型约束**：`ChatRequest.message`、`GuardCheckRequest.command` 加 `Field(min_length, max_length)`；`ActionRequest.action` 用 `Literal["truncate_log","kill_process","clean_path"]`，各 action 定义独立 params schema。
-- [ ] **rules/reload 鉴权 + 审计**：`POST /guardrail/rules/reload` 挂 `require_operator`，reload 结果写审计（who/when/prev_hash/new_hash/errors/applied），并暴露当前 rules.yaml 内容 hash（答辩证明"现在生效的是哪版规则"）。
-- [ ] **只读高消耗端点**：`/diagnose`、`/posture?live=true`、`/vuln-intel?live=true`、`/guardrail/sandbox-demo` 在非 127.0.0.1 绑定时要求 operator token 或限流（demo 模式可豁免）。
-- [ ] **审计脱敏**：`store.py` 单条 detail 已截断 8000 字符；再对 token/key/password/私钥路径/Authorization 等做脱敏。
-- [ ] **工程化**：README 改 `pip install -r requirements.lock`（开发升级才用 requirements.txt）；`ci_check.sh` 缺 python3.11 直接失败而非 fallback；可加 ruff/pre-commit。
-- [ ] **命名**：README/路由注释/前端把"思维链"统一改为"执行链/审计链/决策 trace"——当前并不要求模型输出原始 chain-of-thought，改名更准确、也避免误解。
-- [ ] **（可选）前端代码分割**：评委模式/规则库/回放/检测台抽屉组件动态 import 或 Vite manualChunks 拆 Element Plus（主 chunk ~1.08MB）。
+- [x] **请求模型约束** —— ChatRequest.message / GuardCheckRequest.command 加 Field(min/max_length)；
+      ActionRequest.action 用 Literal 白名单 + model_validator 按动作校验 params 形状（缺必填即 422）。
+- [x] **rules/reload 鉴权 + 审计** —— reload 端点挂 require_operator；结果写审计（actor/prev→new 指纹/applied/errors）；
+      新增 rules_fingerprint()，/guardrail/rules 与 reload 均回报生效规则集指纹（证明此刻在用哪版规则）。
+- [x] **只读高消耗端点** —— /diagnose、/posture、/vuln-intel、/guardrail/sandbox-demo 挂 require_operator
+      （demo 空 token 豁免、prod 非回环已由 P0-D 强制配 token → 自动生效）。
+- [x] **审计脱敏** —— store 落库前 _redact：Bearer/Authorization、token/key/password/secret 键值、PEM 私钥块
+      → ***REDACTED***（脱敏在计哈希之前，verify_chain 仍自洽）。新增 test_audit_redacts_credentials。
+- [x] **工程化** —— README 改 `pip install -r requirements.lock`；ci_check.sh 缺 python3.11 直接失败不再 fallback。
+      （ruff/pre-commit 属「可加」，本轮不引入以免 bloat。）
+- [x] **命名** —— README/路由注释/前端用户可见标签「思维链」统一改「执行链（trace）」（测试仅 docstring 提及，不受影响）。
+- [x] **（可选）前端代码分割** —— vite manualChunks 拆出 element-plus / vue vendor：主业务 chunk 1.08MB→76KB（缓存友好）。
 
 ---
 

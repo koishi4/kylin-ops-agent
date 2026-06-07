@@ -15,7 +15,7 @@ const messages = ref([
 ])
 const scroller = ref(null)
 
-// trace 阶段 → Element Plus timeline 颜色，呼应「五段思维链」
+// trace 阶段 → Element Plus timeline 颜色，呼应「五段执行链」
 const stageColor = {
   接收指令: '#909399',
   感知环境: '#409EFF',
@@ -27,7 +27,7 @@ const stageColor = {
 const intentTag = { white: 'success', gray: 'warning', black: 'danger', action: 'primary' }
 const intentText = { white: '白·只读放行', gray: '灰·需校验', black: '黑·已拦截', action: '动作执行' }
 
-// ---- 思维链回放抽屉 ----
+// ---- 执行链回放抽屉 ----
 const replayOpen = ref(false)
 const traceList = ref([])
 const replayLoading = ref(false)
@@ -149,10 +149,10 @@ async function safeClean(file) {
     await ElMessageBox.confirm(
       `将执行：${preview.command}\n护栏结论：${preview.reason}\n确认安全清理？`,
       '⚠️ 二次确认', { type: 'warning', confirmedButtonText: '确认执行', cancelButtonText: '取消' })
-    // 第三步：确认后真正执行（confirmed + 非 dry_run），全程记入思维链
+    // 第三步：确认后真正执行（confirmed + 非 dry_run），全程记入执行链
     const res = await executeAction(action, { path }, { confirmed: true, dryRun: false })
     if (res.executed && res.ok) {
-      ElMessage.success(`已安全清理：${path}（已记入思维链 ${res.trace_id?.slice(0, 8)}）`)
+      ElMessage.success(`已安全清理：${path}（已记入执行链 ${res.trace_id?.slice(0, 8)}）`)
       await runDiagnose()  // 刷新报告，清理后大文件应消失/缩小
     } else if (res.blocked) {
       ElMessage.error(`护栏拦截：${res.reason}`)
@@ -338,7 +338,7 @@ const judgeOpen = ref(false)
         <el-tag size="small" type="info">工具: {{ tools.length }}</el-tag>
         <el-button size="small" type="warning" @click="judgeOpen = true">🏆 评委模式</el-button>
         <el-button size="small" @click="runDiagnose">🩺 一键体检</el-button>
-        <el-button size="small" @click="openReplay">🔍 思维链回放</el-button>
+        <el-button size="small" @click="openReplay">🔍 执行链回放</el-button>
         <el-button size="small" @click="openRules">🛡️ 规则库</el-button>
         <el-button size="small" @click="openTrifecta">⚖️ 能力面板</el-button>
         <el-button size="small" @click="openProbe">🧪 护栏检测台</el-button>
@@ -357,7 +357,7 @@ const judgeOpen = ref(false)
             </div>
             <div class="text">{{ m.answer }}</div>
             <el-collapse v-if="m.trace && m.trace.length" class="trace">
-              <el-collapse-item :title="`🔍 思维链回放（${m.trace.length} 步）`" name="t">
+              <el-collapse-item :title="`🔍 执行链回放（${m.trace.length} 步）`" name="t">
                 <el-timeline>
                   <el-timeline-item
                     v-for="(s, j) in m.trace"
@@ -392,8 +392,8 @@ const judgeOpen = ref(false)
       <JudgeMode v-if="judgeOpen" />
     </el-drawer>
 
-    <!-- 思维链回放抽屉：左侧历史列表，右侧整条五段时间线 -->
-    <el-drawer v-model="replayOpen" title="🔍 思维链回放（可追溯审计）" size="60%" direction="rtl">
+    <!-- 执行链回放抽屉：左侧历史列表，右侧整条五段时间线 -->
+    <el-drawer v-model="replayOpen" title="🔍 执行链回放（可追溯审计）" size="60%" direction="rtl">
       <div v-loading="replayLoading" class="replay">
         <div class="trace-list">
           <el-empty v-if="!traceList.length" description="暂无历史会话" />
@@ -414,7 +414,7 @@ const judgeOpen = ref(false)
           </div>
         </div>
         <div class="trace-detail">
-          <el-empty v-if="!activeTrace" description="点击左侧会话回放整条思维链" />
+          <el-empty v-if="!activeTrace" description="点击左侧会话回放整条执行链" />
           <template v-else>
             <div class="td-meta">
               <b>trace_id：</b><code>{{ activeTrace.trace_id }}</code>

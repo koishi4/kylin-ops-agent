@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -24,6 +25,28 @@ from app.config import get_settings
 
 # 单条 detail 最大留存长度，过长的工具输出截断（审计要的是链路，不是全量数据）
 _MAX_DETAIL = 8000
+
+_REDACTED = "***REDACTED***"
+# P1：审计脱敏——审计要可追溯但不该把凭据明文存进库（库被读=凭据泄露）。
+# 在落库前对 detail JSON 文本做正则脱敏：Bearer/Authorization、token/key/password/secret 等键值、私钥块。
+_REDACT_PATTERNS = [
+    # JSON 键值对：含敏感词的键，其字符串值整体替换
+    (re.compile(r'("(?:[^"]*(?:authorization|token|api[_-]?key|secret|password|passwd|pwd|'
+                r'access[_-]?token|refresh[_-]?token|private[_-]?key)[^"]*)"\s*:\s*")'
+                r'(?:\\.|[^"\\])*(")', re.IGNORECASE), rf'\1{_REDACTED}\2'),
+    # 裸 Bearer 令牌
+    (re.compile(r'(?i)(bearer\s+)[A-Za-z0-9._\-]{6,}'), rf'\1{_REDACTED}'),
+    # PEM 私钥块
+    (re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----',
+                re.DOTALL), f'-----BEGIN PRIVATE KEY-----{_REDACTED}-----END PRIVATE KEY-----'),
+]
+
+
+def _redact(text: str) -> str:
+    """落库前脱敏：抹掉 detail 里可能夹带的凭据明文（token/key/password/Bearer/私钥）。"""
+    for pat, repl in _REDACT_PATTERNS:
+        text = pat.sub(repl, text)
+    return text
 
 # 哈希链链首锚（第一条 step 的 prev_hash），固定常量
 _GENESIS = "GENESIS"
@@ -148,7 +171,9 @@ def save_trace(
     prev = _GENESIS
     for seq, step in enumerate(steps):
         stage = step.get("stage", "")
-        detail_json = _truncate(json.dumps(step.get("detail"), ensure_ascii=False, default=str))
+        # 先脱敏再截断，最后才计哈希——存进库与参与哈希链的是同一份脱敏文本，verify_chain 仍自洽。
+        detail_json = _truncate(_redact(
+            json.dumps(step.get("detail"), ensure_ascii=False, default=str)))
         step_hash = _step_digest(key, prev, trace_id, seq, stage, detail_json)
         rows.append((trace_id, seq, stage, detail_json, now, prev, step_hash))
         prev = step_hash

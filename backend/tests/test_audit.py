@@ -130,3 +130,25 @@ class TestHashChain:
     def test_verify_missing_trace(self, tmp_db):
         v = store.verify_chain("does-not-exist")
         assert v["valid"] is False and "不存在" in v["reason"]
+
+
+def test_audit_redacts_credentials(tmp_db):
+    """P1：落库前脱敏——token/Authorization/password/私钥不得以明文进审计库。"""
+    secret_steps = [
+        {"stage": "接收指令", "detail": {
+            "headers": {"Authorization": "Bearer s3cr3t-operator-token-abcdef"},
+            "token": "live-key-9876543210", "password": "hunter2",
+            "note": "private key below",
+            "pem": "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAAB3Nz\n-----END OPENSSH PRIVATE KEY-----"}},
+    ]
+    store.save_trace("t-redact", "登录", "ok", secret_steps,
+                     intent="action", llm_provider="mock")
+    t = store.get_trace("t-redact")
+    blob = str(t["steps"][0]["detail"])
+    assert "s3cr3t-operator-token-abcdef" not in blob
+    assert "live-key-9876543210" not in blob
+    assert "hunter2" not in blob
+    assert "AAAAB3Nz" not in blob
+    assert "***REDACTED***" in blob
+    # 脱敏后哈希链仍自洽（脱敏发生在计哈希之前）
+    assert store.verify_chain("t-redact")["valid"] is True

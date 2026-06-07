@@ -28,13 +28,13 @@ export async function chat(message) {
   return data // { trace_id, answer, blocked, intent, trace, tool_calls }
 }
 
-// 思维链回放：列出历史会话
+// 执行链回放：列出历史会话
 export async function listTraces(limit = 50) {
   const { data } = await http.get('/traces', { params: { limit } })
   return data.traces
 }
 
-// 思维链回放：按 trace_id 取完整五段
+// 执行链回放：按 trace_id 取完整五段
 export async function getTrace(traceId) {
   const { data } = await http.get(`/traces/${traceId}`)
   return data

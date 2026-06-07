@@ -20,7 +20,7 @@ const cards = [
   {
     id: 'perception', badge: '①', tag: 'OS 感知 + MCP 插件',
     title: '实时感知本机系统状态',
-    desc: '一句话经 MCP 工具拿到真实磁盘数据，全程留五段思维链。',
+    desc: '一句话经 MCP 工具拿到真实磁盘数据，全程留五段执行链。',
     sample: '磁盘还剩多少？',
     run: async () => normChat(await chat('磁盘还剩多少？'), '磁盘还剩多少？'),
   },
@@ -171,7 +171,7 @@ async function runAll() {
               </div>
             </div>
 
-            <!-- 审计 trace：五段思维链时间线 -->
+            <!-- 审计 trace：五段执行链时间线 -->
             <div v-if="results[c.id].trace && results[c.id].trace.length" class="seg-block">
               <span class="seg-k">
                 审计 trace
