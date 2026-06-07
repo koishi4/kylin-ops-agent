@@ -235,10 +235,11 @@ def _kill_process(params: dict, *, confirmed: bool, authorized: bool, dry_run: b
                        f"目标进程 {pid}（{name}）属 root，按最小权限原则需显式授权后方可终止。",
                        precheck=precheck)
 
-    command = f"kill -{signum} {pid}"
+    # P0-A.4：结构化 argv（signum/pid 均为整数，从根上无拼接/注入面），不再拼成字符串。
+    argv = ["kill", f"-{signum}", str(pid)]
     rationale = (f"向进程 {pid}（{name}）发送 {sig_name}；已确认非 init/自身/关键服务，"
                  "优先温和信号给进程自清理的机会。")
-    return _guarded_finish("kill_process", trace, command, rationale, precheck,
+    return _guarded_finish("kill_process", trace, argv, rationale, precheck,
                            confirmed=confirmed, authorized=authorized, dry_run=dry_run)
 
 
@@ -265,10 +266,12 @@ def _clean_path(params: dict, *, confirmed: bool, authorized: bool, dry_run: boo
                        "目标不是普通文件（疑似目录/设备），clean_path 仅清理单个文件，已拒绝。",
                        precheck=precheck)
 
-    command = f"rm -f {shlex.quote(path)}"
+    # P0-A.4：结构化 argv —— path 作为独立 token 原样进 argv，不经「quote 进字符串再 split」往返，
+    # 含空格/元字符的路径也不会被二次解释；展示/审计字符串由 shlex.join 反推（同源）。
+    argv = ["rm", "-f", path]
     rationale = ("可清理的非日志文件 → rm -f 删除单个文件；"
                  "命令仍过护栏，落在系统关键路径（如 /var）的 rm 会被 PATH-001 独立拦截。")
-    return _guarded_finish("clean_path", trace, command, rationale, precheck,
+    return _guarded_finish("clean_path", trace, argv, rationale, precheck,
                            confirmed=confirmed, authorized=authorized, dry_run=dry_run)
 
 
@@ -306,15 +309,21 @@ def _refuse(action: str, trace: list[dict], reason: str, *, precheck: Any = None
     }
 
 
-def _guarded_finish(action: str, trace: list[dict], command: str, rationale: str,
+def _guarded_finish(action: str, trace: list[dict], argv: list[str], rationale: str,
                     precheck: Any, *, confirmed: bool, authorized: bool, dry_run: bool) -> dict:
-    """语义校验通过后：构造命令 → 经 executor 护栏裁决 → 据结果装配剩余 trace。"""
+    """语义校验通过后：构造 argv → 经 executor 护栏裁决 → 据结果装配剩余 trace。
+
+    P0-A.4：动作层直接给出结构化 argv，经 `executor.execute_argv` 落地——argv 即权威执行对象，
+    护栏在 `shlex.join(argv)` 上裁决，「所审即所执」，不再有「命令字符串 → argv」再解析的歧义。
+    trace/前端展示用的 `command` 字符串由同一 argv 反推（shlex.join），与执行对象同源。
+    """
     trace = list(trace)
+    command = shlex.join(argv)  # 仅供展示/审计：与真正执行的 argv 同源，不再被二次解析
     trace.append({"stage": "推理决策", "detail": {"command": command, "rationale": rationale}})
 
     # 未确认绝不真执行：强制 dry_run，仅取护栏裁决供前端预览。
     effective_dry = dry_run or not confirmed
-    res = executor.execute(command, confirmed=confirmed, authorized=authorized, dry_run=effective_dry)
+    res = executor.execute_argv(argv, confirmed=confirmed, authorized=authorized, dry_run=effective_dry)
     decided = _decide(res, confirmed=confirmed, dry_run=dry_run)
 
     trace.append({"stage": "安全校验", "detail": {

@@ -132,6 +132,11 @@ DEL-001 的 `/(\s|$)` 因 `/"` 收尾而漏判，bashlex 也不会去解析 `-c`
 3. **kill PID 1/-1 红线**。
    （有判断地**不**把可恢复的 chmod/chown 升 CRITICAL：危险变形已由 PERM-* 覆盖，盲升会误杀常规运维、
    破坏「误杀率 0%」——见 dev-log。）
+4. **执行层补刀：executor argv 原生化**。绕过的物理根源是「executor 把命令当字符串、执行前再 `shlex.split`」。
+   新增结构化入口 `execute_argv(argv: list[str])`：argv 即权威执行对象，护栏在 `shlex.join(argv)` 上裁决、
+   放行后**直接执行该 argv 不再二次解析**。因 `shlex.split(shlex.join(x)) == x` 对良构 argv 恒等，**「护栏所审
+   字符串」与「真正执行的 argv」可证同源**——受控变更路径（kill/clean，唯一真实生产路径）从根上消除「拼接→再
+   解析」面。原 `execute(str)` 保留为自由形态/兼容入口，仍靠规则库 + AST 兜（见 dev-log「P0-A.4」）。
 
 **两条结构性论点（答辩金句）**：
 - **解释器内联代码无法静态可信审查 → 把包装结构本身当信号**（而非徒劳地去读内层）。

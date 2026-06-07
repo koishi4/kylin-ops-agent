@@ -35,8 +35,13 @@ find / -delete  /  find / -maxdepth 1 -delete  /  truncate -s 0 /etc/passwd  /  
 3. **红队回归（固化，永不退化）**
    新增 `backend/tests/test_guardrail_bypass.py`，把上面确认的绕过样例 + 变形全部纳入，断言一律 DENY 或至少 CONFIRM，绝不 LOW/ALLOW。同时跑一遍正常运维命令（df/ps/journalctl/cat 日志/systemctl status）断言**不误杀**（假阳性要低）。可把这批样例并进 `scripts/redteam_ab.py`，A/B 数字会更亮眼。
 
-4. **（可后置）executor 收紧**
-   GPT 建议 executor 改 argv 原生接口、不把"shell 命令字符串"当统一执行对象。这是较大重构，本轮可先不做；但在 dev-log 记为「已知架构改进项」。当前先靠 1–3 把绕过堵死。
+4. **（可后置 → 已补做）executor 收紧**
+   GPT 建议 executor 改 argv 原生接口、不把"shell 命令字符串"当统一执行对象。已落地：新增结构化入口
+   `execute_argv(argv: list[str])`，护栏在 `shlex.join(argv)` 上裁决、放行后直接执行该 argv（不再二次
+   `shlex.split`），因 `shlex.split(shlex.join(x))==x` 恒等故「所审即所执」可证；动作层（kill/clean）改
+   argv 原生，executor 唯一生产调用方全量收口。原 `execute(str)` 保留为自由形态/兼容入口。见 dev-log「P0-A.4」。
+   - [x] P0-A.4 完成 —— `tests/test_executor_argv.py` 12 例固化（危险 argv 等价被拦、元字符 token 不被再解析、
+         join/split 恒等、入参防御）；644→656 全绿。
 
 - [x] P0-A 完成（实测那 7 条全部不再 LOW/ALLOW）—— 解释器内联代码=CRITICAL/DENY、破坏性动词 realpath 推广、
       KILL-001 红线、`tests/test_guardrail_bypass.py` 固化 7+27 变形；540→631 全绿，误杀率仍 0%。

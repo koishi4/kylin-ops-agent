@@ -955,3 +955,31 @@
 - 测试：新增 `test_audit_redacts_credentials`（凭据不入库 + 链仍自洽）；请求约束/端点鉴权复用既有路由测试覆盖。
   全套 pytest **643 → 644 全绿**；前端 `npm run build` 通过（主 chunk 显著缩小）。
 - 至此 IMPROVEMENTS-v4 的 P0-A/B/C/D + P1 全部落地（540→644，+104 用例）。
+
+### P0-A.4：executor argv 原生化（先前列为「已知架构改进项」，本轮补做）
+- 背景：IMPROVEMENTS-v4 的 P0-A 第 4 项与「别做」均把 GPT 第二轮 review 的「executor 改 argv 原生接口、
+  不把『命令字符串』当统一执行对象」记为可后置的架构改进。P0-A 1–3 已在护栏层堵死绕过；本轮把执行层也收口，
+  使受控变更路径不再有「字符串 → argv」再解析面，与护栏哲学闭环。
+- 做了什么：
+  1. **`executor` 新增结构化入口 `execute_argv(argv: list[str], ...)`**：argv 是权威执行对象，护栏在
+     `shlex.join(argv)` 上裁决，放行后**直接执行该 argv**（不再 `shlex.split` 二次解析）。因
+     `shlex.split(shlex.join(x)) == x` 对良构 argv 恒等，**「所审即所执」可证**——护栏所审字符串与真正执行的
+     argv 严格同源，不存在再解析分叉。原 `execute(cmd: str)` 保留为自由形态/兼容入口（护栏在原始串上裁决，
+     放行后才 split），两入口共用内核 `_execute(guard_str, argv_or_none, ...)`。
+  2. **`core/actions.py` 受控动作改 argv 原生**：`_guarded_finish` 由收 `command: str` 改收 `argv: list[str]`，
+     `command` 展示串由 `shlex.join(argv)` 反推（与执行对象同源）；`_kill_process` → `["kill", f"-{signum}", str(pid)]`
+     （signum/pid 均整数，从根上无拼接面），`_clean_path` → `["rm", "-f", path]`（path 作为独立 token 原样进 argv，
+     不再 `quote 进串再 split` 往返）。executor 在 app/ 内的唯一生产调用方就此全量 argv 化。
+- 设计决策与理由：
+  - **保留 `execute(str)` 而非一刀切**：测试与自由形态命令仍需字符串语义；删之徒增改动面而无收益。把「结构化、
+    可证一致」用在唯一真实生产路径（动作层），把「自由形态、靠护栏兜」留给字符串入口——分层精准。
+  - **护栏仍跑在字符串上**：规则库正则 + bashlex AST 都以字符串为输入，强行改成 argv 语义会重写整套护栏（高风险、
+    无净收益）。正确做法是让「审」的字符串与「执」的 argv 由 `shlex.join` 同源派生，而非两边各算一次。
+  - **不改 run_cmd/沙箱**：run_cmd 早已 `shell=False` 收 `list[str]`，argv 原生化只是把「谁来构造这个 list」从
+    「executor 内部 split」上移到「调用方显式给出」，落地层零改动。
+- 测试：新增 `tests/test_executor_argv.py`（12 例）——危险 argv 与字符串入口等价被拦且不进沙箱；解释器+内联代码经
+  argv 入口仍判 CRITICAL；放行后执行的 argv 与传入逐字一致并确实走沙箱；**含 `;`/空格的无害 token 原样到达
+  run_sandboxed、不被拆分**（所审即所执的行为证据）+ 显式固化 `shlex.split(shlex.join(argv))==argv` 恒等；非 list[str]/
+  空 argv 结构化报错不执行。全套 pytest **644 → 656 全绿**。
+- 至此 IMPROVEMENTS-v4 的 P0-A 第 4 项（executor argv 原生化）亦完成；「别做」清单中仅余 ruff/pre-commit
+  （刻意不引入以免给评委环境加工具链依赖）与重型运行时 IDS（列未来工作）。
