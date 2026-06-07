@@ -53,7 +53,9 @@ find / -delete  /  find / -maxdepth 1 -delete  /  truncate -s 0 /etc/passwd  /  
 2. `truncate_log` 的真实落地不要再调外部 `truncate` 命令，改 Python 原子：`fd = os.open(path, os.O_WRONLY | os.O_NOFOLLOW)` → `fstat` 确认普通文件、inode 未变/仍在允许范围 → `os.ftruncate(fd, 0)`。
    - 若为演示仍需经 executor 留审计：把「护栏裁决/审计」与「真实文件操作」拆开——护栏只做裁决与落审计，落地动作由 fd-safe Python 执行。
 **测试**：构造软链在校验后被替换的场景断言被 O_NOFOLLOW 拒；正常日志读取/清空仍工作。
-- [ ] P0-B 完成
+- [x] P0-B 完成 —— tail_log 改 O_RDONLY|O_NOFOLLOW+fstat 经 fd 读；truncate_log 改 fd-safe os.ftruncate
+      （不再走 truncate 命令，与 P0-A 闭环）；新增末段软链 TOCTOU 拒读测试。631→633 全绿。
+      诚实边界：O_NOFOLLOW 仅护末段，中间目录软链由 realpath 覆盖（per-component openat 列未来工作）。
 
 ---
 
@@ -67,7 +69,9 @@ find / -delete  /  find / -maxdepth 1 -delete  /  truncate -s 0 /etc/passwd  /  
 - low → 告警但可用。
 `suspicious=True` 的工具默认不进模型上下文（工具投毒的核心风险正是：恶意 description 不需被调用，只要进上下文就影响模型）。前端 `/guardrail/tool-scan` 面板展示「已隔离/已放行/需人工复核」状态，而非只展示报告。
 **测试**：注入一个带可疑 description 的工具，断言它不出现在传给 LLM 的 tools 列表里。
-- [ ] P0-C 完成
+- [x] P0-C 完成 —— apply_quarantine 三档处置（high 隔离/medium 默认隔离需 override/low 告警可用）；
+      orchestrator 取 openai_tools 后过滤隔离工具再喂模型（trace 留隔离记录）；前端按档位展示。
+      端到端断言被隔离工具不进 LLM tools 列表。633→637 全绿。
 
 ---
 

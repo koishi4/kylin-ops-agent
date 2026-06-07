@@ -901,3 +901,28 @@
 - 测试：`TestQuarantinePolicy`（三档处置 + operator override 仅释放 medium）；
   `TestOrchestratorEnforcesQuarantine` 用假 LLM/MCP 端到端断言被隔离工具不出现在传给 LLM 的 tools 列表、
   且 trace 留隔离记录。全套 pytest **633 → 637 全绿**；前端 `npm run build` 通过。
+
+### P0-D：DEMO/PROD 失败安全启动守卫 + 审计先于执行 + 审计库 WAL
+- 背景：弱默认值在本机 demo 顺滑，但若被原样带到联网/生产则危险（无鉴权暴露动作端点、默认 HMAC 密钥
+  令审计链可伪造）；且 /action/execute 旧实现「先执行后审计、except: pass 吞掉失败」——破坏性动作可能
+  改了状态却没留痕。
+- 做了什么：
+  1. **失败安全启动守卫**（`config.production_config_errors()` + `main.py` lifespan）：当 `api_bind_host` 非回环
+     （127.0.0.1/::1/localhost 之外，视为联网/生产）**且**（operator_token 为空 **或** audit_hmac_key 仍是默认值）
+     → 直接拒绝启动并报清晰错误。本机 demo（127.0.0.1 + 空 token + 默认密钥）返回空、顺滑不变。
+  2. **审计先于执行**（`routes.action_execute`）：仅对真正会改状态的调用（confirmed 且非 dry_run）先落
+     pending 审计；pending 写不下去 → **拒绝执行**（返回 blocked，不调 run_action），无法留痕的破坏性操作绝不放行。
+     执行后落最终结果审计（同 trace_id 覆盖 pending）；最终审计失败不回滚（pending 已留痕），仅标 audit_warning。
+     dry_run/未确认的预览不改状态，沿用 best-effort 审计。
+  3. **审计库 WAL**（`store._connect`）：补 `PRAGMA journal_mode=WAL` + `busy_timeout=5000`，避免动作/对话/回放
+     并发时 `database is locked`；:memory: 不支持 WAL，try/except 兜底。
+  - `.env.example` 补 QUARANTINE_ALLOW_MEDIUM 与启动守卫说明。
+- 设计决策与理由：
+  - **DEMO/PROD 分界用「绑定地址」而非新开关**：回环=可信本机控制台、非回环=暴露面，是最贴合实际风险且零额外
+    心智负担的判据；避免再加一个 ENV/PROD 旗标。
+  - **审计先于执行只覆盖「改状态」路径**：dry_run/预览本就不改系统，强制其前置审计会无谓损害演示顺滑性——
+    把 fail-closed 精准用在「不可逆 + 有后果」处，是「保守但不过度」的一贯取舍。
+  - **最终审计失败不回滚**：状态变更已发生且 pending 已留痕，强行回滚反而更危险；如实标注 audit_warning 即可。
+- 测试：新增 `test_startup_guard.py`——回环 demo 放行 / 非回环空 token 拒 / 非回环默认 HMAC 拒 / 全配置放行；
+  审计不可用时改状态动作被拒且文件不被清空、dry_run 预览不受影响。全套 pytest **637 → 643 全绿**。
+- 至此 IMPROVEMENTS-v4 的 P0-A/B/C/D 全部落地（540→643，+103 用例）。下一步：P1 便宜硬化项。

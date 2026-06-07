@@ -94,6 +94,13 @@ def _connect() -> Iterator[sqlite3.Connection]:
         parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    # P0-D：WAL 提升读写并发、busy_timeout 避免「database is locked」即时报错（动作/对话/回放可能并发）。
+    # 内存库（:memory:）不支持 WAL，try/except 兜底；失败退回默认 journal 模式不影响功能。
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+    except sqlite3.OperationalError:
+        pass
     try:
         conn.executescript(_SCHEMA)
         for stmt in _MIGRATIONS:  # 旧库补列；新库已含列，重复执行报错忽略即可

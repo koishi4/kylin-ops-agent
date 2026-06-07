@@ -7,6 +7,11 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# 审计哈希链密钥默认值（仅开发/演示用）。生产须经环境变量覆盖；启动守卫会据此判定是否仍是默认。
+_DEFAULT_AUDIT_HMAC_KEY = "kylin-ops-agent-audit-chain-v1"
+# 视为「本机回环 / 演示模式」的绑定地址；其余地址视为联网/生产，触发失败安全前置校验。
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
 
 class Settings(BaseSettings):
     # 大模型切换：deepseek（云端，开发默认）/ ollama（本地，答辩用）/ mock（离线测试）
@@ -25,7 +30,7 @@ class Settings(BaseSettings):
     audit_db: str = "./audit.sqlite"
     # 审计哈希链密钥（防篡改）：用 HMAC 串联每条 step，无密钥无法重算合法哈希。
     # 生产应经环境变量注入并妥善保管（KMS/密钥库）；此默认值仅供开发与演示。
-    audit_hmac_key: str = "kylin-ops-agent-audit-chain-v1"
+    audit_hmac_key: str = _DEFAULT_AUDIT_HMAC_KEY
 
     # 受控动作鉴权（P0-4，最小版，刻意不做 RBAC/账号体系）。
     # operator_token 为空 → 演示模式：本机可信控制台，不强制鉴权（配合默认只监听 127.0.0.1）。
@@ -55,6 +60,29 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
+
+    @property
+    def is_loopback_bind(self) -> bool:
+        """绑定地址是否为本机回环（演示模式）。非回环视为联网/生产。"""
+        return self.api_bind_host in _LOOPBACK_HOSTS
+
+    def production_config_errors(self) -> list[str]:
+        """失败安全启动守卫（P0-D）：非回环绑定（联网/生产）下，弱默认配置一律拒绝启动。
+
+        本机 demo（127.0.0.1 + 空 token + 默认密钥）返回空列表，保持顺滑不变。
+        """
+        if self.is_loopback_bind:
+            return []
+        errs: list[str] = []
+        if not self.operator_token:
+            errs.append(
+                f"API_BIND_HOST={self.api_bind_host} 非回环（联网/生产）但 OPERATOR_TOKEN 为空："
+                "受控动作端点将无鉴权暴露，拒绝启动；请在 .env 配置强随机 OPERATOR_TOKEN。")
+        if self.audit_hmac_key == _DEFAULT_AUDIT_HMAC_KEY:
+            errs.append(
+                f"API_BIND_HOST={self.api_bind_host} 非回环（联网/生产）但 AUDIT_HMAC_KEY 仍是默认值："
+                "审计哈希链可被伪造，拒绝启动；请在 .env 配置独立的 AUDIT_HMAC_KEY。")
+        return errs
 
 
 @lru_cache

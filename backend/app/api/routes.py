@@ -273,26 +273,48 @@ async def action_execute(req: ActionRequest) -> dict:
     配置了 operator_token 时须带 `Authorization: Bearer <token>`。
     """
     trace_id = uuid.uuid4().hex
+    provider = get_settings().llm_provider
+    summary = f"[动作] {req.action} {req.params}"
+
+    # P0-D 审计先于执行：只有真正会改系统状态的调用（已确认且非 dry_run）才需先落 pending 审计；
+    # 若 pending 审计写不下去（审计存储不可用），则**拒绝执行**——无法留痕的破坏性操作绝不放行。
+    # dry_run / 未确认的预览不改状态，沿用执行后 best-effort 审计即可。
+    will_change_state = req.confirmed and not req.dry_run
+    if will_change_state:
+        pending = [{"stage": "接收指令", "detail": {
+            "action": req.action, "params": req.params,
+            "confirmed": req.confirmed, "authorized": req.authorized, "dry_run": req.dry_run,
+            "audit": "pending —— 审计先于执行：先记录意图，落痕成功后才执行状态变更"}}]
+        try:
+            await asyncio.to_thread(
+                store.save_trace, trace_id, summary, "（执行中：已落 pending 审计）",
+                pending, intent="action", blocked=False, tainted=False, llm_provider=provider)
+        except Exception as e:  # noqa: BLE001 审计是改状态动作的前置条件，落不下就 fail-closed
+            return {
+                "ok": False, "action": req.action, "executed": False, "blocked": True,
+                "require_confirm": False, "dry_run": False,
+                "reason": f"审计存储不可用，已拒绝执行受控动作（审计先于执行：无法留痕则不执行）：{e}",
+                "command": None, "precheck": None, "guard": None, "privilege": None,
+                "output": None, "trace": pending, "trace_id": trace_id,
+            }
+
     # 动作内部会调 executor（同步子进程），放线程池避免阻塞事件循环
     result = await asyncio.to_thread(
         actions.run_action, req.action, req.params,
         confirmed=req.confirmed, authorized=req.authorized, dry_run=req.dry_run,
     )
-    # 把这次动作也记进思维链（落库失败不阻断主流程）
+    # 落最终结果审计（同 trace_id 覆盖 pending）。改状态动作此时状态已变，最终审计失败不回滚——
+    # pending 审计已留痕，仅在结果里标注 audit_warning。dry_run/预览路径同样 best-effort。
     try:
         await asyncio.to_thread(
-            store.save_trace, trace_id,
-            f"[动作] {req.action} {req.params}",
-            result.get("reason", ""),
-            result.get("trace", []),
-            intent="action",
-            blocked=bool(result.get("blocked")),
+            store.save_trace, trace_id, summary,
+            result.get("reason", ""), result.get("trace", []),
+            intent="action", blocked=bool(result.get("blocked")),
             # P3-3：动作层不把外部不可信内容喂进任何决策/指令流（进程元数据仅用于确定性
             # 关键性校验，不驱动模型），故状态变更动作恒非污点——与编排路径恰成信息流分离。
-            tainted=False,
-            llm_provider=get_settings().llm_provider,
+            tainted=False, llm_provider=provider,
         )
-    except Exception:  # noqa: BLE001 审计是旁路，绝不因落库失败中断动作
-        pass
+    except Exception:  # noqa: BLE001 最终审计是旁路（pending 已留痕），不因落库失败中断
+        result["audit_warning"] = "最终结果审计落库失败（pending 审计已留痕）"
     result["trace_id"] = trace_id
     return result

@@ -26,9 +26,17 @@ logger = logging.getLogger("kylin-ops-agent")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings = get_settings()
+
+    # 失败安全启动守卫（P0-D，DEMO/PROD 分界）：非回环绑定（联网/生产）下若 operator_token 为空
+    # 或 audit_hmac_key 仍是默认值 → 直接拒绝启动并报清晰错误。本机 demo（127.0.0.1）保持顺滑不变。
+    prod_errs = settings.production_config_errors()
+    if prod_errs:
+        raise RuntimeError("拒绝启动（失败安全默认）：" + "；".join(prod_errs))
+
     # 最小权限启动闸门（审查整改②）：非必要不 root；以 root 跑默认告警，REFUSE_ROOT=true 则拒绝启动。
     refuse, msg = least_privilege_check(
-        is_root=is_running_as_root(), refuse_root=get_settings().refuse_root)
+        is_root=is_running_as_root(), refuse_root=settings.refuse_root)
     if refuse:
         raise RuntimeError("拒绝启动（最小权限）：" + msg)
     (logger.warning if is_running_as_root() else logger.info)(msg)
