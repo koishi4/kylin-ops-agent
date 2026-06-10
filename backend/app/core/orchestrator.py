@@ -21,6 +21,14 @@ from app.config import get_settings
 from app.guardrail.classifier import IntentClass, classify_intent
 from app.guardrail.context_sanitizer import DATA_MARKER, sanitize_tool_result
 from app.guardrail.engine import scan_injection
+from app.guardrail.flow_control import (
+    READER_SYSTEM,
+    build_reader_messages,
+    degrade_summary_on_failure,
+    make_reader_summary,
+    should_quarantine,
+    wrap_reader_summary,
+)
 from app.guardrail.risk_assessor import assess_risk
 from app.guardrail.trifecta import caps_for, evaluate_path
 from app.llm.provider import LLMProvider, MockProvider
@@ -218,20 +226,34 @@ class Orchestrator:
 
                 # —— P3-3 污点追踪：摄入「接触不可信内容」的工具结果即把本路径标记为污点 ——
                 # （CaMeL 信息流控制轻量版：data provenance。注入命中是更强信号，一并置位。）
-                if caps_for(name).untrusted:
+                untrusted = caps_for(name).untrusted
+                if untrusted:
                     tainted = True
 
-                # —— 防线3 强化：工具返回视为外部不可信数据，沙盒化隔离后再喂回 LLM ——
+                # —— 防线3 强化：工具返回视为外部不可信数据，沙盒化隔离后再处理 ——
                 # 检测注入只「标红降权」不拒绝（外部数据带可疑内容很常见，要的是不被它驱动）。
                 san = sanitize_tool_result(name, result)
                 if san.injection_detected:
                     tainted = True
                     trace.append(TraceStep("安全校验", san.to_trace(name)))
 
+                # —— P3-4 CaMeL 双 LLM 信息流隔离（强制，非散文）——
+                # 不可信 / 已检出注入的工具输出：**绝不直喂规划器**，而是先经「隔离阅读器」
+                # （无工具的 LLM 调用）压成结构化、长度受限、被重新标记为不可信的派生摘要。
+                # 由此可证且可测：原始不可信字节只到达无工具的阅读器（驱动不了任何 tool_call），
+                # 规划器只见被标记为不可信的摘要（夹带的指令进不了控制流）。
+                # 纯指标工具（无 untrusted 腿且无注入）非外部可控，沿用直喂规划器的旧路径。
+                if should_quarantine(untrusted=untrusted,
+                                     injection_detected=san.injection_detected):
+                    planner_content = await self._quarantined_read(
+                        name, san.wrapped, trace)
+                else:
+                    planner_content = san.wrapped
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call["id"],
-                    "content": san.wrapped,
+                    "content": planner_content,
                 })
 
             # —— P2-2 自愈：失败超出重试预算则优雅收场，不空转耗尽轮次 ——
@@ -253,6 +275,34 @@ class Orchestrator:
                                   trace, tool_calls_log, intent=intent.intent.value,
                                   tainted=tainted)
 
+    async def _quarantined_read(self, tool_name: str, wrapped: str,
+                                trace: list[TraceStep]) -> str:
+        """CaMeL 隔离阅读器：用**无工具**的 LLM 调用把一条不可信工具输出压成摘要。
+
+        强制隔离边界的三个要点：
+        1. 阅读器调用 **不传 tools**（`achat(reader_msgs, None)`）——协议层就发不出 tool_call，
+           即便数据里夹带注入，也无处可去（驱动不了任何动作）。
+        2. 若阅读器仍返回了 tool_calls（异常/越权迹象）→ 丢弃其产物、走安全降级摘要，绝不据此行动。
+        3. 返回给规划器的是**被重新标记为不可信**的派生摘要（never raw bytes）。
+
+        任何异常 / provider 不可用 → 安全降级（不外泄原文、不崩），沿用项目「fail-safe」风格。
+        """
+        reader_msgs = build_reader_messages(READER_SYSTEM, wrapped)
+        try:
+            # 关键：不传 tools。阅读器无工具 → 结构上无法发起 tool_call。
+            reader_msg = await self.llm.achat(reader_msgs, None)
+            if reader_msg.get("tool_calls"):
+                # 阅读器越权试图调工具（在无 tools 下不应发生）→ 丢弃产物，安全降级。
+                summary = degrade_summary_on_failure(
+                    tool_name, "隔离阅读器在无工具下仍尝试发起工具调用，已拒绝其产物")
+            else:
+                summary = make_reader_summary(tool_name, reader_msg.get("content"))
+        except Exception as e:  # provider 不可用 / 网络错误 / 解析失败等
+            summary = degrade_summary_on_failure(tool_name, f"阅读器调用异常：{e}")
+
+        trace.append(TraceStep("安全校验", summary.to_trace()))
+        return wrap_reader_summary(summary)
+
     async def _finish(self, trace_id: str, user_input: str, answer: str,
                       trace: list[TraceStep], tool_calls: list[dict],
                       *, blocked: bool = False, intent: str = "",
@@ -264,15 +314,29 @@ class Orchestrator:
         if tool_calls:
             tri = evaluate_path([c["tool"] for c in tool_calls])
             trace.append(TraceStep("安全校验", tri.to_trace()))
-            # —— P3-3 污点追踪：记录本路径污点状态 + 可证明的信息流不变量 ——
-            # 编排路径工具全 READONLY（无状态变更腿），故「污点 ∧ 改状态」恒不成立——
-            # 即危险动作绝不可能在污点状态下经本路径放行（CaMeL 信息流分离的轻量证明）。
+
+            # —— P3-4 污点真正 gate（运行时强制，非散文）——
+            # 核心不变量「污点 ∧ 状态变更 恒不成立」过去只写在 trace 文本里、无强制。这里把它变成
+            # 运行时闸门：实际计算本路径是否出现「改状态」能力腿，若它与污点同时为真——即危险动作
+            # 竟在污点下放行——立即 **fail-safe**：清空答复、标记 blocked、落审计告警。结构上本就不可能
+            # 发生（编排只暴露 READONLY 工具），但此处把「不可能」从断言升级为被强制的运行时门控。
+            state_change_in_path = ("state_change" in tri.legs) or tri.trifecta_complete
+            taint_gate_violated = tainted and state_change_in_path
+            if taint_gate_violated:
+                answer = ("⚠️ 安全护栏（污点门控）拦截：检测到在已摄入不可信数据（污点）的路径上出现"
+                          "状态变更能力，违反『污点 ∧ 状态变更 恒不成立』不变量，已 fail-safe 中止。")
+                blocked = True
             trace.append(TraceStep("安全校验", {
                 "phase": "污点追踪（taint / 信息流控制）",
                 "tainted": tainted,
-                "state_change_in_path": tri.trifecta_complete or "state_change" in tri.legs,
+                "state_change_in_path": state_change_in_path,
+                "taint_gate_enforced": True,
+                "taint_gate_violated": taint_gate_violated,
+                "decision": ("fail-safe 中止（污点下出现状态变更）" if taint_gate_violated
+                             else "放行（污点路径无状态变更能力 / 或非污点）"),
                 "invariant": "本路径无状态变更能力（全 READONLY），危险动作不可能在污点下放行",
-                "reason": ("已摄入外部不可信数据，路径被标记为污点（仅作只读分析，不驱动任何变更）"
+                "reason": ("已摄入外部不可信数据，路径被标记为污点（仅作只读分析，不驱动任何变更）；"
+                           "且经隔离阅读器，原始不可信字节从未进入规划器上下文"
                            if tainted else "未摄入不可信数据，路径无污点"),
             }))
 

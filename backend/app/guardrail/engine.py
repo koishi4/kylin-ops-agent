@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .ast_analyzer import analyze_command_ast, ast_synthetic_rules
+from .effect_analyzer import EffectSet, analyze_effects
 from .rules import (
     Action,
     RiskLevel,
@@ -52,6 +53,37 @@ _PATH_RULE = Rule(
 )
 
 
+def effect_synthetic_rules(effects: EffectSet) -> list[Rule]:
+    """把「副作用集」分析（effect_analyzer）的硬结论转成合成规则，并入 hits 走统一裁决。
+
+    这是「按效果判定」对「按字面拦串」的根治在裁决层的落地：只要一条命令**实际会**写/删
+    关键路径、或建立外联通道，无论它长什么样、用了哪个动词，都据效果升级——与 AST 合成规则
+    同样的「只升级、绝不降级」语义（合成规则只追加进 hits，由 _decide 取最高风险，永远不会把
+    规则已判的 CRITICAL/DENY 调低）。
+
+    刻意与既有正则/AST 规则**部分重叠不冲突**：重叠时只是多一条同向（更严或等严）发现，
+    不会产生矛盾；本模块的真正价值是抓既有规则漏掉的「按效果应拦」（如 install/cp/mv/tee
+    把内容落进 /etc、/boot、sudoers 等关键区）。
+    """
+    out: list[Rule] = []
+    if effects.egress:
+        out.append(Rule(
+            "EFFECT-EGRESS", "", RiskLevel.CRITICAL, Action.DENY,
+            "效果分析：命令会建立外联/反弹 shell 通道（/dev/tcp·udp、nc -e、socat EXEC 等），"
+            "构成远程代码执行与数据外泄风险", "egress"))
+    if effects.deletes:
+        out.append(Rule(
+            "EFFECT-DELETE-CRITICAL", "", RiskLevel.CRITICAL, Action.DENY,
+            f"效果分析：命令实际会删除/截断系统关键路径（{', '.join(effects.deletes)}），"
+            "不可逆数据/系统损坏", "delete"))
+    if effects.writes:
+        out.append(Rule(
+            "EFFECT-WRITE-CRITICAL", "", RiskLevel.HIGH, Action.DENY,
+            f"效果分析：命令实际会写/覆盖系统关键路径（{', '.join(effects.writes)}），"
+            "可致越权改配置/植入文件/系统损坏", "config"))
+    return out
+
+
 def check_command(cmd: str, *, authorized: bool = False, confirmed: bool = False) -> GuardResult:
     """对单条候选命令做护栏裁决（正则规则 + realpath 路径兜底 + Bash AST 结构分析）。
 
@@ -76,10 +108,17 @@ def check_command(cmd: str, *, authorized: bool = False, confirmed: bool = False
     hits.extend(ast_synthetic_rules(ast))
     ast_dicts = ast.to_dict()["findings"]
 
+    # 第四重：副作用集（EffectSet）分析——「按效果判定」对「按字面拦串」的根治。
+    # 静态推导命令实际会写/删哪些路径、是否外联；当效果落在关键区或构成外联时合成高/严风险并入
+    # hits（只升级，绝不降级）。判不准/写非关键路径时沉默——保「误杀率 0%」不变（见 effect_analyzer）。
+    effects = analyze_effects(cmd)
+    hits.extend(effect_synthetic_rules(effects))
+
     if not hits:
         return GuardResult(
             allowed=True, action=Action.ALLOW, risk=RiskLevel.LOW,
-            reason="未命中任何高危规则，且 AST 结构分析未发现 shell 危险结构，命令视为安全。",
+            reason="未命中任何高危规则，AST 结构分析未发现 shell 危险结构，"
+                   "副作用分析未发现触及关键区的写/删/外联，命令视为安全。",
             ast_findings=ast_dicts,
         )
 
@@ -88,6 +127,15 @@ def check_command(cmd: str, *, authorized: bool = False, confirmed: bool = False
     if ast.findings:
         structs = "、".join(sorted({f.structure for f in ast.findings}))
         result.reason += f" | AST 结构分析：检出 shell 结构（{structs}），需分解为结构化工具或显式确认。"
+    if effects.hits_critical:
+        parts = []
+        if effects.writes:
+            parts.append(f"写关键路径 {', '.join(effects.writes)}")
+        if effects.deletes:
+            parts.append(f"删/截断关键路径 {', '.join(effects.deletes)}")
+        if effects.egress:
+            parts.append("建立外联/反弹 shell 通道")
+        result.reason += f" | 副作用分析：{'；'.join(parts)}（据实际效果升级，非字面匹配）。"
     return result
 
 

@@ -121,7 +121,7 @@ rules:
   category: privilege
   risk: medium
   action: confirm
-  pattern: (^|[\s;&|])(sudo|su)\s
+  pattern: (^|[\s;&|/])(sudo|su)\s
   description: 涉及提权，需确认授权与必要性（最小权限原则）
 - id: PRIV-002
   category: privilege

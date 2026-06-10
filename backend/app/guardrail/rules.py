@@ -272,14 +272,26 @@ def rules_fingerprint() -> str:
 # 让「按字面写空格」的正则失配。规范化时统一还原成空格，压掉这条绕过路（P0-E）。
 _IFS_BYPASS_RE = re.compile(r"\$\{IFS[^}]*\}|\$IFS\b")
 
+# 逐参数引号剥壳：去掉包裹「无空白 token」的成对引号（'-e' "/etc" '777' → -e /etc 777）。
+# 压掉「逐参数加引号」这一大类绕过——规则正则常锚在 -R/777/-e/路径等裸 token 上，per-arg 引号
+# 会让它们失配。**只剥无空白 token 的引号**：含空白的引号串承载「分词为单参数」的 shell 语义，
+# 去掉会改变 token 边界（如 'evil ALL=(ALL)' / '1.2.3.4 host'），必须保留。元测试 P0-E 实证发现。
+_TOKEN_QUOTE_RE = re.compile(r"""(["'])([^"'\s]*)\1""")
+
 
 def normalize(cmd: str) -> str:
-    """命令规范化，压缩绕过空间：去首尾空白、折叠多空格、还原 $IFS 空格替代、去掉成对引号包裹。"""
+    """命令规范化，压缩绕过空间：去首尾空白、还原 $IFS、剥逐参数引号、折叠重复斜杠与多空格。
+
+    这些变换对「危险判定」都是**单调更严**（只会让更多变形落回可识别形态，绝不放松），
+    故对黑名单匹配是安全的（见 tests/test_guardrail_metamorphic.py 的保语义不变量）。
+    """
     t = cmd.strip()
     # 去掉整体被引号包裹的情况，如 "rm -rf /" → rm -rf /
     if len(t) >= 2 and t[0] == t[-1] and t[0] in ("'", '"'):
         t = t[1:-1]
-    t = _IFS_BYPASS_RE.sub(" ", t)   # rm$IFS-rf$IFS/ → rm -rf / ，避免 IFS 绕过正则
+    t = _IFS_BYPASS_RE.sub(" ", t)        # rm$IFS-rf$IFS/ → rm -rf /，避免 IFS 绕过正则
+    t = _TOKEN_QUOTE_RE.sub(r"\2", t)     # 'token'/"token" → token（仅无空白 token），破逐参数引号绕过
+    t = re.sub(r"/{2,}", "/", t)          # 折叠重复斜杠：//etc → /etc（POSIX 等价访问，denylist 单调更严）
     return re.sub(r"\s+", " ", t.strip())
 
 
@@ -332,8 +344,36 @@ def _find_is_destructive(tokens: list[str]) -> bool:
     return False
 
 
+# 命令包装器：把「真正被执行的命令」推后一位/几位，绕开「按 tokens[0] 取动词」的路径兜底。
+# 捕获 `env rm -rf /`、`/usr/bin/env find / -delete`、`nohup rm -rf /etc` 等变形（P0-E 元测试发现）。
+_CMD_WRAPPERS = {"env", "sudo", "doas", "command", "nice", "nohup", "time", "exec",
+                 "setsid", "stdbuf", "ionice", "timeout", "taskset", "chrt"}
+_ASSIGN_RE = re.compile(r"\w+=.*")
+
+
+def _strip_cmd_wrappers(tokens: list[str]) -> list[str]:
+    """跳过前置命令包装器（env/sudo/nice/nohup/time/…）及其旗标与 env 风格 VAR=val 赋值，
+    返回「真正被执行的命令」起点。这样 `env rm -rf /` 的销毁动词不再被 `env` 挡住。"""
+    i, n = 0, len(tokens)
+    while i < n:
+        tok = tokens[i]
+        if os.path.basename(tok) in _CMD_WRAPPERS:
+            i += 1
+            while i < n and tokens[i].startswith("-"):   # 跳过该包装器自身的短旗标（如 env -i）
+                i += 1
+            continue
+        if i > 0 and _ASSIGN_RE.fullmatch(tok):           # env 风格 VAR=val（仅在包装器之后才剥）
+            i += 1
+            continue
+        break
+    return tokens[i:]
+
+
 def _destruction_operands(tokens: list[str]) -> list[str]:
     """按动词取「真正会被销毁/覆写」的路径操作数；非销毁动词或只读 find 返回空。"""
+    tokens = _strip_cmd_wrappers(tokens)   # 先剥 env/sudo/nice… 包装器，再取真实动词
+    if not tokens:
+        return []
     verb = os.path.basename(tokens[0])
     rest = tokens[1:]
     if verb in _DESTRUCTIVE_PATH_VERBS:
