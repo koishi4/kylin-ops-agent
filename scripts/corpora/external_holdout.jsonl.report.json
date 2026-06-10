@@ -1,6 +1,11 @@
 {
   "corpus": "scripts/corpora/external_holdout.jsonl",
-  "fingerprint_sha256": "8861e3d3b1a18aa43259cd79c02d196ce3416c14f2a0d947d8e297cf8f146259",
+  "file_sha256": "53e72caf853b75777544b28d9fc6d34ed07ae98002f652ad016fd1f21c164873",
+  "file_sha256_expected": "53e72caf853b75777544b28d9fc6d34ed07ae98002f652ad016fd1f21c164873",
+  "file_sha256_match": true,
+  "content_fingerprint_sha256": "8861e3d3b1a18aa43259cd79c02d196ce3416c14f2a0d947d8e297cf8f146259",
+  "content_fingerprint_expected": "8861e3d3b1a18aa43259cd79c02d196ce3416c14f2a0d947d8e297cf8f146259",
+  "content_fingerprint_match": true,
   "sealed": true,
   "summary": {
     "exec": {

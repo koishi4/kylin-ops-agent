@@ -234,12 +234,26 @@ def load_external_corpus(path: str) -> list[dict]:
     return out
 
 
-def corpus_fingerprint(items: list[dict]) -> str:
-    """语料内容指纹：sha256 over 规范化(family|id|payload) 排序后串接。顺序无关、内容敏感。
+def file_sha256(path: str) -> str:
+    """原始文件字节 sha256——**标准** sha256sum 口径。
 
-    用途（去自评/防过拟合）：held-out 语料用它**封存**——把指纹提交进仓库（.sha256 旁车文件）。
-    日后再跑，指纹一致即证明「这份集自封存以来未被改动」，其分数才算「未对它调过参」的诚实评测；
-    指纹变了说明语料被动过，分数不再可比。这把『我没拿这份卷子调过参』从口头承诺变成可核验的事实。
+    它是封存的第一道、也是**零信任**的一道：旁车 `<file>.sha256` 存的就是它，任何第三方都能用
+    通用工具核验（`sha256sum -c <file>.sha256`），无需信任本仓库任何代码。字节恒等是最强的完整性证明。
+    """
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def corpus_fingerprint(items: list[dict]) -> str:
+    """语料**内容指纹**：sha256 over 规范化(family|id|payload) 排序后串接。顺序无关、内容敏感。
+
+    与文件字节哈希（file_sha256）回答**不同问题**：字节哈希问「有没有任一字节变过」，内容指纹问
+    「测试项（family/id/payload 三元组集合）有没有变过」——对重新序列化/换行序/补充元数据字段健壮，
+    正是『有没有偷换卷子题目』这个**语义**问题的答案。两者都校验，封存才同时具备「零信任可核验」与
+    「抓得住语义篡改」。指纹存进 manifest（`content_fingerprint_sha256`），而非伪装成 .sha256 校验和。
     """
     h = hashlib.sha256()
     for it in sorted(items, key=lambda x: (x.get("family", ""), x.get("id", ""), x.get("payload", ""))):
@@ -247,35 +261,77 @@ def corpus_fingerprint(items: list[dict]) -> str:
     return h.hexdigest()
 
 
+def _manifest_path(path: str) -> str:
+    """held-out 语料的 provenance manifest 路径：去掉 .jsonl 后缀换 .manifest.json。"""
+    base = path[:-len(".jsonl")] if path.endswith(".jsonl") else path
+    return base + ".manifest.json"
+
+
 def run_holdout(path: str) -> dict:
-    """独立评测一份 held-out 外部语料（**不混入**内置语料），并校验内容指纹封存。
+    """独立评测一份 held-out 外部语料（**不混入**内置语料），并双重校验封存（防过拟合 / 防篡改）。
+
+    封存两道、回答不同问题、缺一不可：
+    1. **文件字节校验和**（`<file>.sha256`，标准 sha256sum 口径）——零信任，第三方 `sha256sum -c` 即核验；
+    2. **内容指纹**（manifest 的 `content_fingerprint_sha256`）——抓语义篡改（题目集合是否被偷换）。
+    两者都一致才算「自封存以来未被改动」，分数才是「未对它调过参」的诚实评测。
 
     诚实叙事：held-out 集只「跑一次、如实报分」，绝不据它的失败回头调参——否则它就变成训练集。
     返回该集的评测报告（leaked 由调用方并入退出码）。
     """
     items = load_external_corpus(path)
-    fp = corpus_fingerprint(items)
-    sidecar = path + ".sha256"
+    file_hash = file_sha256(path)
+    content_fp = corpus_fingerprint(items)
     print("\n" + "=" * 72)
     print(f"held-out 外部语料独立评测：{path}（{len(items)} 例）")
-    print(f"内容指纹 sha256 = {fp}")
+
+    # ① 文件字节校验和（标准、零信任）
+    sidecar = path + ".sha256"
+    file_expected, file_match = None, None
+    print(f"文件 sha256 = {file_hash}")
     if os.path.exists(sidecar):
-        expected = open(sidecar, encoding="utf-8").read().strip().split()[0]
-        if expected == fp:
-            print(f"  ✓ 与封存指纹一致（{os.path.basename(sidecar)}）——自封存以来未被改动，"
-                  "分数为『未对它调过参』的诚实评测。")
+        file_expected = open(sidecar, encoding="utf-8").read().strip().split()[0]
+        file_match = (file_expected == file_hash)
+        if file_match:
+            print(f"  ✓ 与封存校验和一致（{os.path.basename(sidecar)}）——字节未变；"
+                  f"第三方可独立核验：sha256sum -c {os.path.basename(sidecar)}")
         else:
-            print(f"  ⚠ 与封存指纹不一致！封存={expected[:16]}… 实测={fp[:16]}…——语料被改动过，"
-                  "分数不再等同于未调参评测，请核实后重新封存。")
+            print(f"  ⚠ 与封存校验和不一致！封存={file_expected[:16]}… 实测={file_hash[:16]}…——文件被改动过。")
     else:
-        print(f"  （未找到封存指纹 {os.path.basename(sidecar)}；要锁定这份 held-out 集，"
-              "把上面的 sha256 写入该文件并提交。）")
+        print(f"  （未找到 {os.path.basename(sidecar)}；要锁定这份 held-out 集，"
+              f"把上面的 sha256 写入该文件并提交，第三方便能 sha256sum -c 核验。）")
+
+    # ② 内容指纹（语义、抓偷换题目）——存在 manifest 里才校验
+    mpath = _manifest_path(path)
+    content_expected, content_match = None, None
+    print(f"内容指纹 = {content_fp}")
+    if os.path.exists(mpath):
+        try:
+            content_expected = json.load(open(mpath, encoding="utf-8")).get("content_fingerprint_sha256")
+        except (json.JSONDecodeError, OSError):
+            content_expected = None
+    if content_expected:
+        content_match = (content_expected == content_fp)
+        print(f"  {'✓ 与 manifest 内容指纹一致——题目集合未被偷换。' if content_match else f'⚠ 与 manifest 内容指纹不一致！封存={content_expected[:16]}… 实测={content_fp[:16]}…——题目被改动过。'}")
+    else:
+        print(f"  （manifest 无 content_fingerprint_sha256，跳过语义校验）")
+
+    # 封存判定要诚实：必须文件字节一致；内容指纹若有则也须一致（无 manifest 时不因缺失而判失败）。
+    sealed = bool(file_match) and (content_match in (True, None))
+    if file_match is not None or content_match is not None:
+        print(f"  → 封存判定 sealed={sealed}（字节一致={file_match} 语义一致={content_match}）")
+
     report = evaluate(items)
     print_report(report)
     # 持久化这份「独立、已封存」的评测结果，供课程报告/审计逐条引用（含漏过样例，诚实留痕）。
     report_path = path + ".report.json"
     with open(report_path, "w", encoding="utf-8") as f:
-        json.dump({"corpus": path, "fingerprint_sha256": fp, "sealed": os.path.exists(sidecar),
+        json.dump({"corpus": path,
+                   "file_sha256": file_hash, "file_sha256_expected": file_expected,
+                   "file_sha256_match": file_match,
+                   "content_fingerprint_sha256": content_fp,
+                   "content_fingerprint_expected": content_expected,
+                   "content_fingerprint_match": content_match,
+                   "sealed": sealed,
                    **report}, f, ensure_ascii=False, indent=2)
     print(f"\n机器可读 held-out 报告已写入：{report_path}")
     return report

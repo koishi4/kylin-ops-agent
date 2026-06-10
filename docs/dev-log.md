@@ -1153,3 +1153,24 @@
 - 关键纪律：**这 6 例不回头补**——held-out 一旦据其失败调参就退化成训练集。它们暴露的「下载-后续执行两段式 /
   敏感文件读外泄 / 软化措辞越狱」记入未来工作；兜底仍是架构（MCP 全 READONLY + Rule-of-Two，注入识别不全也
   炸不出状态变更），而非把正则堆到 100%。这正是 CLAUDE.md §4.0「黑名单跑步机追不完，只有能力约束确定」的实证。
+
+## 2026-06-10 封存机制根治：`.sha256` 名实相符 + `sealed` 字段诚实化
+
+- 起因：跑过一轮独立第三方测试后核验封存，发现 `sha256sum -c external_holdout.jsonl.sha256` **报 FAILED**。
+  追因：`.sha256` 里写的其实是**内容指纹**（对 `family|id|payload` 排序后哈希），却套了标准 `sha256sum`
+  格式（`<hash>  <文件名>`）——长得像文件校验和，里面却不是文件校验和。后果有两个，都砸「第三方可核验」这个卖点：
+  ① 任何人用通用工具 `sha256sum -c` 必然 FAILED，看着像被篡改，反而摧毁封存可信度；
+  ② `report.json` 的 `sealed` 字段当时取 `os.path.exists(sidecar)`——**只要旁车文件存在就 True**，
+  哪怕指纹对不上、语料被篡改也照报 `sealed=True`。封存形同虚设。
+- 根治（`redteam_eval.py run_holdout` + `corpora/build_external_holdout.py`）：把封存拆成**回答不同问题的两道**——
+  - **文件字节校验和** `<file>.sha256`：标准 sha256sum 口径的真文件哈希。第三方**零信任**核验，
+    无需运行本仓库任何代码（`sha256sum -c` 报 OK 即未改）。字节恒等是最强完整性证明。
+  - **内容指纹** 移入 `<file>.manifest.json` 的 `content_fingerprint_sha256`：答「题目集合有没有被偷换」的
+    语义问题，对重序列化/换行序/补字段健壮。
+  - `run_holdout` 每跑重算两者并各自比对；`sealed = 字节一致 and 语义一致`（任一不符即 False，且如实打印
+    封存值 vs 实测值）。`report.json` 新增 `file_sha256{,_expected,_match}` / `content_fingerprint{,_expected,_match}`。
+- 验证：① `sha256sum -c` 对 external_holdout 与 holdout_sample **均 OK**；② `--holdout` 双校验 ✓✓、`sealed=True`、
+  分数不变（48/54、12/12，证明没借机调参）；③ **负向测试**——往 payload 偷塞一字符后，`sha256sum -c` 报 FAILED、
+  `--holdout` 两道校验皆 ⚠、`sealed=False`（旧实现此处会谎报 True）。给 holdout_sample 也补了 manifest，演示集同样跑双校验。
+- 一句话：封存的意义是「第三方零信任可核验 + 抓得住偷换题目」，旧实现两头都不沾。`.sha256` 现在名实相符、
+  `sealed` 取真实校验结果——「我没拿这份卷子调过参」才真的从口头承诺变成可核验事实。

@@ -103,11 +103,24 @@ def build_garak_dan() -> list[dict]:
     return cases
 
 
-def fingerprint(items: list[dict]) -> str:
-    """与 redteam_eval.corpus_fingerprint 同口径：sha256 over 排序后 family|id|payload。顺序无关。"""
+def content_fingerprint(items: list[dict]) -> str:
+    """与 redteam_eval.corpus_fingerprint 同口径：sha256 over 排序后 family|id|payload。顺序无关。
+
+    这是**内容指纹**（抓「题目集合是否被偷换」的语义校验），写进 manifest——**不**写进 .sha256。
+    .sha256 留给真正的文件字节校验和（标准 sha256sum 口径），好让第三方零信任 `sha256sum -c` 核验。
+    """
     h = hashlib.sha256()
     for it in sorted(items, key=lambda x: (x.get("family", ""), x.get("id", ""), x.get("payload", ""))):
         h.update(f"{it.get('family','')}\x1f{it.get('id','')}\x1f{it['payload']}\x1e".encode("utf-8"))
+    return h.hexdigest()
+
+
+def file_sha256(path: str) -> str:
+    """原始文件字节 sha256——标准 sha256sum 口径，写进 .sha256 旁车文件。"""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
     return h.hexdigest()
 
 
@@ -128,9 +141,12 @@ def main() -> int:
             f.write(json.dumps({"id": it["id"], "family": it["family"], "payload": it["payload"]},
                                ensure_ascii=False) + "\n")
 
-    fp = fingerprint(items)
+    # .sha256 = 真正的文件字节校验和（标准格式 "<hash>  <文件名>"），第三方 sha256sum -c 即可核验。
+    raw_sha = file_sha256(OUT_JSONL)
     with open(OUT_SHA, "w", encoding="utf-8") as f:
-        f.write(f"{fp}  {os.path.basename(OUT_JSONL)}\n")
+        f.write(f"{raw_sha}  {os.path.basename(OUT_JSONL)}\n")
+    # 内容指纹（语义校验）只入 manifest，不伪装成 .sha256 校验和。
+    fp = content_fingerprint(items)
 
     manifest = {
         "description": "真实第三方安全基准转成的 held-out 评测集（去自评/防过拟合）",
@@ -145,7 +161,8 @@ def main() -> int:
         ],
         "total": len(items),
         "by_family": {"exec": len(redcode), "inject": len(garak)},
-        "fingerprint_sha256": fp,
+        "file_sha256": raw_sha,                   # 文件字节校验和（与 .sha256 一致）
+        "content_fingerprint_sha256": fp,          # 内容指纹（语义校验：题目集合是否被偷换）
         "note": "确定性转换：固定 commit + 硬编码文件序 + 取每文件前 K 条 + payload 逐字透传。重跑字节一致。",
     }
     with open(OUT_MANIFEST, "w", encoding="utf-8") as f:
@@ -153,7 +170,7 @@ def main() -> int:
 
     print(f"\n✓ 写出 {len(items)} 例 → {os.path.relpath(OUT_JSONL)}", file=sys.stderr)
     print(f"  exec(RedCode-Exec)={len(redcode)}  inject(garak)={len(garak)}", file=sys.stderr)
-    print(f"  指纹 sha256 = {fp}", file=sys.stderr)
+    print(f"  文件 sha256 = {raw_sha}  内容指纹 = {fp}", file=sys.stderr)
     print(f"  封存 → {os.path.relpath(OUT_SHA)} ; provenance → {os.path.relpath(OUT_MANIFEST)}", file=sys.stderr)
     return 0
 

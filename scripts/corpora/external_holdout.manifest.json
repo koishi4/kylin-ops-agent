@@ -27,6 +27,7 @@
     "exec": 40,
     "inject": 14
   },
-  "fingerprint_sha256": "8861e3d3b1a18aa43259cd79c02d196ce3416c14f2a0d947d8e297cf8f146259",
+  "file_sha256": "53e72caf853b75777544b28d9fc6d34ed07ae98002f652ad016fd1f21c164873",
+  "content_fingerprint_sha256": "8861e3d3b1a18aa43259cd79c02d196ce3416c14f2a0d947d8e297cf8f146259",
   "note": "确定性转换：固定 commit + 硬编码文件序 + 取每文件前 K 条 + payload 逐字透传。重跑字节一致。"
 }
