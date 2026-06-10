@@ -181,6 +181,10 @@ def _statically_resolvable(tok: str) -> bool:
     return not any(c in tok for c in ("$", "*", "?", "`")) and "${" not in tok
 
 
+# 合法 shell 变量名（赋值左值）：字母/下划线开头，后跟字母数字下划线。
+_ASSIGN_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
 def _resolve(tok: str) -> str:
     expanded = os.path.expanduser(tok)
     return os.path.normpath(os.path.realpath(expanded))
@@ -356,9 +360,14 @@ def _collect_egress(verb: str, args: list[str], all_words: list[str]) -> bool:
     return False
 
 
-def _collect_command_effects(node, effects: EffectSet) -> None:
-    """从一个 command 节点归集副作用，原地写入 effects（只收落在关键区的写/删 + egress/priv）。"""
-    words = _command_words(node)
+def _collect_command_effects(node, effects: EffectSet, env: dict[str, str]) -> None:
+    """从一个 command 节点归集副作用，原地写入 effects（只收落在关键区的写/删 + egress/priv）。
+
+    归集前先用 env 做脚本内常量传播：把词与重定向目标里的 `$VAR` 代回字面路径，使既有效果标签
+    能看穿 `secret=/etc/shadow; cat "$secret"` 之类（env 为空或无 $VAR 时即原样，无行为变化）。
+    """
+    # 常量传播：词序列与重定向目标都先做 $VAR→字面 代入，下游解析对解析后的 token 不变照用。
+    words = [_subst_vars(w, env) for w in _command_words(node)]
     if not words:
         return
     verb, args = _split_verb_args(words)
@@ -412,7 +421,7 @@ def _collect_command_effects(node, effects: EffectSet) -> None:
                 effects.fetches_to_critical.append(resolved)
 
     # —— writes：输出重定向目标（> / >>） ——
-    for target in _redirect_targets(node):
+    for target in (_subst_vars(t, env) for t in _redirect_targets(node)):
         hit = _critical_or_none(target)
         if hit:
             effects.writes.append(hit)
@@ -456,20 +465,106 @@ def _collect_command_effects(node, effects: EffectSet) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 脚本内常量传播：解析简单、无歧义的「字面路径变量赋值」并代回 token                  #
+# --------------------------------------------------------------------------- #
+# 目的：让既有效果标签（reads_sensitive/writes/deletes/fetches_to_critical/egress）能
+#   「看穿」`secret=/etc/shadow; cat "$secret"` 里藏在 $VAR 后的真实路径——不新增任何效果
+#   标签或规则，只在效果归集**之前**把可静态确定的字面值代入 token。
+# 极端保守（误杀率 0% 硬指标）：
+#   - 只采集**顶层、无条件**位置的赋值（不下探 if/while/for/case/子shell/函数/命令替换——
+#     那些是条件/作用域受限或动态产生的值，代入会臆测死代码/动态值）。
+#   - 同名变量被赋值多于一次 ⇒ 二义 ⇒ 整体丢弃（不解析该名）。
+#   - 值必须是**非空字面**（不含 $、反引号、*、?）；含命令替换 $(...) / 变量 ${...} 的值一律不传播。
+#   - 任一解析/查找不确定 → 行为同改动前（env 为空，token 原样）。绝不崩溃、绝不降级。
+
+
+def _collect_assignments(node, sink: dict[str, list[str]]) -> None:
+    """递归采集**顶层、无条件**位置上的赋值 NAME→VALUE，append 进 sink[NAME]。
+
+    只穿过 list/operator 与顶层 command 节点；**不下探** compound/if/while/for/case/
+    function/子shell/commandsubstitution 等——藏在条件/循环/作用域/命令替换里的赋值是
+    条件或动态产生的值，采集它们会臆测（可能死代码/可能动态值），故一律忽略。
+    """
+    kind = getattr(node, "kind", "")
+    if kind == "command":
+        for part in getattr(node, "parts", []):
+            pkind = getattr(part, "kind", "")
+            word = getattr(part, "word", "") or ""
+            # assignment 部件：直接是 NAME=VALUE；word 部件里形如 `NAME=...` 的（export X=Y、
+            # declare、FOO=bar 前缀）也算赋值字面（仅当其 .word 匹配赋值左值文法）。
+            if pkind == "assignment" or (pkind == "word" and _ASSIGN_NAME_RE.match(word)):
+                name, _, value = word.partition("=")
+                if name:
+                    sink.setdefault(name, []).append(value)
+        return
+    if kind in ("list", "operator"):
+        # 顶层命令链：穿过 list 容器与其子节点（command/operator），继续在顶层采集。
+        for attr in ("parts", "list", "command"):
+            v = getattr(node, attr, None)
+            if isinstance(v, list):
+                for x in v:
+                    if hasattr(x, "kind"):
+                        _collect_assignments(x, sink)
+            elif hasattr(v, "kind"):
+                _collect_assignments(v, sink)
+        return
+    # 其它一切（compound/if/while/for/case/function/commandsubstitution/...）：**不下探**。
+
+
+def _build_const_env(trees) -> dict[str, str]:
+    """从整棵（多棵）语法树构建 name→value 的常量环境，仅收「唯一一次赋值且值为可用字面」者。
+
+    多次赋值 ⇒ 二义 ⇒ 丢弃；值含 $/反引号/*/?（含 ${ 与 $()）或为空 ⇒ 不可用 ⇒ 丢弃。
+    """
+    sink: dict[str, list[str]] = {}
+    for t in trees:
+        _collect_assignments(t, sink)
+    env: dict[str, str] = {}
+    for name, values in sink.items():
+        if len(values) != 1:               # 赋值多于一次（或 0 次）→ 二义/无值，丢弃
+            continue
+        value = values[0]
+        if not value:                       # 空值不是可用字面
+            continue
+        if not _statically_resolvable(value):  # 含 $/`/*/?（含 ${、$()）→ 非字面，不传播
+            continue
+        env[name] = value
+    return env
+
+
+def _subst_vars(token: str, env: dict[str, str]) -> str:
+    """把 token 里出现的 `$NAME` / `${NAME}`（NAME∈env）替换为其字面值。
+
+    `$NAME` 仅在其后不是标识符字符时替换（避免 `$NAMEX` 被错切）。env 的值不含 `$`，故无链式
+    展开/递归。env 为空时原样返回。异常安全：任何意外 → 返回原 token（故障安全，不升级）。
+    """
+    if not env or "$" not in token:
+        return token
+    try:
+        out = token
+        for name, value in env.items():
+            out = re.sub(r"\$\{" + re.escape(name) + r"\}", value, out)
+            out = re.sub(r"\$" + re.escape(name) + r"(?![A-Za-z0-9_])", value, out)
+        return out
+    except Exception:  # noqa: BLE001 替换意外 → 原样返回，绝不因此崩溃或改变行为
+        return token
+
+
+# --------------------------------------------------------------------------- #
 # AST 遍历：对每个 command 节点归集（含命令链/管道/子shell/命令替换里的子命令）        #
 # --------------------------------------------------------------------------- #
 
-def _walk(node, effects: EffectSet) -> None:
+def _walk(node, effects: EffectSet, env: dict[str, str]) -> None:
     kind = getattr(node, "kind", "")
     if kind == "command":
-        _collect_command_effects(node, effects)
-        # 词内可能藏命令替换/进程替换，其子命令副作用同样要归集
+        _collect_command_effects(node, effects, env)
+        # 词内可能藏命令替换/进程替换，其子命令副作用同样要归集（env 沿用，USE 处仍解析）
         for part in getattr(node, "parts", []):
             if getattr(part, "kind", "") == "word":
                 for sub in getattr(part, "parts", []) or []:
-                    _walk(sub, effects)
+                    _walk(sub, effects, env)
     elif kind in ("commandsubstitution", "processsubstitution"):
-        _walk(getattr(node, "command", None), effects) if getattr(node, "command", None) is not None else None
+        _walk(getattr(node, "command", None), effects, env) if getattr(node, "command", None) is not None else None
     else:
         # pipeline / list / compound / 其它：下探所有子节点
         for attr in ("parts", "list", "command"):
@@ -477,9 +572,9 @@ def _walk(node, effects: EffectSet) -> None:
             if isinstance(v, list):
                 for x in v:
                     if hasattr(x, "kind"):
-                        _walk(x, effects)
+                        _walk(x, effects, env)
             elif hasattr(v, "kind"):
-                _walk(v, effects)
+                _walk(v, effects, env)
 
 
 def analyze_effects(cmd: str) -> EffectSet:
@@ -499,9 +594,15 @@ def analyze_effects(cmd: str) -> EffectSet:
         trees = bashlex.parse(text)
     except Exception:  # noqa: BLE001 解析失败 → 保持当前 effects（可能已含 egress），不再深挖
         return effects
+    # 脚本内常量传播：一次性从整棵树构建「顶层无条件字面赋值」的常量环境，遍历时代回 $VAR。
+    # 故障安全：构建出任何意外 → 空 env（行为同改动前）。
+    try:
+        env = _build_const_env(trees)
+    except Exception:  # noqa: BLE001 常量环境构建意外 → 退化为不传播，绝不影响既有裁决
+        env = {}
     try:
         for t in trees:
-            _walk(t, effects)
+            _walk(t, effects, env)
     except Exception:  # noqa: BLE001 遍历意外 → 返回已归集部分，绝不崩溃
         return effects
     # 去重，稳定顺序
