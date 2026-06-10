@@ -75,6 +75,43 @@ _NC_NAMES = {"nc", "ncat", "netcat"}
 _NC_EXEC_RE = re.compile(r"^(-[a-zA-Z]*e[a-zA-Z]*|--exec|--sh-exec)$")
 _SOCAT_EXEC_RE = re.compile(r"^(exec|system):", re.IGNORECASE)
 
+# ---- 敏感凭据文件：被「内容读取动词」读出即 = 凭据窃取/外泄前置 -------------------------------
+# 来由：held-out 外部基准 RedCode-Exec 的 redcode-exec-4_2（`cp /etc/shadow …` 凭据复制外泄）是
+# 命令护栏的真盲区——既有规则只盯「破坏/写关键区」，对「读出凭据内容」无覆盖。按方法论「不在
+# held-out 上补、把失败抽象成威胁类别再到内置语料打磨」，本块新增「读敏感凭据」这一**能力标签**
+# （而非堆正则），呼应 Rule-of-Two：读敏感=「敏感数据」腿，叠加外联=「外发」腿，双腿即外泄。
+#
+# 选取标准：**文件内容本身即机密**（口令哈希 / 私钥 / sudo 策略），读出即有泄露价值。
+# **刻意不含 /etc/passwd**（全局可读、getent/id 日常读取，纳入必造成误杀——本项目误杀率 0% 硬指标）。
+# 判定按 realpath 后**精确匹配文件**或**私钥 basename**，绝不按目录前缀：`tar /etc` 读的是目录、
+# 不暴露 shadow 本体，不算；唯有 `/etc/shadow` 作为显式操作数才算。
+_SENSITIVE_FILES = {"/etc/shadow", "/etc/gshadow", "/etc/sudoers"}
+_SENSITIVE_DIR_PREFIXES = ("/etc/sudoers.d/",)
+_PRIVKEY_BASENAMES = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"}
+
+# 「读出文件内容」的动词白名单（保守：宁可漏标也不误标，与本模块「只在能肯定时才发声」一致）。
+# 刻意不含：元数据动词 chmod/chown/chgrp/ls/stat（不读内容）、销毁动词 rm/shred/truncate（另有红线）、
+# tar/gpg/openssl（其文件操作数语义含「写归档/输出」二义，纳入有误杀风险，且收益低）。
+_CONTENT_READ_VERBS = {
+    "cat", "tac", "less", "more", "head", "tail", "nl",
+    "grep", "egrep", "fgrep", "zgrep", "zcat",
+    "strings", "xxd", "od", "hexdump", "base64", "base32",
+    "sort", "uniq", "cut", "awk", "sed",
+    "cp", "scp", "rsync", "install",
+}
+# 这些动词的最后一个非旗标实参是写目的(DEST)，取「读源」时须排除（cmd SRC... DEST）。
+_READ_SRC_LAST_IS_DEST = {"cp", "scp", "rsync", "install"}
+
+# 外发网络通道动词。**单独出现是常规数据传输，绝不升级**；仅当「已读出敏感凭据」时，据它把
+# 裁决从 CONFIRM 抬到 DENY（读敏感 + 外发 = 主动外泄）。组合门控使其广度安全：一条命令既读凭据
+# 又外发，无论意图都该有人在环，故不构成误杀。
+_NET_SEND_VERBS = {"nc", "ncat", "netcat", "socat", "telnet", "scp", "sftp",
+                   "ftp", "tftp", "curl", "wget"}
+# curl/wget 上传旗标（其取值是被读出外发的本地文件）与下载旗标（抓远端产物落盘）。
+_CURL_UPLOAD_VAL_FLAGS = {"-T", "--upload-file", "-d", "--data", "--data-binary",
+                          "--data-raw", "-F", "--form"}
+_CURL_DOWNLOAD_FLAGS = {"-O", "--remote-name", "-o", "--output"}
+
 
 @dataclass
 class EffectSet:
@@ -89,11 +126,24 @@ class EffectSet:
     deletes: list[str] = field(default_factory=list)
     egress: bool = False
     needs_priv: bool = False
+    # 读出的敏感凭据文件（规范化后落在 _SENSITIVE_* 内）。非空即「凭据访问」——
+    # 单独出现走 CONFIRM（外泄前置，需确认），叠加 egress/net_send 走 DENY（主动外泄）。
+    reads_sensitive: list[str] = field(default_factory=list)
+    # 外发网络通道（nc/socat/scp/curl…）。仅与 reads_sensitive 组合时参与升级，单独不升级。
+    net_send: bool = False
+    # curl/wget 抓取远端产物落盘（两段式「下载→后续执行」的第一段）。**信息性标注，不升级**——
+    # 下载到盘是日常运维高频动作，升级必误杀；架构上下到盘的脚本也无自由执行路径（Action-Selector）。
+    fetches_remote: bool = False
 
     @property
     def hits_critical(self) -> bool:
         """是否有任何「触及关键区」的硬副作用（写/删落在关键路径，或外联）——据此才升级。"""
         return bool(self.writes) or bool(self.deletes) or self.egress
+
+    @property
+    def is_credential_exfil(self) -> bool:
+        """读出敏感凭据**且**存在外发通道（egress 反弹 / net_send 外送）→ 主动凭据外泄。"""
+        return bool(self.reads_sensitive) and (self.egress or self.net_send)
 
     def to_dict(self) -> dict:
         return {
@@ -101,7 +151,11 @@ class EffectSet:
             "deletes": list(self.deletes),
             "egress": self.egress,
             "needs_priv": self.needs_priv,
+            "reads_sensitive": list(self.reads_sensitive),
+            "net_send": self.net_send,
+            "fetches_remote": self.fetches_remote,
             "hits_critical": self.hits_critical,
+            "is_credential_exfil": self.is_credential_exfil,
         }
 
 
@@ -132,6 +186,53 @@ def _critical_or_none(tok: str) -> str | None:
         return None
     resolved = _resolve(tok)
     return resolved if _is_under_critical(resolved) else None
+
+
+def _is_sensitive(resolved: str) -> bool:
+    """规范化路径是否是敏感凭据文件（精确文件 / sudoers.d 下 / 私钥 basename）。"""
+    if resolved in _SENSITIVE_FILES:
+        return True
+    if any(resolved.startswith(p) for p in _SENSITIVE_DIR_PREFIXES):
+        return True
+    return os.path.basename(resolved) in _PRIVKEY_BASENAMES
+
+
+def _sensitive_or_none(tok: str) -> str | None:
+    """token 规范化后若是敏感凭据文件返回规范化路径，否则 None（判不准→None，保守不臆测）。"""
+    if not _looks_like_path(tok) or not _statically_resolvable(tok):
+        return None
+    resolved = _resolve(tok)
+    return resolved if _is_sensitive(resolved) else None
+
+
+def _curl_upload_files(args: list[str]) -> list[str]:
+    """curl/wget 把本地文件作上传体的取值：-T/--upload-file FILE、--data/-d/-F 的 @FILE、--upload-file=FILE。"""
+    out: list[str] = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith("--upload-file="):
+            out.append(a.split("=", 1)[1])
+        elif a in _CURL_UPLOAD_VAL_FLAGS and i + 1 < len(args):
+            val = args[i + 1]
+            if a in ("-T", "--upload-file"):
+                out.append(val)
+            elif "@" in val:                       # --data @file / -F field=@file
+                out.append(val.split("@", 1)[1].split(";")[0])
+            i += 1                                  # 跳过已消费的取值
+        i += 1
+    return out
+
+
+def _is_download_to_disk(verb: str, args: list[str]) -> bool:
+    """curl -O/-o，或 wget（默认写盘，除 -O - 输出到 stdout）→ 抓远端产物落盘。无上传旗标才算下载。"""
+    if any(a.startswith("--upload-file=") or a in _CURL_UPLOAD_VAL_FLAGS for a in args):
+        return False
+    if verb == "curl":
+        return any(a in _CURL_DOWNLOAD_FLAGS for a in args)
+    if verb == "wget":
+        return "-" not in args                     # `wget -O -` 输出到 stdout 不算落盘
+    return False
 
 
 # --------------------------------------------------------------------------- #
@@ -223,6 +324,31 @@ def _collect_command_effects(node, effects: EffectSet) -> None:
     # —— needs_priv（提权推断，仅作信息，不单独构成升级） ——
     if verb in _PRIV_VERBS:
         effects.needs_priv = True
+
+    # —— reads_sensitive（读出敏感凭据 = 窃取/外泄前置） ——
+    read_srcs: list[str] = []
+    if verb == "dd":
+        read_srcs = [a[len("if="):] for a in args if a.startswith("if=")]
+    elif verb in _CONTENT_READ_VERBS:
+        nonflag = _nonflag_args(args)
+        if verb in _READ_SRC_LAST_IS_DEST and len(nonflag) >= 2:
+            read_srcs = nonflag[:-1]          # 末参是写目的 DEST，排除，只取读源 SRC...
+        else:
+            read_srcs = nonflag
+    if verb in ("curl", "wget"):
+        read_srcs = read_srcs + _curl_upload_files(args)
+    for src in read_srcs:
+        hit = _sensitive_or_none(src)
+        if hit and hit not in effects.reads_sensitive:
+            effects.reads_sensitive.append(hit)
+
+    # —— net_send（外发网络通道；仅与 reads_sensitive 组合时在裁决层升级，单独不升级） ——
+    if verb in _NET_SEND_VERBS or any(_DEV_NET_RE.search(w) for w in words):
+        effects.net_send = True
+
+    # —— fetches_remote（curl/wget 抓远端产物落盘：信息性标注，不升级，#1 两段式攻击的可见性） ——
+    if verb in ("curl", "wget") and _is_download_to_disk(verb, args):
+        effects.fetches_remote = True
 
     # —— writes：输出重定向目标（> / >>） ——
     for target in _redirect_targets(node):

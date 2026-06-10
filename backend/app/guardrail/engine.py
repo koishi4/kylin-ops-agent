@@ -81,6 +81,21 @@ def effect_synthetic_rules(effects: EffectSet) -> list[Rule]:
             "EFFECT-WRITE-CRITICAL", "", RiskLevel.HIGH, Action.DENY,
             f"效果分析：命令实际会写/覆盖系统关键路径（{', '.join(effects.writes)}），"
             "可致越权改配置/植入文件/系统损坏", "config"))
+    # 「读敏感凭据」能力标签——补 held-out 真盲区（cp /etc/shadow 式凭据外泄），呼应 Rule-of-Two：
+    #   读敏感（敏感数据腿）+ 外发（egress 反弹 / net_send 外送）= 双腿 → 主动外泄，CRITICAL/DENY；
+    #   仅读敏感（单腿）= 外泄前置 → MEDIUM/CONFIRM，要求人在环确认操作意图（admin 偶有正当需求，
+    #   故不直接 DENY，但绝不静默放行）。组合门控保证广度安全：既读凭据又外发，无论意图都该被拦。
+    if effects.reads_sensitive:
+        if effects.egress or effects.net_send:
+            out.append(Rule(
+                "EFFECT-CRED-EXFIL", "", RiskLevel.CRITICAL, Action.DENY,
+                f"效果分析：命令读出敏感凭据（{', '.join(effects.reads_sensitive)}）并经网络外发，"
+                "构成凭据窃取/数据外泄（读敏感 + 外联双腿，违反 Rule-of-Two）", "exfil"))
+        else:
+            out.append(Rule(
+                "EFFECT-CRED-READ", "", RiskLevel.MEDIUM, Action.CONFIRM,
+                f"效果分析：命令读取/复制敏感凭据文件（{', '.join(effects.reads_sensitive)}），"
+                "是凭据窃取与外泄的前置动作，需二次确认操作意图", "exfil"))
     return out
 
 
@@ -115,11 +130,13 @@ def check_command(cmd: str, *, authorized: bool = False, confirmed: bool = False
     hits.extend(effect_synthetic_rules(effects))
 
     if not hits:
+        reason = ("未命中任何高危规则，AST 结构分析未发现 shell 危险结构，"
+                  "副作用分析未发现触及关键区的写/删/外联，命令视为安全。")
+        if effects.fetches_remote:   # 下载到盘不升级（架构上无自由执行路径），但如实标注供审计
+            reason += " | 副作用分析：抓取远端产物落盘（两段式攻击第一段，已标注审计，未升级）。"
         return GuardResult(
             allowed=True, action=Action.ALLOW, risk=RiskLevel.LOW,
-            reason="未命中任何高危规则，AST 结构分析未发现 shell 危险结构，"
-                   "副作用分析未发现触及关键区的写/删/外联，命令视为安全。",
-            ast_findings=ast_dicts,
+            reason=reason, ast_findings=ast_dicts,
         )
 
     result = _decide(hits, path_hits, authorized=authorized, confirmed=confirmed)
@@ -136,6 +153,11 @@ def check_command(cmd: str, *, authorized: bool = False, confirmed: bool = False
         if effects.egress:
             parts.append("建立外联/反弹 shell 通道")
         result.reason += f" | 副作用分析：{'；'.join(parts)}（据实际效果升级，非字面匹配）。"
+    if effects.reads_sensitive:
+        tail = "，并经网络外发（凭据外泄）" if effects.is_credential_exfil else "（外泄前置，需确认意图）"
+        result.reason += f" | 副作用分析：读出敏感凭据 {', '.join(effects.reads_sensitive)}{tail}。"
+    if effects.fetches_remote:
+        result.reason += " | 副作用分析：抓取远端产物落盘（两段式攻击第一段，已标注审计，未升级）。"
     return result
 
 
