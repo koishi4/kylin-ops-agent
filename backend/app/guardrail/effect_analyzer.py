@@ -112,6 +112,10 @@ _CURL_UPLOAD_VAL_FLAGS = {"-T", "--upload-file", "-d", "--data", "--data-binary"
                           "--data-raw", "-F", "--form"}
 _CURL_DOWNLOAD_FLAGS = {"-O", "--remote-name", "-o", "--output"}
 
+# 公共可写临时目录：下载落盘到这里是日常运维、天然良性（误杀率 0% 的 carve-out）。即便 /var/tmp
+# 技术上挂在关键路径 /var 之下，落盘**严格在**这些目录之内的下载也**不升级**为 fetches_to_critical。
+_BENIGN_WRITE_DIRS = ("/tmp", "/var/tmp", "/dev/shm")
+
 
 @dataclass
 class EffectSet:
@@ -134,6 +138,10 @@ class EffectSet:
     # curl/wget 抓取远端产物落盘（两段式「下载→后续执行」的第一段）。**信息性标注，不升级**——
     # 下载到盘是日常运维高频动作，升级必误杀；架构上下到盘的脚本也无自由执行路径（Action-Selector）。
     fetches_remote: bool = False
+    # curl/wget 下载的**落盘目的**经规范化后落在系统关键路径（且非 /tmp、/var/tmp、/dev/shm 等公共可写
+    # 临时目录）→ 远端内容写入可执行/持久化位置，是两段式攻击的落地段，**升级 DENY**（与仅 informational
+    # 的 fetches_remote 区分）。
+    fetches_to_critical: list[str] = field(default_factory=list)
 
     @property
     def hits_critical(self) -> bool:
@@ -154,6 +162,7 @@ class EffectSet:
             "reads_sensitive": list(self.reads_sensitive),
             "net_send": self.net_send,
             "fetches_remote": self.fetches_remote,
+            "fetches_to_critical": list(self.fetches_to_critical),
             "hits_critical": self.hits_critical,
             "is_credential_exfil": self.is_credential_exfil,
         }
@@ -186,6 +195,11 @@ def _critical_or_none(tok: str) -> str | None:
         return None
     resolved = _resolve(tok)
     return resolved if _is_under_critical(resolved) else None
+
+
+def _under_benign_tmp(resolved: str) -> bool:
+    """规范化路径是否落在公共可写临时目录内（含目录本身或其严格子路径）→ 良性下载落盘，不升级。"""
+    return any(resolved == d or resolved.startswith(d + "/") for d in _BENIGN_WRITE_DIRS)
 
 
 def _is_sensitive(resolved: str) -> bool:
@@ -222,6 +236,40 @@ def _curl_upload_files(args: list[str]) -> list[str]:
             i += 1                                  # 跳过已消费的取值
         i += 1
     return out
+
+
+def _download_dest_paths(verb: str, args: list[str]) -> list[str]:
+    """抽取 curl/wget 下载的**显式落盘目的**（原始 token，规范化交给调用方）。
+
+    - curl：`-o`/`--output` 的后续取值；以及 `-o=FILE` / `--output=FILE`（按 = 切分）。
+    - wget：`-O`/`--output-document` 的取值与 `--output-document=FILE`；并含 `-P`/`--directory-prefix`
+      的目录取值与 `--directory-prefix=DIR`（保存到关键目录下同属关键落盘，故把该目录本身计入）。
+    - 目的恰为 `-`（输出到 stdout）忽略。
+    - **不**揣测无 `-O`/`-o` 时按 URL basename 落 cwd 的默认目的——那不是可静态求值的路径，沉默（故障安全）。
+    """
+    out: list[str] = []
+    i = 0
+    if verb == "curl":
+        val_flags = ("-o", "--output")
+        eq_prefixes = ("-o=", "--output=")
+    elif verb == "wget":
+        val_flags = ("-O", "--output-document", "-P", "--directory-prefix")
+        eq_prefixes = ("--output-document=", "--directory-prefix=")
+    else:
+        return out
+    while i < len(args):
+        a = args[i]
+        matched = False
+        for pfx in eq_prefixes:
+            if a.startswith(pfx):
+                out.append(a.split("=", 1)[1])
+                matched = True
+                break
+        if not matched and a in val_flags and i + 1 < len(args):
+            out.append(args[i + 1])
+            i += 1                                  # 跳过已消费的取值
+        i += 1
+    return [d for d in out if d != "-"]             # `-` 是 stdout，不是落盘目的
 
 
 def _is_download_to_disk(verb: str, args: list[str]) -> bool:
@@ -349,6 +397,19 @@ def _collect_command_effects(node, effects: EffectSet) -> None:
     # —— fetches_remote（curl/wget 抓远端产物落盘：信息性标注，不升级，#1 两段式攻击的可见性） ——
     if verb in ("curl", "wget") and _is_download_to_disk(verb, args):
         effects.fetches_remote = True
+
+    # —— fetches_to_critical（下载落盘到系统关键路径 = 远端内容落入可执行/持久化位置：升级 DENY） ——
+    # 仅在确为下载（curl 无上传旗标）时取显式落盘目的；目的规范化后落在关键区**且不在**公共可写临时目录
+    # 内才升级（/var/tmp 等先 carve-out，再判关键区，与 _critical_or_none 同口径但多一道良性豁免）。
+    if verb in ("curl", "wget") and not (verb == "curl" and _curl_upload_files(args)):
+        for dest in _download_dest_paths(verb, args):
+            if not _looks_like_path(dest) or not _statically_resolvable(dest):
+                continue
+            resolved = _resolve(dest)
+            if _under_benign_tmp(resolved):
+                continue
+            if _is_under_critical(resolved) and resolved not in effects.fetches_to_critical:
+                effects.fetches_to_critical.append(resolved)
 
     # —— writes：输出重定向目标（> / >>） ——
     for target in _redirect_targets(node):

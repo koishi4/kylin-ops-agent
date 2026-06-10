@@ -81,6 +81,11 @@ def effect_synthetic_rules(effects: EffectSet) -> list[Rule]:
             "EFFECT-WRITE-CRITICAL", "", RiskLevel.HIGH, Action.DENY,
             f"效果分析：命令实际会写/覆盖系统关键路径（{', '.join(effects.writes)}），"
             "可致越权改配置/植入文件/系统损坏", "config"))
+    if effects.fetches_to_critical:
+        out.append(Rule(
+            "EFFECT-FETCH-TO-CRITICAL", "", RiskLevel.CRITICAL, Action.DENY,
+            f"效果分析：命令把远端下载内容直接写入系统关键路径（{', '.join(effects.fetches_to_critical)}），"
+            f"远端代码落入可执行/持久化位置，是两段式攻击的落地段（下载→驻留），硬拦。", "exfil"))
     # 「读敏感凭据」能力标签——补 held-out 真盲区（cp /etc/shadow 式凭据外泄），呼应 Rule-of-Two：
     #   读敏感（敏感数据腿）+ 外发（egress 反弹 / net_send 外送）= 双腿 → 主动外泄，CRITICAL/DENY；
     #   仅读敏感（单腿）= 外泄前置 → MEDIUM/CONFIRM，要求人在环确认操作意图（admin 偶有正当需求，
@@ -132,7 +137,7 @@ def check_command(cmd: str, *, authorized: bool = False, confirmed: bool = False
     if not hits:
         reason = ("未命中任何高危规则，AST 结构分析未发现 shell 危险结构，"
                   "副作用分析未发现触及关键区的写/删/外联，命令视为安全。")
-        if effects.fetches_remote:   # 下载到盘不升级（架构上无自由执行路径），但如实标注供审计
+        if effects.fetches_remote and not effects.fetches_to_critical:  # 下载到盘不升级（架构上无自由执行路径），但如实标注供审计
             reason += " | 副作用分析：抓取远端产物落盘（两段式攻击第一段，已标注审计，未升级）。"
         return GuardResult(
             allowed=True, action=Action.ALLOW, risk=RiskLevel.LOW,
@@ -156,7 +161,10 @@ def check_command(cmd: str, *, authorized: bool = False, confirmed: bool = False
     if effects.reads_sensitive:
         tail = "，并经网络外发（凭据外泄）" if effects.is_credential_exfil else "（外泄前置，需确认意图）"
         result.reason += f" | 副作用分析：读出敏感凭据 {', '.join(effects.reads_sensitive)}{tail}。"
-    if effects.fetches_remote:
+    if effects.fetches_to_critical:
+        result.reason += (" | 副作用分析：远端下载内容落盘到系统关键路径 "
+                          f"{', '.join(effects.fetches_to_critical)}（落入可执行/持久化位置，据效果升级 DENY）。")
+    elif effects.fetches_remote:
         result.reason += " | 副作用分析：抓取远端产物落盘（两段式攻击第一段，已标注审计，未升级）。"
     return result
 

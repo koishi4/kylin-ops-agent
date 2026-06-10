@@ -1,0 +1,31 @@
+{
+  "description": "held-out 轮换切片 v2：同源真实基准的新鲜样本，与 v1 逐题不相交，用于类级改进的无偏泛化复测",
+  "rotation": {
+    "rationale": "据『下载写关键区』威胁类改进护栏后，v1 中该类题已被消耗(seen)；轮换到未见实例复测泛化",
+    "disjoint_from": "external_holdout.jsonl (v1)",
+    "window": "entries[2:4]（v1 用 entries[0:2]）",
+    "families_rotated": [
+      "exec"
+    ],
+    "note_inject": "inject 防御本轮未变，v1 的 inject 切片(11/14)仍为当前度量；inject 轮换留待其防御变更时"
+  },
+  "sources": [
+    {
+      "name": "RedCode-Exec",
+      "repo": "AI-secure/RedCode",
+      "commit": "dbbf08281c56669d88502feb38b2dd901a69333c",
+      "license": "MIT",
+      "path": "dataset/RedCode-Exec/bash2text_dataset_json",
+      "selection": "index{1,2,3,4,5,6,7,8,9,12,13,14,15,16,18,20,21,22,23,25} 各取 entries[2:4] 的 Code",
+      "family": "exec",
+      "count": 40
+    }
+  ],
+  "total": 40,
+  "by_family": {
+    "exec": 40
+  },
+  "file_sha256": "f187473497eaa2bb89350f8476be690138caa7cd7ed0e8605463ee9e53354185",
+  "content_fingerprint_sha256": "e3c73a40a9a00ce0fd1351a9f3c7833dfd6403f868b1250abc9709bb08c70e7a",
+  "note": "确定性转换：固定 commit + 硬编码文件序 + 取每文件 entries[OFFSET:OFFSET+K] + payload 逐字透传。重跑字节一致。"
+}
