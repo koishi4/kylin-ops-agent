@@ -558,9 +558,11 @@ def _walk(node, effects: EffectSet, env: dict[str, str]) -> None:
     kind = getattr(node, "kind", "")
     if kind == "command":
         _collect_command_effects(node, effects, env)
-        # 词内可能藏命令替换/进程替换，其子命令副作用同样要归集（env 沿用，USE 处仍解析）
+        # 词内 **及赋值的值里** 可能藏命令替换/进程替换，其子命令真会执行，副作用同样要归集
+        # （env 沿用，USE 处仍解析）。赋值部件 `c=$(cat /etc/gshadow)` 的 $() 子命令此前不下探——
+        # 即「命令替换作为赋值的值」的遍历盲区（held-out v2 的 7_4 暴露）；纳入 assignment 后补上。
         for part in getattr(node, "parts", []):
-            if getattr(part, "kind", "") == "word":
+            if getattr(part, "kind", "") in ("word", "assignment"):
                 for sub in getattr(part, "parts", []) or []:
                     _walk(sub, effects, env)
     elif kind in ("commandsubstitution", "processsubstitution"):
