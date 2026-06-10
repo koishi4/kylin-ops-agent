@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -233,9 +234,51 @@ def load_external_corpus(path: str) -> list[dict]:
     return out
 
 
+def corpus_fingerprint(items: list[dict]) -> str:
+    """语料内容指纹：sha256 over 规范化(family|id|payload) 排序后串接。顺序无关、内容敏感。
+
+    用途（去自评/防过拟合）：held-out 语料用它**封存**——把指纹提交进仓库（.sha256 旁车文件）。
+    日后再跑，指纹一致即证明「这份集自封存以来未被改动」，其分数才算「未对它调过参」的诚实评测；
+    指纹变了说明语料被动过，分数不再可比。这把『我没拿这份卷子调过参』从口头承诺变成可核验的事实。
+    """
+    h = hashlib.sha256()
+    for it in sorted(items, key=lambda x: (x.get("family", ""), x.get("id", ""), x.get("payload", ""))):
+        h.update(f"{it.get('family','')}\x1f{it.get('id','')}\x1f{it['payload']}\x1e".encode("utf-8"))
+    return h.hexdigest()
+
+
+def run_holdout(path: str) -> dict:
+    """独立评测一份 held-out 外部语料（**不混入**内置语料），并校验内容指纹封存。
+
+    诚实叙事：held-out 集只「跑一次、如实报分」，绝不据它的失败回头调参——否则它就变成训练集。
+    返回该集的评测报告（leaked 由调用方并入退出码）。
+    """
+    items = load_external_corpus(path)
+    fp = corpus_fingerprint(items)
+    sidecar = path + ".sha256"
+    print("\n" + "=" * 72)
+    print(f"held-out 外部语料独立评测：{path}（{len(items)} 例）")
+    print(f"内容指纹 sha256 = {fp}")
+    if os.path.exists(sidecar):
+        expected = open(sidecar, encoding="utf-8").read().strip().split()[0]
+        if expected == fp:
+            print(f"  ✓ 与封存指纹一致（{os.path.basename(sidecar)}）——自封存以来未被改动，"
+                  "分数为『未对它调过参』的诚实评测。")
+        else:
+            print(f"  ⚠ 与封存指纹不一致！封存={expected[:16]}… 实测={fp[:16]}…——语料被改动过，"
+                  "分数不再等同于未调参评测，请核实后重新封存。")
+    else:
+        print(f"  （未找到封存指纹 {os.path.basename(sidecar)}；要锁定这份 held-out 集，"
+              "把上面的 sha256 写入该文件并提交。）")
+    report = evaluate(items)
+    print_report(report)
+    return report
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="护栏独立红队评测（RedCode-Exec / DeepTeam 风格）")
-    ap.add_argument("--corpus", help="追加外部语料文件（JSON 数组或 JSONL，含 payload/family）")
+    ap.add_argument("--corpus", help="追加外部语料文件到内置集一起评测（JSON 数组或 JSONL，含 payload/family）")
+    ap.add_argument("--holdout", help="held-out 外部语料：独立评测 + 内容指纹封存校验（防过拟合/防篡改）")
     ap.add_argument("--json", default=os.path.join(os.path.dirname(_HERE), "redteam-report.json"),
                     help="机器可读报告输出路径")
     args = ap.parse_args()
@@ -252,9 +295,15 @@ def main() -> int:
         json.dump(report, f, ensure_ascii=False, indent=2)
     print(f"\n机器可读报告已写入：{args.json}")
 
+    # held-out 集独立评测（不混入内置语料），其漏过同样并入退出码
+    ho_leaked = False
+    if args.holdout:
+        ho_report = run_holdout(args.holdout)
+        ho_leaked = any(s.get("asr", 0) > 0 for s in ho_report["summary"].values())
+
     # 退出码：任一攻击家族 ASR>0（有漏过）则非零，便于接入 CI 红线
     leaked = any(s.get("asr", 0) > 0 for s in report["summary"].values())
-    return 1 if leaked else 0
+    return 1 if (leaked or ho_leaked) else 0
 
 
 if __name__ == "__main__":
