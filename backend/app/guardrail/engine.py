@@ -95,10 +95,22 @@ def check_command(cmd: str, *, authorized: bool = False, confirmed: bool = False
 # 确保 AST 的 HIGH/CONFIRM 发现绝不会把同级正则规则的 HIGH/DENY 裁决降格。
 _ACTION_SEVERITY = {Action.DENY: 2, Action.CONFIRM: 1, Action.ALLOW: 0}
 
+# 风险等级的中文标签，供裁决理由按实际等级措辞（不再把 MEDIUM 说成「高风险」）。
+_RISK_LABEL = {RiskLevel.CRITICAL: "严重风险", RiskLevel.HIGH: "高风险",
+               RiskLevel.MEDIUM: "中风险", RiskLevel.LOW: "低风险"}
+
 
 def _decide(hits: list[Rule], path_hits: list[str], *,
             authorized: bool, confirmed: bool) -> GuardResult:
-    """按命中规则集做四级裁决（正则/路径兜底/AST 合成规则统一走这里）。"""
+    """按命中规则集做四级裁决（正则/路径兜底/AST 合成规则统一走这里）。
+
+    裁决由「最高风险等级 + 该等级最严动作」共同决定（HIGH 与 MEDIUM 走同一套 action 门控）：
+    - CRITICAL：无条件拒绝，授权/确认都不可覆盖。
+    - HIGH / MEDIUM：按命中的 action 门控——DENY 需显式授权、CONFIRM 需二次确认、ALLOW 记录放行。
+      （此前 MEDIUM 分支无视 action，会把配置里的 medium+deny 静默降级成 confirm；现已统一，消除
+       「可配置 ≠ 可削弱」叙事的这处缺口。）
+    - LOW：记录后放行。
+    """
     highest = max(hits, key=lambda r: (r.risk.order, _ACTION_SEVERITY[r.action]))
     matched_ids = [r.id for r in hits]
     detail = "；".join(f"[{r.id}] {r.description}" for r in hits)
@@ -106,27 +118,21 @@ def _decide(hits: list[Rule], path_hits: list[str], *,
         detail += f"（规范化路径：{', '.join(path_hits)}）"
 
     risk = highest.risk
+    label = _RISK_LABEL[risk]
 
     if risk is RiskLevel.CRITICAL:
         return GuardResult(False, Action.DENY, matched_ids, risk,
-                           f"已拦截【严重风险】操作，不可执行：{detail}", False)
+                           f"已拦截【{label}】操作，不可执行：{detail}", False)
 
-    if risk is RiskLevel.HIGH:
+    if risk in (RiskLevel.HIGH, RiskLevel.MEDIUM):
         if highest.action is Action.CONFIRM and not confirmed:
             return GuardResult(False, Action.CONFIRM, matched_ids, risk,
-                               f"【高风险】操作需二次确认：{detail}", True)
+                               f"【{label}】操作需二次确认：{detail}", True)
         if highest.action is Action.DENY and not authorized:
             return GuardResult(False, Action.DENY, matched_ids, risk,
-                               f"已拦截【高风险】操作，需显式授权后才可执行：{detail}", False)
+                               f"已拦截【{label}】操作，需显式授权后才可执行：{detail}", False)
         return GuardResult(True, Action.ALLOW, matched_ids, risk,
-                           f"高风险操作已获授权/确认，放行：{detail}", False)
-
-    if risk is RiskLevel.MEDIUM:
-        if confirmed:
-            return GuardResult(True, Action.ALLOW, matched_ids, risk,
-                               f"中风险操作已确认，放行：{detail}", False)
-        return GuardResult(False, Action.CONFIRM, matched_ids, risk,
-                           f"【中风险】操作需二次确认：{detail}", True)
+                           f"{label}操作已获授权/确认，放行：{detail}", False)
 
     # LOW
     return GuardResult(True, Action.ALLOW, matched_ids, risk,

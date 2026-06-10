@@ -81,6 +81,18 @@ rules:
   action: confirm
   pattern: \bchmod\s+.*\bu\+s\b
   description: 设置 setuid 位，存在提权后门风险，需确认
+- id: PERM-005
+  category: permission
+  risk: high
+  action: deny
+  pattern: \bchmod\s+\S+\s+/etc/(shadow|gshadow|passwd|sudoers)(\s|/|$)
+  description: 改动口令/提权关键文件权限位（即便单文件、非 777），可致登录失效或凭据暴露，需显式授权
+- id: PERM-006
+  category: permission
+  risk: high
+  action: deny
+  pattern: \bchown\s+\S+\s+/etc/(shadow|gshadow|passwd|sudoers)(\s|/|$)
+  description: 改动口令/提权关键文件属主（即便单文件、非 -R），可被用于凭据窃取/提权，需显式授权
 - id: DISK-001
   category: disk
   risk: critical
@@ -135,6 +147,25 @@ rules:
   action: deny
   pattern: \bkill\b(\s+-(\w+|s\s+\w+))*\s+(--\s+)?-?1(\s|$)
   description: 向 PID 1(init/systemd) 或 PID -1(所有进程) 发送信号，会导致系统/会话整体崩溃
+# egress：反弹 shell / 外联后门（与 INJ-004「下载即执行」同属远程代码执行红线，硬编码于 rules.py）
+- id: EGRESS-001
+  category: egress
+  risk: critical
+  action: deny
+  pattern: /dev/(tcp|udp)/
+  description: 经 /dev/tcp、/dev/udp 反弹 shell 或外连，是远程代码执行与数据外泄通道
+- id: EGRESS-002
+  category: egress
+  risk: critical
+  action: deny
+  pattern: \b(nc|ncat|netcat)\b.*(\s-e\b|--exec\b|--sh-exec\b)
+  description: nc/ncat 用 -e/--exec 在连接上执行程序（经典反弹 shell），远端可直接控制本机
+- id: EGRESS-003
+  category: egress
+  risk: critical
+  action: deny
+  pattern: '\bsocat\b.*(exec|system)\s*:'
+  description: socat 的 EXEC/SYSTEM 地址把网络连接接到 shell，构成反弹 shell 后门
 - id: CFG-001
   category: config
   risk: critical

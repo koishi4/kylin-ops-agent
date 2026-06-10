@@ -1021,3 +1021,60 @@
 - 测试：rules.yaml 规则数 26→31，同步两处 `test_rules_config.py` 计数断言；全套 pytest **656 → 690 全绿**；
   前端 `npm run build` 通过（JudgeMode 独立 async chunk）。redteam_eval / demo_disk_closure 两脚本实跑通过。
 - 至此 IMPROVEMENTS-v3 的 P2 五项全部完成。
+
+---
+
+### 2026-06-10 第三方评审整改（P0-E）：盲区补强 + 测试诚实化 + 纲领纠偏
+> 一次独立、对抗式的客观评审（不照搬 CLAUDE.md/skills，专挑功能缺陷、方向性错误、测试客观性）暴露了
+> 几处被「自带语料 100% 通过」掩盖的问题。本轮**逐条兑现整改**，全程「发现并修补 > 宣称 100%」。
+
+- **评审发现的真问题（诚实记录，勿粉饰）**：
+  1. **架构与叙事错位**（方向性）：实际产品里 LLM 只能选 17 个 READONLY 工具、变更只能走
+     `/action/execute` 的 3 个白名单参数化动作——**LLM 根本没有生成自由命令的路径**。而 CLAUDE.md §4
+     把「拦住 LLM 生成的 rm -rf /」当主线，描述了一条比实现**更危险**的设计。规则引擎其实是纵深防御，
+     真正的主控制是「能力受限架构（Action-Selector / Rule of Two）」。叙事把配角当了主角。
+  2. **护栏库盲区**（用语料外样本独立打出来的）：
+     - 反弹 shell / 外联（`nc -e`、`bash -i >& /dev/tcp/...`、`socat EXEC:`）**零覆盖**——旧规则只盯
+       「毁本机数据」，对「把本机交给远端」完全没设防；
+     - 单文件改关键配置权限（`chmod 000 /etc/shadow`、`chown attacker /etc/passwd`）绕过只抓 777/-R 的
+       旧 PERM 规则；`$IFS` 空格替代（`rm$IFS-rf$IFS/`）令字面正则失配。
+  3. **测试客观性不足**：① 红队评测器 `guardrail_as_target` 只调 `check_command` **单层**，测不到产品真实的
+     「命令护栏 + 最小权限」全栈，把「命令层放行、权限层拦下」误报为漏过；② 最强的安全主张（污点 ∧ 状态变更
+     恒不成立）只写在 trace 文本里，**没有任何测试去尝试违反它**；③ 性能报告头条是亚毫秒护栏开销，却不测
+     主导用户感知延迟的 LLM 往返。
+  4. **裁决/分类小缺陷**：`engine._decide` 的 MEDIUM 分支无视 action（配置里写 `medium+deny` 会被静默降级为
+     confirm，戳破「可配置≠可削弱」叙事）；classifier 黑名单 `关停.*(安全|日志)` 过宽——「安全」误杀
+     「关闭不安全的端口」，停日志被判**不可覆盖的硬黑**而非需确认的灰。
+
+- **整改①：护栏盲区补强（`rules.py`/`rules.yaml`）**
+  - 新增 **EGRESS-001/002/003** 反弹 shell 红线（`/dev/(tcp|udp)/`、`nc/ncat -e/--exec`、`socat EXEC/SYSTEM:`），
+    与「下载即执行」INJ-004 同列 CRITICAL+DENY 硬编码红线（配置层不可削弱）；
+  - 新增 **PERM-005/006**：`chmod/chown` 作用于 `/etc/{shadow,gshadow,passwd,sudoers}` 单文件即 HIGH+DENY；
+  - `normalize()` 还原 `$IFS`/`${IFS}` 为空格，`rm$IFS-rf$IFS/` 落回 DEL-001。
+  - 误杀对照同步加入语料：`nc -z`（端口探测）、`socat - TCP:`（纯转发）、`chmod 600 ~/.ssh/id_rsa` 均放行。
+
+- **整改②：`engine._decide` 统一 HIGH/MEDIUM 的 action 门控**——MEDIUM 也按 DENY 需授权 / CONFIRM 需确认裁决，
+  消除「配置写 medium+deny 被静默降级」的缺口；裁决理由按实际风险等级措辞（不再把中风险说成「高风险」）。
+
+- **整改③：classifier 黑名单收敛**——只把「关停**具体**安全设施（防火墙/firewalld/iptables/selinux/审计/auditd/
+  安全防护/入侵检测）」判黑，且**顺序无关**（「关闭防火墙」「把 selinux 停掉」都中）；剔除裸「安全」「日志」，
+  「停日志收集」落到缺省保守判灰（仍需二次确认），既防过度拦截又不漏放行。
+
+- **整改④：红队评测器走完整裁决栈（`scripts/redteam_eval.py`）**——exec 家族改用
+  `executor.execute(..., dry_run=True)`（命令护栏 + 最小权限全栈、只裁决不落地），channel 标注
+  `executor(check_command+check_privilege)`，与线上口径一致；语料补反弹 shell/单文件配置/IFS 绕过 + 良性对照。
+  全栈重测 **51/51、ASR 0%、误拦 0%**。
+
+- **整改⑤：端到端对抗测试（`tests/test_e2e_injection.py`，7 例）**——把「散文不变量」变成被测证据：
+  脚本化对抗 LLM + 可投毒假 MCP，复现「注入藏在工具输出里诱导越权」，断言
+  ① 投毒后 `tainted` 置位但全程无状态变更工具被调用；② 模型臆造的变更工具名（clean_path/run_shell）被自愈层
+  判「未知工具」拒绝；③ 最终 trace 落「污点 ∧ 本路径无状态变更能力」不变量；④ 工具输出沙盒化检出注入并降权；
+  ⑤ 结构性断言：全 REGISTRY 只读、动作不作为工具暴露、所有只读工具并集也凑不齐致命三要素。
+
+- **整改⑥：纲领与文档诚实化**——CLAUDE.md §4 新增 §4.0「主控制是架构、规则引擎是纵深防御」，把能力受限架构
+  讲成主角，并立规矩「扩护栏优先强化架构控制而非堆正则（黑名单跑步机追不完）」；性能报告补 LLM 往返主导项。
+
+- 测试：rules.yaml 规则数 31→**36**（+EGRESS×3 +PERM×2），同步两处 `test_rules_config.py` 计数断言；
+  红队语料危险 44→50、正常 18→21；全套 pytest **690 → 706 全绿**；redteam_eval 全栈 51/51。
+- 一句话总结：这一轮没有新增「功能」，而是把**安全的可信度**补齐——真盲区补上、测试测到真实可达面、
+  叙事对齐实现。对评委而言，「我们独立红队打出漏洞→当场修掉→固化回归」本身就是最有说服力的安全论证。

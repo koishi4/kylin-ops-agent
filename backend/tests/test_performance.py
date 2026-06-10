@@ -65,4 +65,6 @@ class TestAccuracyAndReport:
         assert "性能（核心指标）测试报告" in md
         assert "护栏命令裁决" in md
         assert "拦截率" in md and "100.0%" in md
-        assert "跳过端到端" in md      # e2e ok=False 分支
+        assert "跳过本地段" in md       # e2e ok=False 分支（mock 本地段未测）
+        assert "串行 LLM 往返" in md     # 主导项：按意图分类的 LLM 往返次数表
+        assert "双层安全研判" in md      # 诚实说明灰意图多付一次往返的取舍

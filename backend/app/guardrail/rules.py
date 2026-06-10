@@ -98,6 +98,18 @@ _REDLINE_RULES: list[Rule] = [
          RiskLevel.CRITICAL, Action.DENY, "编码绕过执行：解码后直接管道给 shell", "inject"),
     Rule("INJ-004", r"(curl|wget)\s+\S+\s*\|\s*(sudo\s+)?(sh|bash|zsh)",
          RiskLevel.CRITICAL, Action.DENY, "下载即执行：远程脚本直接管道给 shell，极高风险", "inject"),
+    # P0-E：反弹 shell / 外联后门（egress）——与 INJ-004「下载即执行」同属远程代码执行威胁类，
+    # 故同列红线（CRITICAL+DENY，配置层不可削弱）。补的是 review 实测发现的盲区：
+    # 旧规则只盯「破坏本机数据」，对「把本机交给远端」(reverse shell / 数据外泄通道) 完全无覆盖。
+    Rule("EGRESS-001", r"/dev/(tcp|udp)/",
+         RiskLevel.CRITICAL, Action.DENY,
+         "经 /dev/tcp、/dev/udp 反弹 shell 或外连，是远程代码执行与数据外泄通道", "egress"),
+    Rule("EGRESS-002", r"\b(nc|ncat|netcat)\b.*(\s-e\b|--exec\b|--sh-exec\b)",
+         RiskLevel.CRITICAL, Action.DENY,
+         "nc/ncat 用 -e/--exec 在连接上执行程序（经典反弹 shell），远端可直接控制本机", "egress"),
+    Rule("EGRESS-003", r"\bsocat\b.*(exec|system)\s*:",
+         RiskLevel.CRITICAL, Action.DENY,
+         "socat 的 EXEC/SYSTEM 地址把网络连接接到 shell，构成反弹 shell 后门", "egress"),
 ]
 
 # YAML 缺失/损坏时退回的关键路径兜底集（与 rules.yaml 的 critical_paths 保持一致）
@@ -256,12 +268,18 @@ def rules_fingerprint() -> str:
     return h.hexdigest()
 
 
+# shell 用 $IFS / ${IFS} / ${IFS%??} 等参数展开替代空格来打散危险命令（rm$IFS-rf$IFS/），
+# 让「按字面写空格」的正则失配。规范化时统一还原成空格，压掉这条绕过路（P0-E）。
+_IFS_BYPASS_RE = re.compile(r"\$\{IFS[^}]*\}|\$IFS\b")
+
+
 def normalize(cmd: str) -> str:
-    """命令规范化，压缩绕过空间：去首尾空白、折叠多空格、去掉成对引号包裹。"""
+    """命令规范化，压缩绕过空间：去首尾空白、折叠多空格、还原 $IFS 空格替代、去掉成对引号包裹。"""
     t = cmd.strip()
     # 去掉整体被引号包裹的情况，如 "rm -rf /" → rm -rf /
     if len(t) >= 2 and t[0] == t[-1] and t[0] in ("'", '"'):
         t = t[1:-1]
+    t = _IFS_BYPASS_RE.sub(" ", t)   # rm$IFS-rf$IFS/ → rm -rf / ，避免 IFS 绕过正则
     return re.sub(r"\s+", " ", t.strip())
 
 

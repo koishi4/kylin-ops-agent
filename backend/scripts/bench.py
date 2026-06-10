@@ -175,18 +175,39 @@ def build_markdown(*, latency: dict, throughput: dict, accuracy: dict,
 
     lines.append("## 三、端到端一次对话延迟（拆解）")
     lines.append("")
+    lines.append("> ⚠️ 用户感知延迟由 **LLM 往返**主导（秒级），下表的护栏/工具仅毫秒级——"
+                 "看「系统快不快」要看 LLM 往返次数，而非护栏开销。两者差 3~4 个数量级，勿用护栏的亚毫秒数字"
+                 "代表系统响应速度。")
+    lines.append("")
     if e2e and e2e.get("ok"):
+        lines.append("**毫秒级本地段（mock LLM，把 LLM 往返置零以隔离本地开销）**")
+        lines.append("")
         lines.append("| 阶段 | 耗时 | 说明 |")
         lines.append("|---|--:|---|")
         lines.append(f"| 单次 MCP 工具调用 | {e2e['tool_ms']:.1f} ms | 真实读取系统数据（disk_usage） |")
-        lines.append(f"| 端到端（mock LLM） | {e2e['e2e_mock_ms']:.1f} ms | 护栏+工具+编排，LLM 段≈0 |")
-        lines.append("| LLM 推理段（真实 DeepSeek） | ~6000–12000 ms | P0-1 实测，云端模型为主要耗时 |")
+        lines.append(f"| 本地段合计（mock LLM） | {e2e['e2e_mock_ms']:.1f} ms | 护栏+工具+编排+审计，LLM 段≈0 |")
         lines.append("")
-        lines.append("> 拆解结论：端到端延迟由 **LLM 推理**主导（秒级），护栏与工具仅占毫秒级；"
-                     "故优化重点在模型/缓存，而护栏开销可忽略。只读查询跳过 LLM 安全研判可省一次往返。")
     else:
         reason = (e2e or {}).get("reason", "未运行")
-        lines.append(f"_（本次跳过端到端测量：{reason}）_")
+        lines.append(f"_（本次跳过本地段测量：{reason}）_")
+        lines.append("")
+
+    # —— 主导项：LLM 往返次数 × 单次往返耗时（静态分析自编排器实际代码路径）——
+    lines.append("**主导项：串行 LLM 往返次数（按意图分类，源自 `orchestrator.chat` 实际路径）**")
+    lines.append("")
+    lines.append("| 意图类 | 串行 LLM 往返 | 构成 | 单次查询墙钟估算※ |")
+    lines.append("|---|--:|---|--:|")
+    lines.append("| 白（只读查询） | 2 | ①选工具 ②据工具结果作答 | ~12–24 s |")
+    lines.append("| 灰（修改/动作） | 3 | ①**独立安全研判**(防线1.5) ②选工具 ③作答 | ~18–36 s |")
+    lines.append("| 直接作答（无需工具） | 白1 / 灰2 | 灰多一次安全研判往返 | ~6–24 s |")
+    lines.append("")
+    lines.append("※ 按单次 LLM 往返 **~6–12 s**（P0-1 真实 DeepSeek 实测区间）× 往返次数估算；"
+                 "本地护栏/工具/审计合计仅毫秒级，在此量级下可忽略不计。")
+    lines.append("")
+    lines.append("> 拆解结论：① 端到端延迟≈ **往返次数 × 单次 LLM 耗时**，由模型主导；"
+                 "② **灰（修改类）意图为换取「规则保可靠 + LLM 补泛化」的双层安全研判，刻意多付一次串行往返**——"
+                 "这是安全性与时延的自觉取舍，不是性能缺陷；③ 优化杠杆在 LLM 侧：缓存、换更快/本地小模型、"
+                 "对低风险灰意图跳过安全研判往返、把可并行的只读工具并发化——而非优化已可忽略的护栏开销。")
     lines.append("")
 
     lines.append("## 四、准确性核心指标（红队语料）")
