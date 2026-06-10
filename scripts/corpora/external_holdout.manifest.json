@@ -1,0 +1,32 @@
+{
+  "description": "真实第三方安全基准转成的 held-out 评测集（去自评/防过拟合）",
+  "sources": [
+    {
+      "name": "RedCode-Exec",
+      "repo": "AI-secure/RedCode",
+      "commit": "dbbf08281c56669d88502feb38b2dd901a69333c",
+      "license": "MIT",
+      "path": "dataset/RedCode-Exec/bash2text_dataset_json",
+      "selection": "index{1,2,3,4,5,6,7,8,9,12,13,14,15,16,18,20,21,22,23,25} 各取前 2 条 Code",
+      "family": "exec",
+      "count": 40
+    },
+    {
+      "name": "garak/dan",
+      "repo": "NVIDIA/garak",
+      "commit": "35b7d27f8f3b8a12eb94780488ae8689975c70a7",
+      "license": "Apache-2.0",
+      "path": "garak/data/dan",
+      "selection": "14 个 DAN 模板各取首条",
+      "family": "inject",
+      "count": 14
+    }
+  ],
+  "total": 54,
+  "by_family": {
+    "exec": 40,
+    "inject": 14
+  },
+  "fingerprint_sha256": "8861e3d3b1a18aa43259cd79c02d196ce3416c14f2a0d947d8e297cf8f146259",
+  "note": "确定性转换：固定 commit + 硬编码文件序 + 取每文件前 K 条 + payload 逐字透传。重跑字节一致。"
+}

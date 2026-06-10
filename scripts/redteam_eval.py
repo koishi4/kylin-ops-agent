@@ -272,6 +272,12 @@ def run_holdout(path: str) -> dict:
               "把上面的 sha256 写入该文件并提交。）")
     report = evaluate(items)
     print_report(report)
+    # 持久化这份「独立、已封存」的评测结果，供课程报告/审计逐条引用（含漏过样例，诚实留痕）。
+    report_path = path + ".report.json"
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump({"corpus": path, "fingerprint_sha256": fp, "sealed": os.path.exists(sidecar),
+                   **report}, f, ensure_ascii=False, indent=2)
+    print(f"\n机器可读 held-out 报告已写入：{report_path}")
     return report
 
 
