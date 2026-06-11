@@ -85,7 +85,19 @@ _SOCAT_EXEC_RE = re.compile(r"^(exec|system):", re.IGNORECASE)
 # **刻意不含 /etc/passwd**（全局可读、getent/id 日常读取，纳入必造成误杀——本项目误杀率 0% 硬指标）。
 # 判定按 realpath 后**精确匹配文件**或**私钥 basename**，绝不按目录前缀：`tar /etc` 读的是目录、
 # 不暴露 shadow 本体，不算；唯有 `/etc/shadow` 作为显式操作数才算。
-_SENSITIVE_FILES = {"/etc/shadow", "/etc/gshadow", "/etc/sudoers"}
+#
+# v5 扩面（旧/备份口令哈希 = 等效读取面，闭「换文件绕过」漏洞）：能力标签的价值在于**按效果而非按
+# 文件名**判定——`/etc/shadow` 被盯死后，攻击者改读字节同质的等价物即可绕过「只盯 shadow 本体」的护栏：
+#   - `/etc/shadow-` / `/etc/gshadow-`：passwd/pwck/vipw/useradd 维护时生成的**备份**，含**当前**口令哈希，
+#     与 shadow 同质；权限 root-only(000/600)、非世界可读。
+#   - `/etc/security/opasswd`：PAM `pam_pwhistory`/`pam_unix remember=N` 记录的**历史**口令哈希；root-only。
+# 三者均 root-only、非世界可读、无任何日常良性读取场景 → 纳入零误杀风险，却补全「读出口令哈希」这一**同一
+# 能力标签**的完整面（不是新增正则、不是新标签，只是把同类机密文件收进既有 reads_sensitive 判定）。
+# 仍**刻意不含** /etc/passwd-（其本体 /etc/passwd 即已排除：世界可读、不含哈希）——口径一致，不破误杀率 0%。
+_SENSITIVE_FILES = {
+    "/etc/shadow", "/etc/gshadow", "/etc/sudoers",
+    "/etc/shadow-", "/etc/gshadow-", "/etc/security/opasswd",
+}
 _SENSITIVE_DIR_PREFIXES = ("/etc/sudoers.d/",)
 _PRIVKEY_BASENAMES = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"}
 

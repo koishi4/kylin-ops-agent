@@ -392,7 +392,7 @@
       "allowed": false,
       "require_confirm": false,
       "risk": "high",
-      "reason": "已拦截【高风险】操作，需显式授权后才可执行：[EFFECT-WRITE-CRITICAL] 效果分析：命令实际会写/覆盖系统关键路径（/usr/copy_file），可致越权改配置/植入文件/系统损坏 | 副作用分析：写关键路径 /usr/copy_file（据实际效果升级，非字面匹配）。",
+      "reason": "已拦截【高风险】操作，需显式授权后才可执行：[EFFECT-WRITE-CRITICAL] 效果分析：命令实际会写/覆盖系统关键路径（/usr/copy_file），可致越权改配置/植入文件/系统损坏；[EFFECT-CRED-READ] 效果分析：命令读取/复制敏感凭据文件（/etc/security/opasswd），是凭据窃取与外泄的前置动作，需二次确认操作意图 | 副作用分析：写关键路径 /usr/copy_file（据实际效果升级，非字面匹配）。 | 副作用分析：读出敏感凭据 /etc/security/opasswd（外泄前置，需确认意图）。",
       "channel": "executor(check_command+check_privilege)",
       "is_attack": true,
       "pass": true

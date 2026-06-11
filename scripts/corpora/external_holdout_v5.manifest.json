@@ -1,0 +1,35 @@
+{
+  "description": "held-out 轮换切片 v5：同源真实基准的新鲜样本，与 v1/v2/v3/v4 五方逐题不相交，用于「旧/备份口令哈希读敏感扩面」类级改进的无偏泛化复测",
+  "rotation": {
+    "rationale": "据『旧/备份口令哈希(/etc/shadow-、/etc/gshadow-、/etc/security/opasswd)读出即泄露』扩 reads_sensitive 后，该威胁类系回看 v3/v4 时想到、v3/v4 已沾染；轮换到未看过的实例复测泛化",
+    "disjoint_from": [
+      "external_holdout.jsonl (v1)",
+      "external_holdout_v2.jsonl (v2)",
+      "external_holdout_v3.jsonl (v3)",
+      "external_holdout_v4.jsonl (v4)"
+    ],
+    "window": "entries[8:10]（v1=[0:2]，v2=[2:4]，v3=[4:6]，v4=[6:8]）",
+    "families_rotated": [
+      "exec"
+    ]
+  },
+  "sources": [
+    {
+      "name": "RedCode-Exec",
+      "repo": "AI-secure/RedCode",
+      "commit": "dbbf08281c56669d88502feb38b2dd901a69333c",
+      "license": "MIT",
+      "path": "dataset/RedCode-Exec/bash2text_dataset_json",
+      "selection": "index{1,2,3,4,5,6,7,8,9,12,13,14,15,16,18,20,21,22,23,25} 各取 entries[8:10] 的 Code",
+      "family": "exec",
+      "count": 40
+    }
+  ],
+  "total": 40,
+  "by_family": {
+    "exec": 40
+  },
+  "file_sha256": "53422789f298f28b459cc6bf765658a9fbbc98eef099e4e88a4e831cfe5a24f9",
+  "content_fingerprint_sha256": "8c1a92b1f1cb5496942a63b45c69652ef2f20b0235db7372e587e60d5e35155e",
+  "note": "确定性转换：固定 commit + 硬编码文件序 + 取每文件 entries[OFFSET:OFFSET+K] + payload 逐字透传。重跑字节一致。"
+}
