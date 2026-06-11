@@ -1,7 +1,9 @@
 """执行器统一出口测试：核心是「危险命令拦截 demo」——护栏不放行就绝不执行。"""
 from __future__ import annotations
 
-from app.core.executor import execute
+import getpass
+
+from app.core.executor import execute, execute_argv
 
 
 class TestExecutorBlocking:
@@ -51,3 +53,30 @@ class TestExecutorAllowed:
         assert r["blocked"] is False
         assert r["executed"] is True
         assert "guardrail-ok" in r.get("stdout", "")
+
+
+class TestAllowPathLandsThroughSandbox:
+    """端到端「放行路径真落地」回归（第三方评审「三.2」整改）。
+
+    评审指出红队评测全程 dry_run（这是 §6 安全铁律——绝不真跑破坏命令），故"放行的良性命令是否
+    真的过全栈 executor→沙箱 正确落地"缺端到端覆盖（block-path 在 dry_run 测、bomb-path 在
+    test_sandbox 测，唯独 allow-path 真落地没端到端测）。这里用**安全命令**补上：不违 §6。
+    """
+
+    def test_allowed_command_actually_runs_inside_sandbox(self):
+        # 一条护栏放行的安全命令：必须真执行，且**经沙箱包裹**（结果带 sandbox 后端字段），
+        # 证明放行路径走的是全栈 executor→run_cmd(sandbox=True)→run_sandboxed，而非裸 subprocess。
+        r = execute("echo guardrail-allow-e2e")
+        assert r["blocked"] is False and r["executed"] is True
+        assert "guardrail-allow-e2e" in r.get("stdout", "")
+        assert "sandbox" in r, "放行命令未经沙箱落地（缺 sandbox 后端字段）"
+
+    def test_what_guardrail_judged_is_what_executes(self):
+        """「所审即所执」不变量的执行侧证据：execute_argv 用权威 argv 直接执行（shell=False），
+        命令替换等 shell 元字符被原样当字面传参、绝不二次解释——堵住"护栏看到的串 ≠ 真正执行的
+        argv"这道 execve 分叉缝（评审「三.2」担心的方向）。"""
+        r = execute_argv(["echo", "$(whoami)"])
+        assert r["executed"] is True and r["blocked"] is False
+        out = r.get("stdout", "")
+        assert "$(whoami)" in out, "命令替换未被当字面——疑似经过了 shell 二次解释"
+        assert getpass.getuser() not in out, "$(whoami) 被真实求值——执行侧发生了 shell 解释（越界）"

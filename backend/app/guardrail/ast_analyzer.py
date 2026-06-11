@@ -43,8 +43,10 @@ _SHELL_INTERPRETERS = {
 # 因此把「解释器携带内联代码」这个**结构事实本身**当高危信号，不去解析内层（见模块文档/security-design）。
 _SHELL_NAMES = {"sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "ash"}
 # 命令首词若匹配它即视为解释器（python3/python2.7 等带版本号一并覆盖）。
+# eval 纳入：`eval STRING` 把其参数拼成命令在当前 shell 执行——是「就地执行任意代码」的典型构造，
+# 与 `bash -c` 同类（评审「一.1」实测盲区：此前 eval 不在名单 → `eval "rm -rf /"` 被清白放行）。
 _INTERPRETER_RE = re.compile(
-    r"^(sh|bash|zsh|dash|ksh|csh|tcsh|ash|python[0-9.]*|perl|ruby|node|nodejs|php|lua|awk)$")
+    r"^(sh|bash|zsh|dash|ksh|csh|tcsh|ash|python[0-9.]*|perl|ruby|node|nodejs|php|lua|awk|eval)$")
 
 # 重定向写入这些目标即灾难：块设备（覆写磁盘）/ 系统关键路径（越权改配置）。
 _BLOCK_DEV_RE = re.compile(r"^/dev/(sd|nvme|vd|hd|mmcblk|loop|dm-|md)")
@@ -167,6 +169,8 @@ def _has_inline_code(cmd: str, args: list[str]) -> bool:
         return "-e" in aset
     if cmd == "awk":                              # awk '程序串'（除非 -f 指定脚本文件）
         return "-f" not in aset and any(not a.startswith("-") for a in args)
+    if cmd == "eval":                             # eval STRING…：任意非旗标参数都是待执行代码
+        return any(not a.startswith("-") for a in args)
     return False
 
 

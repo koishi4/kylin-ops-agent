@@ -1553,3 +1553,37 @@ READER_SYSTEM 测的是身份非措辞，两处改动均不破契约）。隔离
 
 > 方法论一致性：这条**不是**往护栏堆东西，而是补**测量盲区**——把「多轮推理链能力」从"没测"变成
 > "有确定、可复现、诚实标注的量化基准"，直接强化评分②（交互准确性）与④（根因分析）的证据链。
+
+---
+
+## 2026-06-11 修两条混淆盲区 + 补放行路径端到端（评审 一.1 / 三.2 整改）
+
+**一.1 触发**：评审指出静态分析（AST/效果）对动态 Bash 天然不可能 100% 解析，高阶混淆会让护栏退化。
+照此**实测**护栏对一组混淆，发现**两条真实"清白放行"（clean-allow）盲区**（评审预言命中）：
+- `eval "rm -rf /"`、`eval cat /etc/shadow` → **清白放行**：`eval` 不在解释器名单（`bash -c` 在、
+  `eval` 漏了），其携带的销毁/读敏感代码被当普通字符串放过。
+- `cat${IFS}/etc/shadow` → **清白放行**：`${IFS}` 把命令拼成**单个词**，效果层按 token 解析时动词
+  ≠`cat`，`reads_sensitive` 漏判（rules 层 `_normalize` 还原了 IFS、effect 层没有，从两层之间溜走）。
+
+> 这两条在**执行层**本被 `shell=False` 兜住（eval/${IFS} 非真 shell 不展开、落地即 `command not
+> found`），但护栏**裁决**这一层不该依赖它而清白放行——纵深防御要求护栏也看穿混淆。
+
+**修法（结构性，不是黑名单跑步机）**：
+- `ast_analyzer`：把 `eval` 纳入 `_INTERPRETER_RE` + `_has_inline_code`（任意非旗标参数=待执行代码）
+  → `eval 携带代码` 判 `interpreter_inline_code` CRITICAL/DENY，与 `bash -c` 同一结构性口径。
+- `effect_analyzer.analyze_effects`：解析前先 `_IFS_BYPASS_RE.sub(" ", text)` 还原 IFS（与 rules
+  同一份模式），使 `cat${IFS}/etc/shadow`→`cat /etc/shadow`，既有效果标签即能看穿。effect 不依赖
+  node.pos，故还原文本安全、不破 AST 的位置切片。
+- 二者都是**闭一类结构**（代码 eval / IFS 拼词），非新增逐条正则——符合 CLAUDE.md「强化结构、勿堆正则」。
+
+**三.2 触发 + 补强**：评审说红队全程 `dry_run`（这是 §6 铁律——绝不真跑破坏命令），故"放行的良性
+命令是否真过全栈 executor→沙箱 正确落地"缺端到端覆盖。补两条**安全命令**端到端用例（不违 §6）：
+- `execute("echo …")` 真执行 + 断言结果带 `sandbox` 后端字段 → 证明放行路径走的是 run_cmd(sandbox=
+  True)→run_sandboxed，而非裸 subprocess。
+- `execute_argv(["echo","$(whoami)"])` → stdout 为**字面** `$(whoami)`、**不**等于真实用户名 → "所审
+  即所执"的执行侧硬证据：`shell=False` + argv 权威，命令替换等元字符绝不二次解释，堵 execve 分叉缝。
+
+**回归与防回归**：新增 `tests/test_guardrail_obfuscation_failsafe.py`（混淆绝不 clean-allow + eval/IFS
+锁定 + **良性仍 clean-allow** 的零误杀守护）与 `test_executor.py::TestAllowPathLandsThroughSandbox`。
+**收尾**：全量 **2556 passed**（+27）；内置红队 **88/88**、良性误拦 **0%**；held-out v5 **sealed=True
+（字节+语义未变）**、检出 95% / 真·ASR 0% —— 与修复前**完全一致**：更严的修复**零误杀、零检出回归**。

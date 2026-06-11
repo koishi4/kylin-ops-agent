@@ -39,7 +39,11 @@ import bashlex
 
 # 复用 rules 的关键路径判定口径（CRITICAL_PATHS 为运行时热加载的同一份引用，_is_under_critical
 # 已含 realpath 后的「等于关键路径或在其下」判断）。严禁改 rules.py，这里只 import。
-from .rules import CRITICAL_PATHS, _is_under_critical  # noqa: F401 (CRITICAL_PATHS 经 _is_under_critical 间接使用)
+# _IFS_BYPASS_RE：与 rules.normalize 同一份 IFS 还原模式——effect 分析按 token 工作，若不先把
+# ${IFS}/$IFS 还原成空格，`cat${IFS}/etc/shadow` 会被 bashlex 当成**单个词**（动词≠cat），导致
+# reads_sensitive/writes/deletes 等效果标签全部漏判（评审「一.1」实测盲区：rules 层已还原 IFS、
+# effect 层却没有，IFS 混淆的敏感读/写从两层之间溜走）。
+from .rules import CRITICAL_PATHS, _IFS_BYPASS_RE, _is_under_critical  # noqa: F401 (CRITICAL_PATHS 经 _is_under_critical 间接使用)
 
 # 调用某命令时应跳过的前缀词（与 ast_analyzer._SKIP_WORDS 同口径，取「真正被执行的命令」）。
 _SKIP_WORDS = {"sudo", "env", "command", "nice", "nohup", "time", "exec", "doas"}
@@ -669,6 +673,10 @@ def analyze_effects(cmd: str) -> EffectSet:
     effects = EffectSet()
     if not text:
         return effects
+    # IFS 还原：把 ${IFS}/$IFS 等替成空格，使 `cat${IFS}/etc/shadow` 还原为 `cat /etc/shadow`，
+    # 让下游按 token 的效果标签（reads_sensitive/writes/deletes…）不被 IFS 拼词混淆绕开。
+    # 与 rules.normalize 同一份模式，口径一致；effect 分析不依赖 node.pos，故安全（不破 AST 的位置切片）。
+    text = _IFS_BYPASS_RE.sub(" ", text)
     # 先用整串扫一遍 /dev/tcp 这类不依赖解析的 egress 信号（即便后续解析失败也能抓到）。
     if _DEV_NET_RE.search(text):
         effects.egress = True
