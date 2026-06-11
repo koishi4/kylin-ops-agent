@@ -27,7 +27,7 @@ uvicorn app.main:app --reload --port 8000
 - `GET /tools`：列出 MCP 工具（评分①「列工具」）
 - `POST /chat` `{"message": "磁盘还剩多少"}`：返回 answer + 五段执行链 trace
 
-LLM 三模式（环境变量 `LLM_PROVIDER`）：`deepseek`（云端，开发默认）/ `ollama`（本地 Qwen3，答辩离线）/ `mock`（无 key 无网，演示与 CI）。
+LLM 双模式（环境变量 `LLM_PROVIDER`）：`deepseek`（云端，国产开源，开发/演示默认）/ `mock`（无 key 无网，演示与 CI）。`LLMProvider` 抽象不与厂商耦合，任一 OpenAI 兼容端点（含私有化自托管的国产大模型）改 `DEEPSEEK_BASE_URL` 即可接入。
 
 ### 前端
 ```bash

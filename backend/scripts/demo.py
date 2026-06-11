@@ -17,7 +17,7 @@
 
 跑法（在 backend/ 下）：
     python scripts/demo.py                  # 交互式，每幕停顿可讲解；用 .env 配的 provider
-    python scripts/demo.py --provider mock  # 离线确定性演示（无网/答辩断网兜底）
+    python scripts/demo.py --provider mock  # 离线确定性演示（无网/无 key 兜底）
     python scripts/demo.py --provider deepseek  # 录屏推荐：幕5 能看到 AI 真把规则升级
     python scripts/demo.py --auto           # 不停顿，一口气跑完（录无人值守版 / 自测）
     python scripts/demo.py --only 2,5       # 只演指定幕（按编号）
@@ -57,7 +57,7 @@ from app.guardrail.context_sanitizer import sanitize_tool_result  # noqa: E402
 from app.guardrail.engine import check_command  # noqa: E402
 from app.guardrail.risk_assessor import assess_risk  # noqa: E402
 from app.llm.provider import (  # noqa: E402
-    DeepSeekProvider, LLMProvider, MockProvider, OllamaProvider,
+    DeepSeekProvider, LLMProvider, MockProvider,
 )
 from app.mcp_server.client import MCPClient  # noqa: E402
 
@@ -471,11 +471,9 @@ def _make_provider(name: str) -> LLMProvider:
     name = name.lower()
     if name == "mock":
         return MockProvider()
-    if name == "ollama":
-        return OllamaProvider()
     if name == "deepseek":
         return DeepSeekProvider()
-    raise ValueError(f"未知 provider：{name!r}（可选 mock/ollama/deepseek）")
+    raise ValueError(f"未知 provider：{name!r}（可选 mock/deepseek）")
 
 
 def _banner(s: Style, provider: str) -> None:
@@ -555,7 +553,7 @@ def _parse_only(raw: str | None) -> list[int] | None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="麒麟安全运维 Agent 一键演示剧本（P1-4）")
     ap.add_argument("--provider", default=None,
-                    help="mock/ollama/deepseek；默认用 .env 配的 LLM_PROVIDER")
+                    help="mock/deepseek；默认用 .env 配的 LLM_PROVIDER")
     ap.add_argument("--auto", action="store_true", help="不停顿，一口气跑完（录无人值守版/自测）")
     ap.add_argument("--only", default=None, help="只演指定幕，逗号分隔，如 2,5")
     ap.add_argument("--no-color", action="store_true", help="关闭颜色（重定向到文件时用）")

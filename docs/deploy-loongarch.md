@@ -21,7 +21,7 @@
 | **`pydantic`（pydantic-core）** | **Rust 扩展** | **中高**（pydantic v2 核心是 Rust，需 Rust 工具链编译） | 优先系统包；否则装 `rust`/`cargo` 后源码编译；极端预案见 §5 |
 | `uvicorn[standard]` | 含 `uvloop`(C)/`httptools`(C)/`watchfiles`(Rust) 等 extras | 中（extras 可能编不过） | **去掉 `[standard]`**，用纯 Python 的 `asyncio` 事件循环：`pip install uvicorn`，启动加 `--loop asyncio --http h11` |
 | 前端 `vue`/`vite`/`element-plus` | Node 构建产物 | 不在 LoongArch 跑构建 | 在 x86 开发机 `npm run build`，把 `frontend/dist/` 拷到麒麟，由后端或 nginx 托管静态文件 |
-| LLM 运行时 `ollama` | Go 二进制 | 中（看是否有 loongarch 构建） | 见 §4：优先 ollama 官方/麒麟源；否则 `llama.cpp` 源码编译跑 GGUF；再不行用 deepseek 云端 / mock 离线兜底 |
+| LLM 运行时 | 无需在设备上跑模型 | 低 | 见 §4：用 DeepSeek 云端 API（国产开源）；无网/无 key 用 `LLM_PROVIDER=mock` 离线确定性桩兜底。**不在 LoongArch 上部署本地大模型**（已移除 8B 双模式，见 dev-log 2026-06-11） |
 
 > 备注：本项目命令执行只封装系统自带的 `lsof`/`netstat`/`journalctl`/`df`/`ss` 等，这些是 OS 原生工具，LoongArch 上无适配问题，只需确认已安装（`which lsof ss journalctl`）。
 
@@ -81,7 +81,7 @@ python -c "import psutil, pydantic, yaml; print('deps ok', psutil.__version__, p
 #   托管: 用 nginx 指向 dist/，或让 FastAPI 用 StaticFiles 挂载（生产再加）
 
 # 4) 配置 LLM provider（断网答辩可先用 mock 验证主流程）
-echo "LLM_PROVIDER=mock" > .env          # 或 ollama / deepseek
+echo "LLM_PROVIDER=mock" > .env          # 或 deepseek
 # deepseek 需联网 + 在 .env 填 DEEPSEEK_API_KEY（切勿提交进 git）
 
 # 5) 起服务
@@ -96,12 +96,17 @@ pytest -q                                                     # 全套回归（�
 
 > `pytest -q` 全绿是「LoongArch 适配成功」最硬的证据：它会真实拉起 MCP 子进程、跑护栏/根因/审计全链路。把这条实测结果回填到课程报告「第5章 部署」。
 
-## 4. 国产化 LLM 运行时（ollama / 替代）
+## 4. 国产化 LLM 运行时
 
-答辩现场要「断网可演 + 国产化加分」，本地 LLM 是亮点，但 LoongArch 上 ollama 可用性需到手实测：
-1. **首选**：查麒麟官方源 / ollama 官方是否有 loongarch64 构建（`dnf search ollama` / 官网 release 页）。有则直接装，`ollama pull qwen3:8b && ollama serve`，`.env` 设 `LLM_PROVIDER=ollama`。
-2. **次选**：源码编译 `llama.cpp`（C++，对 LoongArch 友好度高于 Go 生态），下载 Qwen3-8B 的 GGUF 量化权重，用其 OpenAI 兼容 server 暴露端点；把 `OLLAMA_BASE_URL` 指过去即可（本项目走 OpenAI 兼容接口，端点可换）。
-3. **兜底**：`LLM_PROVIDER=deepseek`（需联网）或 `LLM_PROVIDER=mock`（完全离线，跑关键词选工具 + 全部护栏/根因/审计真实逻辑）。**即便本地大模型一时跑不起来，mock 模式保证项目在 LoongArch 上「永远可演示」**——这正是当初设计三档 provider 的目的。
+「国产化」由 **DeepSeek 本身满足**（深度求索，权重开源）——无需在 LoongArch 设备上跑本地大模型。
+本项目**已移除本地 Qwen3-8B 双模式**（8B 在多轮编排+JSON 自愈+CaMeL 隔离阅读协议下指令遵循/JSON
+合法性不足，为对齐它而妥协架构得不偿失；见 dev-log「2026-06-11 移除本地 8B 双模式」）。设备上只需：
+1. **联网演示**：`LLM_PROVIDER=deepseek` + `.env` 填 `DEEPSEEK_API_KEY`（DeepSeek 云端，国产开源）。
+2. **断网演示**：`LLM_PROVIDER=mock`（完全离线，跑关键词选工具 + 全部护栏/根因/审计真实逻辑）。
+   **mock 模式保证项目在 LoongArch 上「永远可演示」**，断网亮点由它承载，不依赖任何本地模型运行时。
+3. **私有化自托管（可选，非答辩必需）**：`LLMProvider` 走 OpenAI 兼容接口、不与厂商耦合——把
+   `DEEPSEEK_BASE_URL` 指向自托管的 OpenAI 兼容网关（如更大参数的国产模型推理服务）即可数行接入，
+   不再绑定某个特定的本地小模型与某种运行时（ollama/llama.cpp）。
 
 ## 5. 风险与回退一览
 
@@ -110,7 +115,7 @@ pytest -q                                                     # 全套回归（�
 | psutil 无 wheel | `pip install psutil` 编译报错 | 系统包 `python3-psutil`（策略 A）；再不行按报错补 `python3-devel` 后源码编译 |
 | pydantic-core 编不过 | 缺 Rust / Rust 过旧 | 装 `rust cargo`；系统包 `python3-pydantic`；极端情况评估降级 pydantic v1（需改少量 `BaseModel` 用法，最后手段） |
 | uvicorn[standard] 编不过 | uvloop/watchfiles 报错 | 去掉 `[standard]`，`--loop asyncio --http h11`（策略 C），功能不受影响 |
-| ollama 无 loongarch 构建 | 装不上 / 跑不起 | llama.cpp 源码编译，或 deepseek 云端，或 mock 离线兜底（§4） |
+| 设备无外网（无法用 deepseek 云端） | 答辩现场断网 | `LLM_PROVIDER=mock` 完全离线兜底，全部护栏/根因/审计真实逻辑照跑（§4）；无需任何本地模型运行时 |
 | 在 LoongArch 上构建前端失败 | node/vite 工具链问题 | 不在设备上构建，x86 出 `dist/` 拷过去托管（§1/§3） |
 | 系统 Python 版本偏低 | `python3 --version` < 3.11 | 优先用麒麟提供的较高版本；或放宽个别语法（项目用到 3.10+ 的 `X | Y` 类型标注，需 3.10+）；必要时源码装 Python 3.11 |
 | 离线/内网无法 pip | 无外网 | x86 上 `pip download` 仅得 x86 wheel **不通用**；改为：①尽量用系统包；②在另一台同架构 LoongArch 机器上 build 出 wheelhouse 带过去 |
@@ -124,7 +129,7 @@ pytest -q                                                     # 全套回归（�
 - [ ] `/tools` 列出 15 个 MCP 工具
 - [ ] `python scripts/demo.py --provider mock --auto` 七幕全过、exit 0
 - [ ] `pytest -q` 全套通过（回填通过数与耗时）
-- [ ] 本地 LLM（ollama / llama.cpp）可用性结论：______
+- [ ] `LLM_PROVIDER=deepseek` 联网可用性结论（设备能否访问 api.deepseek.com）：______
 - [ ] 前端 `dist/` 托管后页面可访问、对话/规则库/回放三抽屉正常
 
 > 以上每项的实测结果即课程报告「第5章 系统部署」与软件杯「部署文档」的一手素材。

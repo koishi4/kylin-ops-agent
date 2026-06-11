@@ -4,10 +4,10 @@
 > 原则：先骨架跑通闭环（哪怕功能少），再逐项加深。永远保持"可演示"状态。
 
 ## 第 1 周（6/1–6/7）：骨架 + 闭环
-- [x] 本地环境搭好（WSL2 Ubuntu，Python3.11、Node）；Ollama+Qwen3-8B 待装（答辩用，非阻塞）
+- [x] 本地环境搭好（WSL2 Ubuntu，Python3.11、Node）
 - [ ] 申请麒麟虚机（QQ群1092135086 群文件），拿到后记录访问方式 ← 仍需人工尽快办
 - [x] FastAPI 后端骨架 + 健康检查接口（/health /tools /chat）
-- [x] LLM 抽象层：deepseek / ollama 双 provider + mock 离线兜底，配置开关切换
+- [x] LLM 抽象层：deepseek（国产开源）provider + mock 离线兜底，配置开关切换；`LLMProvider` ABC 不与厂商耦合，任一 OpenAI 兼容端点可数行接入（本地 8B 双模式已移除，见 dev-log 2026-06-11）
 - [x] MCP Server 起一个，封装 3 个只读工具（disk_usage、list_processes、memory_info），stdio 暴露
 - [x] 最小闭环：前端发一句话 → LLM 选工具 → 返回结果（先不带护栏），已端到端验证通过
 - [x] Vue3 前端：一个对话框 + 消息流（含思维链回放折叠面板，npm build 通过）
@@ -28,7 +28,7 @@
 
 ## 第 4 周（6/22–6/30）：麒麟部署 + 文档 + 演示
 - [ ] 在麒麟 V11 + LoongArch 虚机上部署，适配国产环境
-- [ ] 本地 Qwen3 跑通整条链路（答辩断网演示用）
+- [x] ~~本地 Qwen3 跑通整条链路（答辩断网演示用）~~ 已决：移除本地 8B 双模式（国产化由 DeepSeek 国产开源满足，断网演示由 mock 兜底；见 dev-log 2026-06-11）
 - [ ] 录制 7 分钟演示视频（按官方场景脚本：清理垃圾→发现大日志→识别关键性→权限校验→避免崩溃）
 - [ ] 生成 9 项软件杯初赛文档
 - [ ] 生成软件工程课程报告（≥15页，合工大格式，用 se-report-docx skill）

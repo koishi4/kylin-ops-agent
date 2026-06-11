@@ -29,10 +29,13 @@
 - **后端**：Python 3.11 + FastAPI（B/S 架构的 S 端）
 - **MCP**：官方 `mcp` Python SDK，工具层独立成 MCP Server，用 stdio/SSE 与后端通信
 - **系统采集**：`psutil` + 封装 `lsof`/`netstat`/`journalctl`/`df`/`ss` 等命令
-- **大模型**：双模式，通过 `LLM_PROVIDER` 环境变量切换
-  - `deepseek`：云端 API，开发与录屏默认用它（效果稳）
-  - `ollama`：本地 Qwen3-8B，答辩现场用它（国产化加分、断网可演）
-  - 两套都要保留并测通，这是创新分与文档亮点
+- **大模型**：`deepseek`（云端 API，国产开源，开发/演示/录屏默认）+ `mock`（离线确定性桩，无 key/无网/CI），通过 `LLM_PROVIDER` 切换
+  - 「国产化」由 DeepSeek 本身满足（深度求索，权重开源）——**不再挂本地 Qwen3-8B 双模式**。
+    8B 在多轮编排 + JSON 自愈 + CaMeL 隔离阅读这套复杂协议下指令遵循/JSON 合法性断崖式下降，
+    为对齐它而妥协架构得不偿失；故移除（详见 dev-log「2026-06-11 移除本地 8B 双模式」）。
+  - 抽象保留：`llm/provider.py` 的 `LLMProvider` ABC + `_OpenAICompatProvider` 不与厂商耦合，
+    任一 OpenAI 兼容端点（含私有化自托管的国产大模型）改 `DEEPSEEK_BASE_URL` 即可数行接入，
+    国产化/离线诉求按需用「更大的自托管模型」满足，而非牺牲架构去迁就小模型。
 - **前端**：Vue3 + Vite + Element Plus（轻量，B/S 界面）
 - **日志/审计库**：SQLite（无依赖、好部署、麒麟上零配置）
 - **部署目标**：LoongArch 架构 + 麒麟高级服务器版 V11（官方发放虚机）

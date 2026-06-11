@@ -1465,3 +1465,35 @@ privilege 的用户/口令管理正则按子串匹配，`/etc/passwd` 里的 "pa
 **收尾**：全量 **2529 passed**（计数不变：删旧断言同时加等量新契约断言）；内置红队 **88/88**
 （命令级，未受影响）；holdout v5 sealed=True 不变。本轮是**方向性纠偏**——把明文匹配从「冒充安全」
 纠正回「辅助路由」，既消除「检查提权风险」这类误杀，也不丢任何真实防护（防护本就在架构与产物侧）。
+
+---
+
+## 2026-06-11 移除本地 8B 双模式（删除风险源，而非缓解风险）
+
+**触发**：第三方评审「二.2 云端开发/本地演示模型切换风险」——开发用 DeepSeek，答辩切本地
+Qwen3-8B（图国产化加分 + 断网可演）。评审指出：本项目 Orchestrator 复杂（多轮工具调用 + JSON 格式
+自愈 + CaMeL 隔离阅读两段式），DeepSeek 能稳定遵循复杂 prompt / 输出合法 JSON，但 **8B 级本地模型在
+零样本复杂约束下指令遵循能力断崖式下降**，若不全程在 8B 上对齐测试，答辩现场大概率因非法 JSON / 死循环
+直接崩。
+
+**决策（项目所有者拍板）**：不"缓解"这条风险，而是**直接删除风险源**——移除本地 8B 双模式。理由：
+1. **「国产化」DeepSeek 本身已满足**：深度求索出品、权重开源，国产化一项无需另挂本地小模型。
+2. **企业真做国产化也不会部署 8B**：要么 DeepSeek-V3/R1 级、要么更大的自托管模型，8B 不是生产形态。
+3. **为对齐小模型牺牲架构不值**：若保留 8B，势必为迁就它而简化多轮编排 / CaMeL 隔离 / JSON 协议——
+   用架构性能换一个不会上生产的演示档位，得不偿失。删掉它，答辩链路上不再出现脆弱小模型。
+
+**整改动作**：
+- 代码：`llm/provider.py` 删 `OllamaProvider`；`get_llm()` 去 ollama 分支；模块/类 docstring 重写为
+  「deepseek（国产开源）+ mock 两模式」。`config.py` 删 `ollama_base_url/ollama_model` 两项配置。
+  `.env.example` 删 OLLAMA_* 两行。`backend/scripts/demo.py`、`scripts/nl_eval.py` 去 ollama 提及。
+- **抽象刻意保留**：`LLMProvider` ABC + `_OpenAICompatProvider` 不与厂商耦合——任一 OpenAI 兼容端点
+  （含**私有化自托管的更大国产模型**）改 `DEEPSEEK_BASE_URL` 即可数行接入。即「不绑定某个特定本地小
+  模型」，而非「不能本地/私有化」。断网演示由 **mock** 兜底（全部护栏/根因/审计真实逻辑照跑）。
+- 文档同步：`CLAUDE.md §3`、`README`、`总方案.md`（决策表/安装步/风险表/待办）、`roadmap.md`、
+  `security-design.md`（双通道→去 ollama 档）、`deploy-loongarch.md §4`（国产化运行时整节重写）、
+  `nl-robustness.md`、`系统可扩展性与未来工作.md` 全部改为新口径。**历史记录不改写**（本 dev-log 旧条目、
+  `IMPROVEMENTS.md` 的部署说明保留为时点记录）；`赛题.md` 是**官方赛题原文**（引用「DeepSeek, Qwen3」）
+  亦不改。
+
+**收尾**：移除后全量 **2529 passed**（无测试依赖 ollama，删除零回归）；import 冒烟通过；
+`grep -i ollama/qwen` 代码侧 0 命中。这条评审风险由此**根除**而非缓解。

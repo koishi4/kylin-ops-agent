@@ -3,7 +3,7 @@
 
 为什么需要它：
   test_nl_robustness 跑在 MockProvider（关键词路由）上——它测的是「编排管道接没接对」，
-  以及 mock 自己的关键词表，**与 deepseek/qwen 实际选不选对工具无关**。于是评分②（核心子项）
+  以及 mock 自己的关键词表，**与 deepseek 实际选不选对工具无关**。于是评分②（核心子项）
   在整个测试体系里没有任何针对真实模型的量化数字。本脚本补上这个洞：用一份**带标准答案**的
   自然语言语料（含口语/迂回/多义表述 + 不该调工具的对照），驱动**产品真实的编排闭环**
   （真 Orchestrator + 真 MCP 子进程 + 真 LLM），度量「一句话 → 选对工具」的 top-1 准确率。
@@ -21,7 +21,7 @@
 
 诚实约束：
   - provider=mock 时分数**没有意义**（mock 是确定性关键词路由），脚本会显著告警并在报告里标注
-    provider，绝不把 mock 分数冒充成②的真实能力。要量②请用 LLM_PROVIDER=deepseek 或 ollama。
+    provider，绝不把 mock 分数冒充成②的真实能力。要量②请用 LLM_PROVIDER=deepseek。
   - 真模型有抽样波动：报告记录 provider/model/时间戳，分数是「某次、某模型」的快照，不是恒定常数。
     失败用例**如实列出**（含模型实际调了什么工具），不挑好看的报。
 
@@ -177,7 +177,7 @@ def print_report(rep: dict) -> None:
     print("=" * 72)
     if rep["is_mock"]:
         print("⚠⚠ provider=mock（确定性关键词路由）——以下分数【不代表②的真实能力】，仅验流水线。")
-        print("    要量②真实准确率，请 LLM_PROVIDER=deepseek（或 ollama）后重跑。")
+        print("    要量②真实准确率，请 LLM_PROVIDER=deepseek 后重跑。")
     print(f"provider={rep['provider']}  model={rep['model']}  时间={rep['generated_at']}")
     print(f"\n总体 top-1 工具选择准确率：{rep['top1_correct']}/{rep['total']} = "
           f"{rep['top1_accuracy']:.1%}")

@@ -14,17 +14,15 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
 class Settings(BaseSettings):
-    # 大模型切换：deepseek（云端，开发默认）/ ollama（本地，答辩用）/ mock（离线测试）
+    # 大模型切换：deepseek（云端，国产开源，开发/演示默认）/ mock（离线确定性桩，CI/测试）。
+    # DeepSeek 本身即国产且权重开源，「国产化」无需另挂本地小模型即满足；如需私有化自托管，
+    # 任一 OpenAI 兼容端点改 deepseek_base_url 即可复用 DeepSeekProvider（见 llm/provider.py）。
     llm_provider: str = "deepseek"
 
-    # DeepSeek 云端（OpenAI 兼容）
+    # DeepSeek 云端（OpenAI 兼容）。base_url 可指向私有化/自托管的 OpenAI 兼容网关。
     deepseek_api_key: str = ""
     deepseek_model: str = "deepseek-chat"
     deepseek_base_url: str = "https://api.deepseek.com"
-
-    # 本地 Ollama（Qwen3-8B，OpenAI 兼容端点）
-    ollama_base_url: str = "http://localhost:11434/v1"
-    ollama_model: str = "qwen3:8b"
 
     # 审计库（第 3 周接入思维链溯源）
     audit_db: str = "./audit.sqlite"

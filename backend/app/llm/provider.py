@@ -1,8 +1,13 @@
-"""LLM 抽象层：deepseek（云端）/ ollama（本地 Qwen3）/ mock（离线测试）三模式。
-通过 LLM_PROVIDER 切换。开发录屏用 deepseek，答辩断网用 ollama，CI/测试用 mock。
-这是项目「国产化 + 可离线」创新点的代码落点。
+"""LLM 抽象层：deepseek（云端，国产开源）/ mock（离线测试）两模式，通过 LLM_PROVIDER 切换。
+开发与演示用 deepseek，CI / 无网 / 测试用 mock。
 
-统一接口 chat(messages, tools) -> dict（OpenAI message 结构，含可能的 tool_calls）。
+国产化定位：DeepSeek 本身即国产（深度求索）且权重开源，「国产化」一项无需另挂本地小模型即满足。
+本层刻意只与 `LLMProvider` ABC（统一 chat(messages, tools) -> dict，OpenAI message 结构含
+tool_calls）耦合、不与具体厂商或部署形态绑定：任何 OpenAI 兼容端点（云端 DeepSeek、私有化自托管的
+国产大模型，乃至本地推理服务）都可在 `_OpenAICompatProvider` 上以数行接入——故意不内置某个特定的
+本地小模型 provider，避免为对齐其薄弱的指令遵循/JSON 合法性而牺牲多轮编排架构（见 dev-log
+「2026-06-11 移除本地 8B 双模式」）。
+
 提供 async achat 包装，供 FastAPI 异步路由调用，避免阻塞事件循环。
 """
 from __future__ import annotations
@@ -29,7 +34,8 @@ class LLMProvider(ABC):
 
 
 class _OpenAICompatProvider(LLMProvider):
-    """DeepSeek 与 Ollama 都走 OpenAI 兼容接口，逻辑相同，差异仅在 base_url/key/model。"""
+    """DeepSeek 及任何 OpenAI 兼容端点（含私有化自托管的国产大模型）共用此实现，
+    逻辑相同，差异仅在 base_url/key/model——新增一个端点只需子类化并填这三项。"""
 
     def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
         self.client = OpenAI(api_key=api_key, base_url=base_url)
@@ -53,7 +59,7 @@ class DeepSeekProvider(_OpenAICompatProvider):
         if not s.deepseek_api_key:
             raise RuntimeError(
                 "未配置 DEEPSEEK_API_KEY。请在 backend/.env 填写，"
-                "或设 LLM_PROVIDER=ollama / mock。"
+                "或设 LLM_PROVIDER=mock 走离线确定性桩。"
             )
         super().__init__(
             api_key=s.deepseek_api_key,
@@ -62,23 +68,11 @@ class DeepSeekProvider(_OpenAICompatProvider):
         )
 
 
-class OllamaProvider(_OpenAICompatProvider):
-    """本地 Ollama 跑 Qwen3-8B。答辩 / 离线演示用，国产化加分。"""
-
-    def __init__(self) -> None:
-        s = get_settings()
-        super().__init__(
-            api_key="ollama",  # 占位，本地端点不校验
-            base_url=s.ollama_base_url,
-            model=s.ollama_model,
-        )
-
-
 class MockProvider(LLMProvider):
     """离线 Mock：不连任何模型，用关键词规则模拟「选工具」。
 
     目的：无 key / 无网 / CI 也能跑通整条闭环与测试，保证项目永远可演示。
-    规则极简，仅覆盖第 1 周的 3 个只读工具；真实推理交给 deepseek/ollama。
+    规则极简，仅覆盖第 1 周的 3 个只读工具；真实推理交给 deepseek。
     """
 
     KEYWORD_TOOL = [
@@ -122,8 +116,6 @@ class MockProvider(LLMProvider):
 
 def get_llm() -> LLMProvider:
     provider = get_settings().llm_provider.lower()
-    if provider == "ollama":
-        return OllamaProvider()
     if provider == "mock":
         return MockProvider()
     return DeepSeekProvider()
