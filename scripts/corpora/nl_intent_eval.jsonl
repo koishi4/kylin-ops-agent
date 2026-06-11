@@ -1,0 +1,42 @@
+{"id": "nl-disk-1", "family": "disk_usage", "utterance": "帮我看看磁盘还剩多少空间", "expected_tools": ["disk_usage"]}
+{"id": "nl-disk-2", "family": "disk_usage", "utterance": "根分区现在用了百分之多少了？", "expected_tools": ["disk_usage"]}
+{"id": "nl-disk-3", "family": "disk_usage", "utterance": "磁盘是不是快满了，帮我确认下", "expected_tools": ["disk_usage"]}
+{"id": "nl-large-1", "family": "find_large_files", "utterance": "找出最占地方的那几个大文件", "expected_tools": ["find_large_files"]}
+{"id": "nl-large-2", "family": "find_large_files", "utterance": "是什么东西把磁盘撑满了，给我揪出来", "expected_tools": ["find_large_files", "disk_usage"]}
+{"id": "nl-large-3", "family": "find_large_files", "utterance": "/var 下面哪些文件特别大", "expected_tools": ["find_large_files"]}
+{"id": "nl-dirsize-1", "family": "dir_size", "utterance": "/var/log 这个目录整体有多大", "expected_tools": ["dir_size", "find_large_files"]}
+{"id": "nl-dirsize-2", "family": "dir_size", "utterance": "算一下 /home 占了多少空间", "expected_tools": ["dir_size", "disk_usage"]}
+{"id": "nl-mem-1", "family": "memory_info", "utterance": "内存还够用吗", "expected_tools": ["memory_info"]}
+{"id": "nl-mem-2", "family": "memory_info", "utterance": "现在 swap 用了多少", "expected_tools": ["memory_info"]}
+{"id": "nl-mem-3", "family": "memory_info", "utterance": "剩余可用内存还有多少", "expected_tools": ["memory_info"]}
+{"id": "nl-load-1", "family": "system_load", "utterance": "系统负载高不高", "expected_tools": ["system_load"]}
+{"id": "nl-load-2", "family": "system_load", "utterance": "CPU 现在忙不忙", "expected_tools": ["system_load", "list_processes"]}
+{"id": "nl-load-3", "family": "system_load", "utterance": "看下 load average 是多少", "expected_tools": ["system_load"]}
+{"id": "nl-uptime-1", "family": "uptime_info", "utterance": "这台机器开机多久了", "expected_tools": ["uptime_info"]}
+{"id": "nl-uptime-2", "family": "uptime_info", "utterance": "系统已经连续运行多长时间了", "expected_tools": ["uptime_info"]}
+{"id": "nl-svc-1", "family": "service_status", "utterance": "nginx 服务还活着吗", "expected_tools": ["service_status"]}
+{"id": "nl-svc-2", "family": "service_status", "utterance": "sshd 现在是什么状态", "expected_tools": ["service_status"]}
+{"id": "nl-proc-1", "family": "list_processes", "utterance": "哪个进程最吃 CPU", "expected_tools": ["list_processes"]}
+{"id": "nl-proc-2", "family": "list_processes", "utterance": "占内存最多的进程是哪个", "expected_tools": ["list_processes"]}
+{"id": "nl-proc-3", "family": "list_processes", "utterance": "给我列一下当前在跑的进程", "expected_tools": ["list_processes"]}
+{"id": "nl-zombie-1", "family": "find_zombie_processes", "utterance": "系统里有没有僵尸进程", "expected_tools": ["find_zombie_processes"]}
+{"id": "nl-zombie-2", "family": "find_zombie_processes", "utterance": "有没有 defunct 状态的死进程没回收", "expected_tools": ["find_zombie_processes"]}
+{"id": "nl-pdetail-1", "family": "process_detail", "utterance": "看看 PID 1234 这个进程的详细信息", "expected_tools": ["process_detail"]}
+{"id": "nl-pdetail-2", "family": "process_detail", "utterance": "进程 4567 到底是干什么的", "expected_tools": ["process_detail"]}
+{"id": "nl-ports-1", "family": "list_listening_ports", "utterance": "现在有哪些端口在监听", "expected_tools": ["list_listening_ports"]}
+{"id": "nl-ports-2", "family": "list_listening_ports", "utterance": "本机开了哪些对外监听的服务", "expected_tools": ["list_listening_ports"]}
+{"id": "nl-checkport-1", "family": "check_port", "utterance": "本机 80 端口现在通不通", "expected_tools": ["check_port", "list_listening_ports"]}
+{"id": "nl-checkport-2", "family": "check_port", "utterance": "帮我确认下 443 端口开没开", "expected_tools": ["check_port", "list_listening_ports"]}
+{"id": "nl-tail-1", "family": "tail_log", "utterance": "看看 /var/log/nginx/error.log 最后几行写了啥", "expected_tools": ["tail_log"]}
+{"id": "nl-tail-2", "family": "tail_log", "utterance": "把 /var/log/syslog 末尾的内容给我看看", "expected_tools": ["tail_log"]}
+{"id": "nl-journal-1", "family": "query_journal", "utterance": "用 journalctl 查下 sshd 最近的日志", "expected_tools": ["query_journal"]}
+{"id": "nl-journal-2", "family": "query_journal", "utterance": "systemd 日志里 nginx 最近有什么报错", "expected_tools": ["query_journal", "tail_log"]}
+{"id": "nl-lsof-1", "family": "list_open_files", "utterance": "哪个进程打开了 /var/log/app.log", "expected_tools": ["list_open_files"]}
+{"id": "nl-lsof-2", "family": "list_open_files", "utterance": "谁在占用 /data/db/main.db 这个文件", "expected_tools": ["list_open_files"]}
+{"id": "nl-vuln-1", "family": "query_vuln_intel", "utterance": "最近内核有什么高危 CVE", "expected_tools": ["query_vuln_intel"]}
+{"id": "nl-vuln-2", "family": "query_vuln_intel", "utterance": "openssl 有没有已知漏洞情报", "expected_tools": ["query_vuln_intel"]}
+{"id": "nl-posture-1", "family": "kernel_posture", "utterance": "当前内核的安全姿态怎么样", "expected_tools": ["kernel_posture"]}
+{"id": "nl-posture-2", "family": "kernel_posture", "utterance": "帮我检查下有没有 Dirty Pipe 那类提权风险", "expected_tools": ["kernel_posture", "query_vuln_intel"]}
+{"id": "nl-none-1", "family": "none", "utterance": "你好，你是谁呀", "expected_tools": []}
+{"id": "nl-none-2", "family": "none", "utterance": "谢谢，辛苦了", "expected_tools": []}
+{"id": "nl-none-3", "family": "none", "utterance": "今天北京天气怎么样", "expected_tools": []}
