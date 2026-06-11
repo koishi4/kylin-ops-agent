@@ -20,7 +20,14 @@ _PRIV_PATTERNS = [
     (r"(^|[\s;&|])(sudo|su)(\s|$)", "显式 sudo/su 提权"),
     (r"\b(systemctl|service)\s+(start|stop|restart|reload|enable|disable)\b", "管理 systemd 服务"),
     (r"\b(apt|apt-get|yum|dnf|dpkg|rpm)\s+(install|remove|purge|update|upgrade)\b", "包管理改动系统"),
-    (r"\b(useradd|userdel|usermod|groupadd|passwd)\b", "管理用户/用户组/口令"),
+    # 用户/口令管理动词**只在命令位**才算提权（命令首位 / 分隔符后 / sudo·su·doas 之后）。
+    # 修复实测误杀：旧式 `\bpasswd\b` 会命中**路径** /etc/passwd 里的子串 "passwd"，把 `stat /etc/passwd`、
+    # `cat /etc/passwd` 这类只读误判为「改口令」需提权而拦下。命令位锚定后，`passwd root`/`sudo passwd`/
+    # `usermod -aG ...` 仍被识别，而把 passwd 当**路径操作数**读取的只读命令不再误伤。
+    # 残留权衡：经全路径调用的 `/usr/bin/passwd root` 不被此条命中（罕见），但 rules.py 的 PRIV-* 红线
+    # （篡改 sudoers / useradd -u0）仍覆盖最严重形态——此处只为消除高频误杀，不放松红线。
+    (r"(?:^\s*|[;&|]\s*|\b(?:sudo|su|doas)\s+)(useradd|userdel|usermod|groupadd|passwd)\b",
+     "管理用户/用户组/口令"),
     (r"\b(mount|umount|fdisk|parted|mkfs)\b", "挂载/分区/格式化"),
     (r"\b(iptables|nft|ufw|firewall-cmd)\b", "改防火墙规则"),
     (r">\s*/(etc|boot|usr|sys|proc)/", "写入系统关键目录"),
