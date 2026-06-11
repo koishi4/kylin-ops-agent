@@ -9,10 +9,14 @@ description: 在为运维 Agent 新增或封装一个 MCP 工具（OS 感知、�
 要把一个系统能力（看进程、查端口、读日志、查磁盘、清理文件…）变成 Agent 能调用的 MCP Tool 时。
 
 ## 工具分级（必须标注）
-每个工具用装饰器或元数据标注读写级别，护栏据此决定是否需要二次确认：
-- `READONLY`：只读，不改变系统状态（如 list_processes、disk_usage）。默认放行。
-- `MUTATING`：会改变系统状态（如 kill_process、clean_file）。必须经过护栏校验。
-- `PRIVILEGED`：需要提权。默认拒绝，仅在显式授权 + 护栏放行后执行。
+每个工具用装饰器或元数据标注读写级别。**本项目的结构性不变量：注册进 MCP 的工具一律 READONLY**
+（见 CLAUDE.md §4.0、`guardrail/trifecta.py`、`tests/test_e2e_injection.py`）——这是「注入再成功也炸不了
+系统」的架构保证。扩工具时**不要破坏它**：别把会改状态的能力注册成 MCP 工具。
+- `READONLY`：只读，不改变系统状态（如 list_processes、disk_usage）。**MCP 工具只允许这一类**，默认放行。
+- `MUTATING` / `PRIVILEGED`：会改状态 / 需提权的处置**不走 MCP 工具**，而是 `truncate_log` / `kill_process` /
+  `clean_path` 三个**白名单参数化动作**——它们**不在 MCP 注册表里**（LLM 无法当工具调用），只能由用户经
+  `/action/execute` 显式触发、强制二次确认，命令经 executor 出口过 防线2 + 最小权限校验。
+  （这两级标签是给**动作层**用的语义，不对应任何 MCP 工具。）
 
 ## 标准结构（每个工具一个文件，放 `backend/app/mcp_server/tools/`）
 
@@ -67,9 +71,12 @@ def run_cmd(args: list[str], timeout: int = 10) -> dict:
 不要直接抛异常给 Agent，要返回结构化错误，便于 LLM 理解和根因分析。
 
 ## 与护栏对接
-- READONLY 工具：注册时标记 auto_approve=True
-- MUTATING/PRIVILEGED 工具：调用前必须经 `guardrail.check()`，返回放行才执行
-- 工具被护栏拦截时，返回 `{"ok": false, "blocked": true, "reason": "..."}`
+- MCP 工具（全 READONLY）：注册时标记 auto_approve=True，无需逐次护栏校验（只读无副作用，能力 ≤2 腿）。
+- 状态变更不在 MCP 这层发生：3 个白名单动作经 `/action/execute` → executor 出口 → 防线2 命令规则 +
+  最小权限校验；被拦时返回 `{"ok": false, "blocked": true, "reason": "..."}`。
+- 新增工具若**确实**需要副作用，先回到 CLAUDE.md §4.0：能否拆成「只读查询 + 已有动作」的组合？不能，
+  再考虑扩**动作白名单**（参数化、强制二次确认、走 executor），而**不是**加一个 MUTATING MCP 工具——
+  那会打破「感知路径全只读」的结构性不变量。
 
 ## 测试要求（直接进课程报告测试章节）
 每个工具配 `tests/test_<tool>.py`：
