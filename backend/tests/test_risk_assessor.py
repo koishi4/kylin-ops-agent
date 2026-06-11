@@ -64,13 +64,18 @@ class TestAssessRiskMerge:
         assert a.blocked is False
 
     def test_rules_cannot_be_overruled_by_ai(self):
-        """规则判黑(拒绝)时，即便 AI 说放行，也必须保持拒绝（LLM 不能翻案）。"""
+        """命令级规则判黑(拒绝)时，即便 AI 说放行，也必须保持拒绝（LLM 不能翻案）。
+
+        注：意图层 2026-06-11 起不再对破坏话术明文判黑（明文匹配可被 base64/小语种/GCG 绕开、
+        对正常运维词误杀）。规则侧确定性的 DENY 来自**命令产物侧**的 防线2（realpath+AST+效果），
+        混淆到这一步已被「编译掉」——这正是「明文匹配在产物侧才有牙」之处。本用例据此驱动 DENY。
+        """
         llm = _AssessLLM({"risk_level": "low", "suspected_intent": "无害",
                           "reasons": ["看起来没问题"], "recommend": "allow"})
-        a = assess_risk("把整个系统全部删掉", llm=llm)
-        assert a.rule_verdict == Verdict.DENY
+        a = assess_risk("帮我清理一下", command="rm -rf /", llm=llm)
+        assert a.rule_verdict == Verdict.DENY         # 命令级护栏（防线2）判黑
         assert a.ai_verdict == Verdict.ALLOW
-        assert a.final_verdict == Verdict.DENY        # 取更严：规则兜底
+        assert a.final_verdict == Verdict.DENY        # 取更严：命令级护栏兜底，AI 不能翻案
         assert a.upgraded is False
         assert a.blocked is True
 
