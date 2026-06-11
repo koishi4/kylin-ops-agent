@@ -1526,3 +1526,30 @@ CLAUDE.md 明令禁止的「为便利牺牲架构」。故只做**保真不破�
 **收尾**：`test_taint_enforcement` / `test_e2e_injection` / `test_tool_limits` 全绿（截断断言用常量、
 READER_SYSTEM 测的是身份非措辞，两处改动均不破契约）。隔离的**强度不变**，只是隔离后交给规划器的
 派生摘要**信息更全**。
+
+---
+
+## 2026-06-11 新增多步推理基准 agentic_eval（评审 三.1 整改：补 nl_eval 测不到的盲区）
+
+**触发**：第三方评审「三.1」——肯定 `nl_eval._SchemaOnlyMCP` 用 stub 隔离执行噪声测「选对工具」很专业，
+但也指出：stub 返回 `{"ok":True,"stub":True}`、模型拿不到**真实中间状态**（如 df 的具体占用率），所以它
+**只测单步 top-1**；真实运维「df 满 → 自主找大文件 → 给结论」这种**多轮推理链**是客观盲区，未被度量。
+
+**整改**：新增 `scripts/agentic_eval.py` + `scripts/corpora/agentic_chain_eval.jsonl`（5 个场景）。
+- **`_ScenarioMCP`（关键创新）**：复用真实 MCP **schema**（与评委所见一致），但执行换成**剧本化真实态
+  桩**——按每条用例的 `world` 返回**确定、有信息**的系统态（磁盘 95.7% 满、java 吃 38% 内存、nginx
+  端口冲突 `bind() … Address already in use`、mysql 被 OOM kill……）。这正是 nl_eval 的无信息 stub
+  给不了的：模型据**有意义的中间结果**自主决定下一步，多步链才被真正驱动。剧本化 → 确定可复现、零系统
+  副作用（不依赖被测机当时是否真故障）。
+- **评链不评单步**：①`chain_ok`——期望链（每步可给"任一即可"工具集，吸收 find_large_files/dir_size
+  之类合理歧义）是实际调用序列的**有序子列**（顺序对、允许中间穿插）；②`multi_step`——不同工具数 ≥
+  场景下限，**证明没停在第一步**；pass = 两者且无错。期望链 + 剧本世界**逐条写在语料**，与实现分离、可审。
+- **诚实约束同 nl_eval**：mock 拿到结果即收尾、结构上不多步，分数无意义 → 显著告警 + 退出码 2，绝不
+  冒充多步能力；真模型用 `LLM_PROVIDER=deepseek`。报告记 provider/model/时间戳，失败用例含实际调用序列。
+
+**自检**：mock 冒烟跑通全管道——`mem-hog` 正确判 fail（mock 调了 `memory_info` 但**未**链到
+`list_processes`，multi_step=False），恰好印证评分逻辑能区分单步/多步。真模型多步链由用户配 deepseek 跑
+（与 nl_eval 一样是真模型快照基准，不进 CI）。报告默认输出已纳入 `.gitignore`。
+
+> 方法论一致性：这条**不是**往护栏堆东西，而是补**测量盲区**——把「多轮推理链能力」从"没测"变成
+> "有确定、可复现、诚实标注的量化基准"，直接强化评分②（交互准确性）与④（根因分析）的证据链。
