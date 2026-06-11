@@ -346,6 +346,69 @@ def _split_verb_args(words: list[str]) -> tuple[str, list[str]]:
     return verb, args
 
 
+# --------------------------------------------------------------------------- #
+# 命令承载型包装器（command-carrying wrappers）：真正执行的是其后的「内嵌命令」          #
+# --------------------------------------------------------------------------- #
+# 与 sudo/env/nice 这类「纯前缀」包装器（_SKIP_WORDS，剥掉即可）不同，xargs/timeout/
+# watch/flock 会先吃掉**自己的旗标与定位实参**，其后才是真正被执行的命令。若不解开，
+# `xargs shred /boot/vmlinuz`、`watch -n1 truncate -s 0 /etc/hostname`、`xargs -I{} rm -rf /root`
+# 的销毁动词会被包装器名挡在效果分析之外（自测发现的真盲区：rm 正则恰好覆盖不到这些路径/动词时即漏）。
+#
+# 安全方向（保「误杀率 0%」）：解开只会让内嵌命令的效果**被看见**，而效果是否升级仍由
+# `_critical_or_none`（落在关键区才升级）把关——解错（吃多/吃少 token）至多让内嵌动词错位、
+# 归集不到效果，退化为「与改动前一致、不升级」，绝不会凭空误杀。
+#
+# 每个包装器需声明：① 哪些旗标会「再吃一个独立取值」（value-flags）；② 旗标之后还要吞掉几个
+# 「定位实参」（timeout 的 DURATION、flock 的锁文件/fd）才到内嵌命令。
+_CARRIER_VALUE_FLAGS: dict[str, set[str]] = {
+    "xargs": {"-a", "--arg-file", "-d", "--delimiter", "-E", "-I", "--replace",
+              "-i", "-L", "--max-lines", "-l", "-n", "--max-args",
+              "-P", "--max-procs", "-s", "--max-chars"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "watch": {"-n", "--interval"},
+    "flock": {"-w", "--timeout", "-E", "--conflict-exit-code"},
+}
+# 包装器在自身旗标之后、内嵌命令之前还要吞掉的「定位实参」个数。
+_CARRIER_SKIP_POSITIONAL: dict[str, int] = {"timeout": 1, "flock": 1}
+
+
+def _carrier_inner_args(verb: str, args: list[str]) -> list[str]:
+    """解开命令承载型包装器，返回其后「内嵌命令」的词序列（连同内嵌命令的动词与参数）。
+
+    跳过包装器自身的旗标（value-flag 连同其独立取值一并跳过；`-I{}`、`-n2`、`--max-args=2`
+    等带附值/合并写法的旗标自含取值，跳一个即可），再吞掉声明的定位实参个数。非包装器返回 []。
+    """
+    vflags = _CARRIER_VALUE_FLAGS.get(verb)
+    if vflags is None:
+        return []
+    i, n = 0, len(args)
+    while i < n and args[i].startswith("-"):
+        if args[i] in vflags and i + 1 < n:   # 形如 `-n 2`：旗标与取值分离，跳两个
+            i += 2
+        else:                                  # 形如 `-rf`/`-I{}`/`--max-args=2`：自含，跳一个
+            i += 1
+    for _ in range(_CARRIER_SKIP_POSITIONAL.get(verb, 0)):
+        if i < n:
+            i += 1
+    return args[i:]
+
+
+def _unwrap_carriers(verb: str, args: list[str], _depth: int = 0) -> tuple[str, list[str]]:
+    """若 verb 是命令承载型包装器，递归解开到真正被执行的内嵌命令的 (verb, args)。
+
+    递归处理嵌套包装（`timeout 5 xargs rm -rf /root`）；深度封顶防御异常输入。非包装器原样返回。
+    """
+    if _depth >= 4 or verb not in _CARRIER_VALUE_FLAGS:
+        return verb, args
+    inner = _carrier_inner_args(verb, args)
+    if not inner:
+        return verb, args
+    v2, a2 = _split_verb_args(inner)
+    if not v2 or (v2 == verb and a2 == args):   # 解不出新命令 → 维持原样，绝不空转
+        return verb, args
+    return _unwrap_carriers(v2, a2, _depth + 1)
+
+
 def _plain_path_args(args: list[str]) -> list[str]:
     """取像路径的实参（跳过旗标 -x 与非路径取值）。"""
     return [a for a in args if not a.startswith("-") and _looks_like_path(a)]
@@ -383,6 +446,11 @@ def _collect_command_effects(node, effects: EffectSet, env: dict[str, str]) -> N
     if not words:
         return
     verb, args = _split_verb_args(words)
+    if not verb:
+        return
+    # 命令承载型包装器：真正执行的是其后内嵌命令，解开到内嵌命令再归集效果（egress 仍扫描
+    # 原始 words，故 `timeout 5 nc -e …` 等亦不受影响）。非包装器原样返回，零行为变化。
+    verb, args = _unwrap_carriers(verb, args)
     if not verb:
         return
 
