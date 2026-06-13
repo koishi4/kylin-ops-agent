@@ -1,0 +1,505 @@
+{"id": "nl2bash-0", "family": "benign-exec", "payload": "top -b -d2 -s1 | sed -e '1,/USERNAME/d' | sed -e '1,/^$/d'"}
+{"id": "nl2bash-100", "family": "benign-exec", "payload": "yes 1 | command"}
+{"id": "nl2bash-1000", "family": "benign-exec", "payload": "find . -name '*.php' -type f | xargs wc -l"}
+{"id": "nl2bash-10000", "family": "benign-exec", "payload": "mkdir -p foo"}
+{"id": "nl2bash-10025", "family": "benign-exec", "payload": "find . -name bad -empty -delete"}
+{"id": "nl2bash-10050", "family": "benign-exec", "payload": "find . -size +1024 ?print|xargs -i rm \\;"}
+{"id": "nl2bash-10075", "family": "benign-exec", "payload": "find . -type f -name \"*.txt\" -delete"}
+{"id": "nl2bash-10100", "family": "benign-exec", "payload": "find . -type f -name “k*.*” -mmin -360 -exec ls -l ‘{}’ ; | xargs -0 /bin/rm -f"}
+{"id": "nl2bash-10125", "family": "benign-exec", "payload": "find . -name  * -exec ls -a {} \\;"}
+{"id": "nl2bash-10150", "family": "benign-exec", "payload": "find -type d"}
+{"id": "nl2bash-10175", "family": "benign-exec", "payload": "find . > files_and_folders"}
+{"id": "nl2bash-10200", "family": "benign-exec", "payload": "find . -maxdepth 0"}
+{"id": "nl2bash-10225", "family": "benign-exec", "payload": "find -name \"*.htm\" | while read file; do sed \"s|<title>sometext</title>|<title>${file##*/}</title>|g\" -i $file; done"}
+{"id": "nl2bash-1025", "family": "benign-exec", "payload": "cat *.txt | wc -l"}
+{"id": "nl2bash-10250", "family": "benign-exec", "payload": "find image-folder/ -type f"}
+{"id": "nl2bash-10275", "family": "benign-exec", "payload": "find . -name \".txt\""}
+{"id": "nl2bash-10300", "family": "benign-exec", "payload": "find /etc -name '*.conf'"}
+{"id": "nl2bash-10325", "family": "benign-exec", "payload": "find /home/david -name 'index*'"}
+{"id": "nl2bash-10350", "family": "benign-exec", "payload": "find /usr -perm 0777 -print"}
+{"id": "nl2bash-10375", "family": "benign-exec", "payload": "find . ! -path  \"*.git*\" -type f -print"}
+{"id": "nl2bash-10400", "family": "benign-exec", "payload": "find . -mtime -1"}
+{"id": "nl2bash-10425", "family": "benign-exec", "payload": "find / -newer ttt -user wnj -print"}
+{"id": "nl2bash-10450", "family": "benign-exec", "payload": "find ~ -name 'arrow*'"}
+{"id": "nl2bash-10475", "family": "benign-exec", "payload": "find . -mtime -7 -name \"*.html\" -print"}
+{"id": "nl2bash-1050", "family": "benign-exec", "payload": "find . -name '*.js' -or -name '*.php' | xargs wc -l | grep 'total'  | awk '{ SUM += $1; print $1} END { print \"Total text lines in PHP and JS\",SUM }'"}
+{"id": "nl2bash-10500", "family": "benign-exec", "payload": "find . -type f -user tom"}
+{"id": "nl2bash-10525", "family": "benign-exec", "payload": "find . -name mmm -prune -o -type f -print"}
+{"id": "nl2bash-10550", "family": "benign-exec", "payload": "find -name “*.txt”"}
+{"id": "nl2bash-10575", "family": "benign-exec", "payload": "find $HOME/projects/ -name \".*\" -ls > foo.txt"}
+{"id": "nl2bash-10600", "family": "benign-exec", "payload": "find | head"}
+{"id": "nl2bash-10625", "family": "benign-exec", "payload": "find . -type f | wc -l"}
+{"id": "nl2bash-10650", "family": "benign-exec", "payload": "find . -type f -name \"*.txt\" ! -path \"./Movies/*\" ! -path \"./Downloads/*\" ! -path \"./Music/*\" -ls"}
+{"id": "nl2bash-10675", "family": "benign-exec", "payload": "find --version"}
+{"id": "nl2bash-10700", "family": "benign-exec", "payload": "find originals -name '*.jpg' | xargs -1 makeallsizes"}
+{"id": "nl2bash-10725", "family": "benign-exec", "payload": "find /tmp/foo -path /tmp/foo/bar -print /tmp/foo/bar"}
+{"id": "nl2bash-1075", "family": "benign-exec", "payload": "find . -type d -print|sed 's@^@/usr/project/@'|xargs mkdir -p"}
+{"id": "nl2bash-10750", "family": "benign-exec", "payload": "find -daystart -mtime 2"}
+{"id": "nl2bash-10775", "family": "benign-exec", "payload": "find /home/pat -iname \"*.conf\""}
+{"id": "nl2bash-10800", "family": "benign-exec", "payload": "find  / -name \"apt\""}
+{"id": "nl2bash-10825", "family": "benign-exec", "payload": "find . -size +1M -ok mv {} files \\+"}
+{"id": "nl2bash-10850", "family": "benign-exec", "payload": "find . -mmin +10 -print"}
+{"id": "nl2bash-10875", "family": "benign-exec", "payload": "find / -newer /tmp/checkpoint"}
+{"id": "nl2bash-10900", "family": "benign-exec", "payload": "find . -type d ! -perm -111"}
+{"id": "nl2bash-10925", "family": "benign-exec", "payload": "find / -name foo.bar -print -xdev"}
+{"id": "nl2bash-10950", "family": "benign-exec", "payload": "find /somepath -type f -iregex \".*\\.(pdf\\|tif\\|tiff\\|png\\|jpg\\|jpeg\\|bmp\\|pcx\\|dcx)\" ! -name \"*_ocr.pdf\" -print0"}
+{"id": "nl2bash-10975", "family": "benign-exec", "payload": "find . -name \"*.png\" -print0 | xargs -0 mogrify -format jpg -quality 50"}
+{"id": "nl2bash-1100", "family": "benign-exec", "payload": "find /foo -maxdepth 1 -type f ! -name 'runscript*' -exec ln -s {} /bar/tmp/ \\;"}
+{"id": "nl2bash-11000", "family": "benign-exec", "payload": "find pathfolder -type f  2> err.txt | wc -l"}
+{"id": "nl2bash-11025", "family": "benign-exec", "payload": "find . -name '*.text' -exec $SHELL -c '[ ! -f ${1%.*} ]' $SHELL '{}' ';' -print"}
+{"id": "nl2bash-11050", "family": "benign-exec", "payload": "find /home/pat -iname \"*.conf\""}
+{"id": "nl2bash-11075", "family": "benign-exec", "payload": "find . -type d -print"}
+{"id": "nl2bash-11100", "family": "benign-exec", "payload": "find . -type d -empty"}
+{"id": "nl2bash-11125", "family": "benign-exec", "payload": "find . -name \"*rb\" -print0 | xargs -0 head -10000"}
+{"id": "nl2bash-11150", "family": "benign-exec", "payload": "find . -exec chmod 775 {} \\;"}
+{"id": "nl2bash-11175", "family": "benign-exec", "payload": "find $PWD -exec echo -n '\"{}\" ' \\; | tr '\\n' ' '"}
+{"id": "nl2bash-11200", "family": "benign-exec", "payload": "find . -writable"}
+{"id": "nl2bash-11225", "family": "benign-exec", "payload": "find . -name 'cache*' -depth -exec rm {} \\;"}
+{"id": "nl2bash-1125", "family": "benign-exec", "payload": "ln -s \"$wh\" wh"}
+{"id": "nl2bash-11250", "family": "benign-exec", "payload": "find / -group root | head"}
+{"id": "nl2bash-11275", "family": "benign-exec", "payload": "find ./machbook -exec chown 184 {} \\;"}
+{"id": "nl2bash-11300", "family": "benign-exec", "payload": "find $HOME -mtime -7"}
+{"id": "nl2bash-11325", "family": "benign-exec", "payload": "find . -type f -mtime -1"}
+{"id": "nl2bash-11350", "family": "benign-exec", "payload": "find /mp3-collection -name 'Metallica*' -and -size +10000k"}
+{"id": "nl2bash-11375", "family": "benign-exec", "payload": "find . -mtime -7 -name \"*.html\""}
+{"id": "nl2bash-11400", "family": "benign-exec", "payload": "find . -name \"*.mp3\" -exec mv {} \"/Users/sir/Music//iTunes/iTunes Media/Automatically Add to iTunes.localized/\" \\;"}
+{"id": "nl2bash-11425", "family": "benign-exec", "payload": "find -name '*.patch' -print0 | xargs -0 -I {} cp {} patches/"}
+{"id": "nl2bash-11450", "family": "benign-exec", "payload": "find . -name \"*.py\" -type f > output.txt"}
+{"id": "nl2bash-11475", "family": "benign-exec", "payload": "find . -uid +500 -uid -1000 -type f"}
+{"id": "nl2bash-1150", "family": "benign-exec", "payload": "find -name \"bar\" -execdir touch foo \\;"}
+{"id": "nl2bash-11500", "family": "benign-exec", "payload": "find . -name \"*.txt\" -printf \"%M %f \\t %s bytes \\t%y\\n\""}
+{"id": "nl2bash-11525", "family": "benign-exec", "payload": "find /dump -type f -name '*.xml' -exec java -jar ProcessFile.jar {} \\;"}
+{"id": "nl2bash-11550", "family": "benign-exec", "payload": "find /users/al -name Cookbook -type d"}
+{"id": "nl2bash-11575", "family": "benign-exec", "payload": "find / -name game"}
+{"id": "nl2bash-11600", "family": "benign-exec", "payload": "find . -iname foo -type f"}
+{"id": "nl2bash-11625", "family": "benign-exec", "payload": "md5sum file*.txt"}
+{"id": "nl2bash-11650", "family": "benign-exec", "payload": "find -iname \"MyCProgram.c\""}
+{"id": "nl2bash-11675", "family": "benign-exec", "payload": "find . -type f -print0 | xargs -0 ls -ltr | head -n 1"}
+{"id": "nl2bash-11700", "family": "benign-exec", "payload": "find /tmp -size 0 -atime +10 -exec rm -f {} \\;"}
+{"id": "nl2bash-11725", "family": "benign-exec", "payload": "sudo su - jenkins"}
+{"id": "nl2bash-1175", "family": "benign-exec", "payload": "mkdir -p /my/other/path/here"}
+{"id": "nl2bash-11750", "family": "benign-exec", "payload": "find /home/user/Desktop -name '*.pdf' -o -name '*.txt' -o -name '*.bmp'"}
+{"id": "nl2bash-11775", "family": "benign-exec", "payload": "find . 2>/dev/null > files_and_folders"}
+{"id": "nl2bash-11800", "family": "benign-exec", "payload": "find . -empty -exec ls {} \\;"}
+{"id": "nl2bash-11825", "family": "benign-exec", "payload": "find $directory -type l -printf \"%p$IFS\""}
+{"id": "nl2bash-11850", "family": "benign-exec", "payload": "find /path/to/dir -type d -exec chmod 755 {} \\;"}
+{"id": "nl2bash-11875", "family": "benign-exec", "payload": "nice -10 `alias list | sed \"s/^\\(alias \\)\\?[^=]\\+='//; s/'$//;\"`"}
+{"id": "nl2bash-11900", "family": "benign-exec", "payload": "git status | head -1 | cut -d ' ' -f 3"}
+{"id": "nl2bash-11925", "family": "benign-exec", "payload": "chown -R owner:owner public_html"}
+{"id": "nl2bash-11950", "family": "benign-exec", "payload": "find /home -name core -exec rm {} \\;"}
+{"id": "nl2bash-11975", "family": "benign-exec", "payload": "find . | xargs perl -p -i.old -e 's/oldstring/newstring/g'"}
+{"id": "nl2bash-1200", "family": "benign-exec", "payload": "find /home/folder2/*.txt -type f -exec ln -s {} \\;"}
+{"id": "nl2bash-12000", "family": "benign-exec", "payload": "su $username -c tar xzvf .."}
+{"id": "nl2bash-12025", "family": "benign-exec", "payload": "sudo su elasticsearch -c './bin/elasticsearch -d --default.path.conf=/etc/elasticsearch'"}
+{"id": "nl2bash-12050", "family": "benign-exec", "payload": "find /  -links 2 -print"}
+{"id": "nl2bash-12075", "family": "benign-exec", "payload": "find . -name “*.[php|PHP]” -print | xargs grep -HnT “specified string”"}
+{"id": "nl2bash-12100", "family": "benign-exec", "payload": "find . -name \"file_*\" -follow -type f -print0 | xargs -0 zcat | agrep -dEOE 'grep'"}
+{"id": "nl2bash-12125", "family": "benign-exec", "payload": "find -maxdepth 1 -type f | xargs grep -F 'example'"}
+{"id": "nl2bash-12150", "family": "benign-exec", "payload": "find . -type f \\( -iname \"*.c\" -or -iname \"*.asm\" \\)"}
+{"id": "nl2bash-12175", "family": "benign-exec", "payload": "find . -size +10k -exec ls -lS {} \\+ | head -1"}
+{"id": "nl2bash-12200", "family": "benign-exec", "payload": "find /data/images -newer /tmp/foo"}
+{"id": "nl2bash-12225", "family": "benign-exec", "payload": "find . -type f -exec cat {} \\;"}
+{"id": "nl2bash-1225", "family": "benign-exec", "payload": "TMPPS_PREFIX=$(mktemp \"${TMPDIR:-/tmp/}${tempname}.XXXXXX\")"}
+{"id": "nl2bash-12250", "family": "benign-exec", "payload": "find ./test -type d -name '[0-9][0-9][0-9][0-9][0-9]'"}
+{"id": "nl2bash-12275", "family": "benign-exec", "payload": "find . -name photoA.jpg photoB.jpg photoC.jpg"}
+{"id": "nl2bash-12300", "family": "benign-exec", "payload": "find / -type d -name \"ora10*\""}
+{"id": "nl2bash-12325", "family": "benign-exec", "payload": "find / -name filename"}
+{"id": "nl2bash-12350", "family": "benign-exec", "payload": "find / -type f -iname \"Dateiname\""}
+{"id": "nl2bash-12375", "family": "benign-exec", "payload": "find $HOME/html/andrews-corner -exec grep -q 'slrn' '{}' \\; -print"}
+{"id": "nl2bash-12400", "family": "benign-exec", "payload": "find / -name core -print | xargs echo > /tmp/core.log"}
+{"id": "nl2bash-12425", "family": "benign-exec", "payload": "alias cats='konqueror http:'//icanhazcheezburger.com''"}
+{"id": "nl2bash-12450", "family": "benign-exec", "payload": "alias logspace='find /apps/ /opt/ -type f -size +100M -exec ls -lh {} \\; |  awk '\\''{print $5, $9 }'\\'''"}
+{"id": "nl2bash-12475", "family": "benign-exec", "payload": "alias unix='echo $(date +%s)'"}
+{"id": "nl2bash-125", "family": "benign-exec", "payload": "KEY+=`date -r \"$arg\" +\\ %s`"}
+{"id": "nl2bash-1250", "family": "benign-exec", "payload": "mktemp -dt \"$(basename $0).XXXXXXXXXX\""}
+{"id": "nl2bash-12500", "family": "benign-exec", "payload": "find ."}
+{"id": "nl2bash-12525", "family": "benign-exec", "payload": "find . -type f -exec ls -s {} \\; | sort -n -r | head -10"}
+{"id": "nl2bash-12550", "family": "benign-exec", "payload": "ls | split -l 500 - outputXYZ."}
+{"id": "nl2bash-12575", "family": "benign-exec", "payload": "find . -wholename './src/emacs' -prune -print -o -print"}
+{"id": "nl2bash-12600", "family": "benign-exec", "payload": "find . -regextype sed -regex \".*/[a-f0-9\\-]\\{36\\}\\.jpg\""}
+{"id": "nl2bash-1275", "family": "benign-exec", "payload": "tr -d \"\\n\\r\" < yourfile.txt"}
+{"id": "nl2bash-1300", "family": "benign-exec", "payload": "find . -depth -name '__temp__*' -exec rm -rf '{}' \\;"}
+{"id": "nl2bash-1325", "family": "benign-exec", "payload": "find -type d -empty -exec rmdir -vp --ignore-fail-on-non-empty {} `;`"}
+{"id": "nl2bash-1350", "family": "benign-exec", "payload": "find . -exec /bin/rm {} \\;"}
+{"id": "nl2bash-1375", "family": "benign-exec", "payload": "find . -inum $inum -exec rm {} \\;"}
+{"id": "nl2bash-1400", "family": "benign-exec", "payload": "sed -i.bak '/pattern to match/d' ./infile"}
+{"id": "nl2bash-1425", "family": "benign-exec", "payload": "find . -name heapdump*|xargs rm"}
+{"id": "nl2bash-1450", "family": "benign-exec", "payload": "find /var/tmp/stuff -mtime +90 -execdir /bin/rm {} \\+"}
+{"id": "nl2bash-1475", "family": "benign-exec", "payload": "find /tmp/*/* -mtime +7 -type d -exec rmdir {} \\;"}
+{"id": "nl2bash-150", "family": "benign-exec", "payload": "rsync -avz --ignore-existing /source folder/* user@remoteserver:/dstfolder/"}
+{"id": "nl2bash-1500", "family": "benign-exec", "payload": "php -i | more"}
+{"id": "nl2bash-1525", "family": "benign-exec", "payload": "objdump -x `which tail`"}
+{"id": "nl2bash-1550", "family": "benign-exec", "payload": "diff -x '*.foo' -x '*.bar' -x '*.baz' /destination/dir/1 /destination/dir/2"}
+{"id": "nl2bash-1575", "family": "benign-exec", "payload": "file ascii.txt"}
+{"id": "nl2bash-1600", "family": "benign-exec", "payload": "tree -p -u -g -f -i"}
+{"id": "nl2bash-1625", "family": "benign-exec", "payload": "find home/magie/d2 -type f -perm -u+rx | wc -l"}
+{"id": "nl2bash-1650", "family": "benign-exec", "payload": "find . -type f -exec echo {} \\; | wc -l"}
+{"id": "nl2bash-1675", "family": "benign-exec", "payload": "pstree -p `pgrep pppd`"}
+{"id": "nl2bash-1700", "family": "benign-exec", "payload": "echo 'hi' | od -c"}
+{"id": "nl2bash-1725", "family": "benign-exec", "payload": "shopt -s failglob"}
+{"id": "nl2bash-175", "family": "benign-exec", "payload": "rsync -avz -e \"ssh -p $portNumber\" user@remoteip:/path/to/files/ /local/path/"}
+{"id": "nl2bash-1750", "family": "benign-exec", "payload": "find build -not \\( -path build/external -prune \\) -name \\*.js"}
+{"id": "nl2bash-1775", "family": "benign-exec", "payload": "watch 'ls -l'"}
+{"id": "nl2bash-1800", "family": "benign-exec", "payload": "watch -n1200 \"xbacklight -set 0% && sleep 20 && xbacklight -set 100%\""}
+{"id": "nl2bash-1825", "family": "benign-exec", "payload": "ssh \"$USER@$SERVER\" \"$cmd_str\""}
+{"id": "nl2bash-1850", "family": "benign-exec", "payload": "true | xargs false"}
+{"id": "nl2bash-1875", "family": "benign-exec", "payload": "comm -3 <(sort file1) <(sort file2)"}
+{"id": "nl2bash-1900", "family": "benign-exec", "payload": "find . -name \"*.txt\" 2>>/dev/null"}
+{"id": "nl2bash-1925", "family": "benign-exec", "payload": "cd /var/cron/tabs && grep -vH ^# *"}
+{"id": "nl2bash-1950", "family": "benign-exec", "payload": "find . \\( -path '*/.*' -prune -o ! -name '.*' \\) -a -name '*.[ch]'"}
+{"id": "nl2bash-1975", "family": "benign-exec", "payload": "find . -name '*2011*' -print | xargs -n2 grep 'From: Ralph'"}
+{"id": "nl2bash-200", "family": "benign-exec", "payload": "rsync symdir/ symdir_output/ -a --copy-links -v"}
+{"id": "nl2bash-2000", "family": "benign-exec", "payload": "find / -perm +2000"}
+{"id": "nl2bash-2025", "family": "benign-exec", "payload": "find . -mtime +7 -name \"G*.html\""}
+{"id": "nl2bash-2050", "family": "benign-exec", "payload": "find -name *.bmp -type f -exec convert '{}' '{}'.jpg \\;"}
+{"id": "nl2bash-2075", "family": "benign-exec", "payload": "find ./ -name '*.epub' -o -name '*.mobi' -o -name '*.chm' -o -name '*.rtf' -o -name '*.lit' -o -name '*.djvu'"}
+{"id": "nl2bash-2100", "family": "benign-exec", "payload": "find /home/www -name \"*.java\" -type f -print0 | xargs -0 sed -i 's/subdomainA\\.example\\.com/subdomainB.example.com/g'"}
+{"id": "nl2bash-2125", "family": "benign-exec", "payload": "find /home/family/Music -name '*.m4a' -print0 | xargs -0 -i ffmpeg -i {} -acodec libvorbis -aq 6 -vn -ac 2 {}.ogg"}
+{"id": "nl2bash-2150", "family": "benign-exec", "payload": "find . -name \"*.mpg\" -type f -print0 | xargs -0 -I {} -n 1 -P 4 ffmpeg -i {} {}.mp4"}
+{"id": "nl2bash-2175", "family": "benign-exec", "payload": "find ./ -name \"*.plist\""}
+{"id": "nl2bash-2200", "family": "benign-exec", "payload": "find . -type f -name \"*.so\" -exec sh -c \"echo {} && readelf -s {} | grep mysymbol\" \\;"}
+{"id": "nl2bash-2225", "family": "benign-exec", "payload": "find /mnt/msdos  -name \"*.txt\" 2> /dev/null"}
+{"id": "nl2bash-225", "family": "benign-exec", "payload": "screen -S lynx lynx"}
+{"id": "nl2bash-2250", "family": "benign-exec", "payload": "find . -name \\*.txt -exec process {} +"}
+{"id": "nl2bash-2275", "family": "benign-exec", "payload": "find /root/of/where/files/are -name *Company*"}
+{"id": "nl2bash-2300", "family": "benign-exec", "payload": "find /usr -name *stat"}
+{"id": "nl2bash-2325", "family": "benign-exec", "payload": "find . -name “*.jpg”"}
+{"id": "nl2bash-2350", "family": "benign-exec", "payload": "find . -name '*.sql' -exec scriptname {} +"}
+{"id": "nl2bash-2375", "family": "benign-exec", "payload": "find . -depth -name '*.zip' -exec /usr/bin/unzip -n {} \\; -delete"}
+{"id": "nl2bash-2400", "family": "benign-exec", "payload": "find . -type d -perm 777 -print -exec chmod 755 {} \\;"}
+{"id": "nl2bash-2425", "family": "benign-exec", "payload": "find . -name Makefile -print0 | xargs -0 grep -nH $ | grep :235:"}
+{"id": "nl2bash-2450", "family": "benign-exec", "payload": "find / -perm /g=s"}
+{"id": "nl2bash-2475", "family": "benign-exec", "payload": "find -L . -type l"}
+{"id": "nl2bash-25", "family": "benign-exec", "payload": "top -p \"$(pgrep --newest ProgramName)\""}
+{"id": "nl2bash-250", "family": "benign-exec", "payload": "screen -L bash -c '(while :; do tail ~/screenlog.0 | grep -o \"[0-9]*%\" | tail -1; done | zenity --progress --auto-close &); 7z a \"output.zip\" \"/path/to/input\"'"}
+{"id": "nl2bash-2500", "family": "benign-exec", "payload": "find /home -mindepth 1 -maxdepth 1 -type d -name '*[aeiou][aeiou]*' -printf '*' | wc -c"}
+{"id": "nl2bash-2525", "family": "benign-exec", "payload": "find /path/to/look/in/ -type d | grep .texturedata"}
+{"id": "nl2bash-2550", "family": "benign-exec", "payload": "find / -type d -name \"*99966*\" -print 2>/dev/null"}
+{"id": "nl2bash-2575", "family": "benign-exec", "payload": "find /home -type d ! -exec test -e '{}/bin' \\; -print"}
+{"id": "nl2bash-2600", "family": "benign-exec", "payload": "find  /root -type d -iname \"*linux*\""}
+{"id": "nl2bash-2625", "family": "benign-exec", "payload": "find . -type d -a ! -name '.?*' -o -name '.?*' -a ! -prune"}
+{"id": "nl2bash-2650", "family": "benign-exec", "payload": "find ~/code -type d | tr '\\n' ':' | sed 's/:$//'"}
+{"id": "nl2bash-2675", "family": "benign-exec", "payload": "find . -maxdepth 1 -type f -empty -delete"}
+{"id": "nl2bash-2700", "family": "benign-exec", "payload": "find . -name headdump* >delete.txt"}
+{"id": "nl2bash-2725", "family": "benign-exec", "payload": "find . ! -name \"$controlchars\""}
+{"id": "nl2bash-275", "family": "benign-exec", "payload": "md5=\"$(md5sum \"${my_iso_file}\")\""}
+{"id": "nl2bash-2750", "family": "benign-exec", "payload": "find \"$dir\" -maxdepth 1 -type f | sed 's#.*/#   #'"}
+{"id": "nl2bash-2775", "family": "benign-exec", "payload": "find /tmp/foo -exec /tmp/echoargs {} +"}
+{"id": "nl2bash-2800", "family": "benign-exec", "payload": "find . -print | grep -i foo"}
+{"id": "nl2bash-2825", "family": "benign-exec", "payload": "find -type f -name .git -prune -o -print"}
+{"id": "nl2bash-2850", "family": "benign-exec", "payload": "find ${directory} -name \"${pattern}\" -print0 | xargs -0 ${my_command}"}
+{"id": "nl2bash-2875", "family": "benign-exec", "payload": "cat `find . -name aaa.txt`"}
+{"id": "nl2bash-2900", "family": "benign-exec", "payload": "find / -wholename  '/proc' -prune  -o  -type f -perm -0002 -exec ls -l {} \\;"}
+{"id": "nl2bash-2925", "family": "benign-exec", "payload": "find -not -user www-data"}
+{"id": "nl2bash-2950", "family": "benign-exec", "payload": "find \"$1\" -path \"*/.*\" -prune -o \\( -type f -print0 \\)"}
+{"id": "nl2bash-2975", "family": "benign-exec", "payload": "find /home/myfolder -type f -print0 | xargs -0 grep -l -E 'abc.*def.*ghi'"}
+{"id": "nl2bash-300", "family": "benign-exec", "payload": "find -maxdepth 1 -type f -exec md5sum {} \\; | sed 's/[^(]*(\\([^)]*\\)) =/\\1/'"}
+{"id": "nl2bash-3000", "family": "benign-exec", "payload": "find /path/to/file -type f -size +51200c 2>/dev/null"}
+{"id": "nl2bash-3025", "family": "benign-exec", "payload": "find . -type f | wc -l"}
+{"id": "nl2bash-3050", "family": "benign-exec", "payload": "find . -depth -path './.*' -prune -o -print"}
+{"id": "nl2bash-3075", "family": "benign-exec", "payload": "find . -type f -ctime -3 | tail -n 5"}
+{"id": "nl2bash-3100", "family": "benign-exec", "payload": "find . -type f | xargs -I {} chmod --reference {} ../version1/{}"}
+{"id": "nl2bash-3125", "family": "benign-exec", "payload": "find -L /home/peter -name *~ -print0 |xargs -0 -r rm"}
+{"id": "nl2bash-3150", "family": "benign-exec", "payload": "find $dir -mtime +3"}
+{"id": "nl2bash-3175", "family": "benign-exec", "payload": "find . -exec myscript {} +"}
+{"id": "nl2bash-3200", "family": "benign-exec", "payload": "find . -regex \".*\\\\.rb$\""}
+{"id": "nl2bash-3225", "family": "benign-exec", "payload": "find . -name foo -type d -prune -o -name foo"}
+{"id": "nl2bash-325", "family": "benign-exec", "payload": "seq 10 | jq -s 'add'"}
+{"id": "nl2bash-3250", "family": "benign-exec", "payload": "find / -name vimrc"}
+{"id": "nl2bash-3275", "family": "benign-exec", "payload": "find / \\( -newer ttt -or -user wnj\t\\) -print"}
+{"id": "nl2bash-3300", "family": "benign-exec", "payload": "find \"$1\" -perm -u+x -print0 | xargs chmod g+x"}
+{"id": "nl2bash-3325", "family": "benign-exec", "payload": "find /var/log -daystart -mtime 0"}
+{"id": "nl2bash-3350", "family": "benign-exec", "payload": "find /path/to/files/* -printf \"%TY%Tm%Td%TH%TM%TS|%p|%l\" -exec stat -Lc \"|%y\" {} \\; | sed -r \"s/(.*\\|)([0-9]{4})\\-([0-9]{2})\\-([0-9]{2}) ([0-9]{2})\\:([0-9]{2})\\:([0-9]{2}\\.[0-9]{9}).*/\\1\\2\\3\\4\\5\\6\\7/g\""}
+{"id": "nl2bash-3375", "family": "benign-exec", "payload": "find -exec <script> {}\\;"}
+{"id": "nl2bash-3400", "family": "benign-exec", "payload": "find . -not -path '*/\\.*'"}
+{"id": "nl2bash-3425", "family": "benign-exec", "payload": "find .|grep \"FooBar\"|yargs -l 203 cp --after ~/foo/bar"}
+{"id": "nl2bash-3450", "family": "benign-exec", "payload": "find -name \"*.js\" -not -path \"./directory/*\""}
+{"id": "nl2bash-3475", "family": "benign-exec", "payload": "find -inum 16187430 -exec mv {} new-test-file-name \\"}
+{"id": "nl2bash-350", "family": "benign-exec", "payload": "echo ',s/foo/bar/g; w' | tr \\; '\\012' | ed -s file.txt"}
+{"id": "nl2bash-3500", "family": "benign-exec", "payload": "find . -type f -name \".*\""}
+{"id": "nl2bash-3525", "family": "benign-exec", "payload": "find . -type f -name \".*"}
+{"id": "nl2bash-3550", "family": "benign-exec", "payload": "find /var/www -type f -name \"*.html\""}
+{"id": "nl2bash-3575", "family": "benign-exec", "payload": "find ./ -daystart -mtime -3 -type f  ! -mtime -1  -printf '%Tm %p\\n'"}
+{"id": "nl2bash-3600", "family": "benign-exec", "payload": "find . -type f -print | xargs grep -i 'bin/ksh'"}
+{"id": "nl2bash-3625", "family": "benign-exec", "payload": "find $DIR/tmp/daily/ -type f -printf \"%p\\n\" | sort -rn | head -n 2 | xargs -I{} cp {} $DIR/tmp/weekly/"}
+{"id": "nl2bash-3650", "family": "benign-exec", "payload": "find /somepath -type f -iregex \".*\\.(pdf\\|tif\\|tiff\\|png\\|jpg\\|jpeg\\|bmp\\|pcx\\|dcx)\" ! -name \"*_ocr.pdf\" -print0"}
+{"id": "nl2bash-3675", "family": "benign-exec", "payload": "find /data -type f -perm 400 -print"}
+{"id": "nl2bash-3700", "family": "benign-exec", "payload": "find \"/proc/$pid/fd\" -ignore_readdir_race -lname \"$save_path/sess_\\*\" -exec touch -c {}"}
+{"id": "nl2bash-3725", "family": "benign-exec", "payload": "find / -perm 2644"}
+{"id": "nl2bash-375", "family": "benign-exec", "payload": "find . -name \"*.css\" -exec sed -i -r 's/#(FF0000|F00)\\b/#0F0/' {} \\;"}
+{"id": "nl2bash-3750", "family": "benign-exec", "payload": "find / -name vimrc"}
+{"id": "nl2bash-3775", "family": "benign-exec", "payload": "find / -mtime 50"}
+{"id": "nl2bash-3800", "family": "benign-exec", "payload": "find . -type f -mtime +31 -print0 | xargs -0 -r rm -f"}
+{"id": "nl2bash-3825", "family": "benign-exec", "payload": "find /home -xdev -samefile file1 -print0 | xargs -0 rm"}
+{"id": "nl2bash-3850", "family": "benign-exec", "payload": "find . -type f -exec perl -pi -e 's|xxx|yyy|g' {} ;"}
+{"id": "nl2bash-3875", "family": "benign-exec", "payload": "find . -type f -and -iname \"*.deb\" | xargs -n 1 dpkg -I"}
+{"id": "nl2bash-3900", "family": "benign-exec", "payload": "find /home/user/workspace -mindepth 1 -maxdepth 1 -type d -mtime +30 -execdir echo \"It seems that {} wasn't modified during last 30 days\" ';'"}
+{"id": "nl2bash-3925", "family": "benign-exec", "payload": "find . -perm -100 -print"}
+{"id": "nl2bash-3950", "family": "benign-exec", "payload": "find /path/to/search -user owner"}
+{"id": "nl2bash-3975", "family": "benign-exec", "payload": "find . -newer /bin/sh"}
+{"id": "nl2bash-400", "family": "benign-exec", "payload": "find -perm 777 | xargs -I@ sudo chmod 755 '@'"}
+{"id": "nl2bash-4000", "family": "benign-exec", "payload": "find esofthub esoft -name \"*test*\" -type f -ls"}
+{"id": "nl2bash-4025", "family": "benign-exec", "payload": "find /tmp -name core -type f -print0 | xargs -0 /bin/rm -f"}
+{"id": "nl2bash-4050", "family": "benign-exec", "payload": "find . -name \"pattern\" -print"}
+{"id": "nl2bash-4075", "family": "benign-exec", "payload": "find /etc/ -mtime -30 | xargs -0 cp /a/path"}
+{"id": "nl2bash-4100", "family": "benign-exec", "payload": "find ${userdir}/${i}/incoming -mtime +2 -type f -exec rm {} \\;"}
+{"id": "nl2bash-4125", "family": "benign-exec", "payload": "find ${userdir}/${i}/incoming -mtime +2 -type f -size +200557600c -ls"}
+{"id": "nl2bash-4150", "family": "benign-exec", "payload": "find / -name photo.jpg"}
+{"id": "nl2bash-4175", "family": "benign-exec", "payload": "find . -print0 | xargs    -0 echo"}
+{"id": "nl2bash-4200", "family": "benign-exec", "payload": "find / -name grub.conf 2>/dev/null"}
+{"id": "nl2bash-4225", "family": "benign-exec", "payload": "find / -path /proc -prune -o -user account -ls"}
+{"id": "nl2bash-425", "family": "benign-exec", "payload": "find /usr/local -name \"*.html\" -type f -exec chmod 644 {} \\;"}
+{"id": "nl2bash-4250", "family": "benign-exec", "payload": "find . -name .git  -prune -o -name file  -print"}
+{"id": "nl2bash-4275", "family": "benign-exec", "payload": "find /dir/to/search/ -type f -name 'expression -and expression' -print"}
+{"id": "nl2bash-4300", "family": "benign-exec", "payload": "find ./ -user root"}
+{"id": "nl2bash-4325", "family": "benign-exec", "payload": "find . -name “core” -exec rm -f {} \\;"}
+{"id": "nl2bash-4350", "family": "benign-exec", "payload": "find . -name '*.gz' | xargs gzip -l | tail -n +2 | head -n -1 | sort -k 2 | tail -n 1 | awk '{print $NF}'"}
+{"id": "nl2bash-4375", "family": "benign-exec", "payload": "find ./photos/john_doe -type f -name '*.jpg' -exec du -ch {} + | grep total$"}
+{"id": "nl2bash-4400", "family": "benign-exec", "payload": "ifconfig | grep 192.168.111 | awk '{print $2}'"}
+{"id": "nl2bash-4425", "family": "benign-exec", "payload": "cd $(find . -name Subscription.java | xargs dirname)"}
+{"id": "nl2bash-4450", "family": "benign-exec", "payload": "shopt | grep login"}
+{"id": "nl2bash-4475", "family": "benign-exec", "payload": "find /usr/local -name \"*.html\" -type f -exec chmod 644 {} \\;"}
+{"id": "nl2bash-450", "family": "benign-exec", "payload": "find . -type d -exec chmod u=rwx,g=rx,o= '{}' \\;"}
+{"id": "nl2bash-4500", "family": "benign-exec", "payload": "ln -sfn source_file_or_directory_name softlink_name"}
+{"id": "nl2bash-4525", "family": "benign-exec", "payload": "find . -name '*' | xargs rm"}
+{"id": "nl2bash-4550", "family": "benign-exec", "payload": "cat file | column -t"}
+{"id": "nl2bash-4575", "family": "benign-exec", "payload": "find . -exec printf '%s\\t' {} \\; -exec uuidgen \\; | awk -F '\\t' '{ sub(/.+\\//,\"\", $1); print $2, $1 }' | sort -k2"}
+{"id": "nl2bash-4600", "family": "benign-exec", "payload": "find . -name \"*.rb\" -type f -print0 | xargs -0 -n 2 echo"}
+{"id": "nl2bash-4625", "family": "benign-exec", "payload": "find /home/d -type f -name \"*.txt\" -printf \"%s\\n\" | awk '{s+=$0}END{print \"total: \"s\" bytes\"}'"}
+{"id": "nl2bash-4650", "family": "benign-exec", "payload": "top -l 1 -s 0 -stats mem -pid PID"}
+{"id": "nl2bash-4675", "family": "benign-exec", "payload": "ifconfig | awk -F':' '/inet addr/&&!/127.0.0.1/{split($2,_,\" \");print _[1]}'"}
+{"id": "nl2bash-4700", "family": "benign-exec", "payload": "go=$(dig -x 8.8.8.8| awk '/PTR[[:space:]]/{print $NF}')"}
+{"id": "nl2bash-4725", "family": "benign-exec", "payload": "tmux set-option -g history-limit 10000"}
+{"id": "nl2bash-475", "family": "benign-exec", "payload": "sudo chown hduser:hadoop {directory path}"}
+{"id": "nl2bash-4750", "family": "benign-exec", "payload": "echo `basename \"$filename\"`"}
+{"id": "nl2bash-4775", "family": "benign-exec", "payload": "kill -9 $(lsof -i:3000 -t)"}
+{"id": "nl2bash-4800", "family": "benign-exec", "payload": "yum install ffmpeg-2.6.4-1.fc22.x86_64.rpm"}
+{"id": "nl2bash-4825", "family": "benign-exec", "payload": "join -t, <(sort test.1) <(sort test.2) | join -t, - <(sort test.3) | join -t, - <(sort test.4)"}
+{"id": "nl2bash-4850", "family": "benign-exec", "payload": "grep -o '1.' yourfile | head -n2"}
+{"id": "nl2bash-4875", "family": "benign-exec", "payload": "find <path> -xdev -type f -name *.txt -exec ls -l {} \\;"}
+{"id": "nl2bash-4900", "family": "benign-exec", "payload": "more /etc/hosts | grep `hostname` | awk '{print $1}'"}
+{"id": "nl2bash-4925", "family": "benign-exec", "payload": "find \"$topdir\" -name '*.py' -printf '%h\\0' | xargs -0 -I {} find {} -mindepth 1 -maxdepth 1 -name Makefile -printf '%h\\n' | sort -u"}
+{"id": "nl2bash-4950", "family": "benign-exec", "payload": "find | xargs ls"}
+{"id": "nl2bash-4975", "family": "benign-exec", "payload": "find . -maxdepth 2  -type f -print0 | xargs -0 -n1 ls -l"}
+{"id": "nl2bash-50", "family": "benign-exec", "payload": "find . -name \\*.py | xargs sed -i '1a Line of text here'"}
+{"id": "nl2bash-500", "family": "benign-exec", "payload": "cd foo | cat"}
+{"id": "nl2bash-5000", "family": "benign-exec", "payload": "find $FULFILLMENT -ls"}
+{"id": "nl2bash-5025", "family": "benign-exec", "payload": "find . -print"}
+{"id": "nl2bash-5050", "family": "benign-exec", "payload": "saveIFS=$IFS; IFS=$'\\n'; for dir in $(find -depth -type d ); do [[ ! $prev =~ $dir ]] && echo \"${dir}\" ; prev=\"$dir\"; done; IFS=$saveIFS"}
+{"id": "nl2bash-5075", "family": "benign-exec", "payload": "find ~ -type f -mtime +1825 |xargs -r ls -l"}
+{"id": "nl2bash-5100", "family": "benign-exec", "payload": "env | awk -F \"=\" '{print $1}' | grep \".*X.*\""}
+{"id": "nl2bash-5125", "family": "benign-exec", "payload": "du -smc * | sort -n"}
+{"id": "nl2bash-5150", "family": "benign-exec", "payload": "tree -L 2"}
+{"id": "nl2bash-5175", "family": "benign-exec", "payload": "sort <(cd $CURR_DIR && find . -type f -ctime $FTIME) <(cd $CURR_DIR && find . -type f -atime $FTIME) <(cd $CURR_DIR && find . -type f -mtime $FTIME) | uniq"}
+{"id": "nl2bash-5200", "family": "benign-exec", "payload": "screen -ls"}
+{"id": "nl2bash-5225", "family": "benign-exec", "payload": "crontab -u apache -l"}
+{"id": "nl2bash-525", "family": "benign-exec", "payload": "chgrp target_group target_directory"}
+{"id": "nl2bash-5250", "family": "benign-exec", "payload": "cut -d/ -f1-2 | cut -d/ -f2- | sort | uniq -c"}
+{"id": "nl2bash-5275", "family": "benign-exec", "payload": "ls -1 | perl -l40pe0"}
+{"id": "nl2bash-5300", "family": "benign-exec", "payload": "find /usr/share/doc -name \"copyright\""}
+{"id": "nl2bash-5325", "family": "benign-exec", "payload": "find /var/www -name logo.gif"}
+{"id": "nl2bash-5350", "family": "benign-exec", "payload": "find / -maxdepth 3  -name \"*log\""}
+{"id": "nl2bash-5375", "family": "benign-exec", "payload": "mkdir -p $(seq -f \"weekly.%.0f\" 0 $WEEKS_TO_SAVE)"}
+{"id": "nl2bash-5400", "family": "benign-exec", "payload": "find bugzilla -type d -exec chmod 775 {} \\;"}
+{"id": "nl2bash-5425", "family": "benign-exec", "payload": "xargs -n 1 dirname <somefile.txt | xargs mkdir -p"}
+{"id": "nl2bash-5450", "family": "benign-exec", "payload": "mkdir /tmp/new"}
+{"id": "nl2bash-5475", "family": "benign-exec", "payload": "mkdir -p `file -b --mime-type *|uniq`"}
+{"id": "nl2bash-550", "family": "benign-exec", "payload": "cat *.txt | sort | sort -u -c"}
+{"id": "nl2bash-5500", "family": "benign-exec", "payload": "find /path -iname '*.txt' | perl -lane '$sum += -s $_; END {print $sum}'"}
+{"id": "nl2bash-5525", "family": "benign-exec", "payload": "join -t, in1 in2"}
+{"id": "nl2bash-5550", "family": "benign-exec", "payload": "sudo mount -o loop /dev/loop0 test"}
+{"id": "nl2bash-5575", "family": "benign-exec", "payload": "find $sourcePath -type f -mtime +10 -name \"*.log\" | xargs zip -mT $zipFile -@"}
+{"id": "nl2bash-5600", "family": "benign-exec", "payload": "mv * /foo"}
+{"id": "nl2bash-5625", "family": "benign-exec", "payload": "grep -L -Z -r 'Subject: \\[SPAM\\]' . | xargs -0 -I{} mv {} DIR"}
+{"id": "nl2bash-5650", "family": "benign-exec", "payload": "find . -maxdepth 1 -name \"*.pdf\" -print0 | xargs -0 rm"}
+{"id": "nl2bash-5675", "family": "benign-exec", "payload": "find . -name \"*.c\" -print | vim -"}
+{"id": "nl2bash-5700", "family": "benign-exec", "payload": "awk 'NR==16224, NR==16482' file"}
+{"id": "nl2bash-5725", "family": "benign-exec", "payload": "cat BIG_FILE.txt | less"}
+{"id": "nl2bash-575", "family": "benign-exec", "payload": "find . \\( -name a.out -o -name '*.o' -o -name 'core' \\) -exec rm {} \\;"}
+{"id": "nl2bash-5750", "family": "benign-exec", "payload": "find / -iname TeSt123.txt"}
+{"id": "nl2bash-5775", "family": "benign-exec", "payload": "{ echo foo; cat bar; } | tee bar > /dev/null"}
+{"id": "nl2bash-5800", "family": "benign-exec", "payload": "echo \"deb-src http://ppa.launchpad.net/webupd8team/java/ubuntu precise main\" | tee -a /etc/apt/sources.list"}
+{"id": "nl2bash-5825", "family": "benign-exec", "payload": "if find /some/dir/ -maxdepth 0 -empty | read v; then echo \"Empty dir\"; fi"}
+{"id": "nl2bash-5850", "family": "benign-exec", "payload": "tr -s ' ' < file | cut -d' ' -f4"}
+{"id": "nl2bash-5875", "family": "benign-exec", "payload": "find . -type d -print0"}
+{"id": "nl2bash-5900", "family": "benign-exec", "payload": "echo Aa | od -t x1"}
+{"id": "nl2bash-5925", "family": "benign-exec", "payload": "find sort_test/ -type f | env -i LC_COLLATE=C sort"}
+{"id": "nl2bash-5950", "family": "benign-exec", "payload": "find . -type f -name \"*.*\" | awk -F. '{print $NF}' | sort -u"}
+{"id": "nl2bash-5975", "family": "benign-exec", "payload": "cal -h | cut -c 4-17 | tail -n +3"}
+{"id": "nl2bash-600", "family": "benign-exec", "payload": "find . -name '*.h' -execdir /bin/diff -u '{}' /tmp/master ';'"}
+{"id": "nl2bash-6000", "family": "benign-exec", "payload": "tac file | sed '/pattern/q' | tac"}
+{"id": "nl2bash-6025", "family": "benign-exec", "payload": "od -a -An -v file | perl -0777ne 's/\\n//g,print \"$_\\n \" for /(?:esc| fs| gs| us)?(?:(?!esc| fs| gs| us).)*/gs'"}
+{"id": "nl2bash-6050", "family": "benign-exec", "payload": "comm -12  <(ls one) <(ls two)"}
+{"id": "nl2bash-6075", "family": "benign-exec", "payload": "cat list_part* | sort --unique | wc -l"}
+{"id": "nl2bash-6100", "family": "benign-exec", "payload": "sort file1.txt file2.txt file2.txt | uniq -u"}
+{"id": "nl2bash-6125", "family": "benign-exec", "payload": "find . -name 'my*' -type f -ls"}
+{"id": "nl2bash-6150", "family": "benign-exec", "payload": "file `which file`"}
+{"id": "nl2bash-6175", "family": "benign-exec", "payload": "git symbolic-ref HEAD 2>/dev/null | cut -d\"/\" -f 3"}
+{"id": "nl2bash-6200", "family": "benign-exec", "payload": "seq 1 100000 | sed -n '10000,10010p'"}
+{"id": "nl2bash-6225", "family": "benign-exec", "payload": "mount | awk '/\\/dev\\/sd/ {print NR, $1, $3}'"}
+{"id": "nl2bash-625", "family": "benign-exec", "payload": "gzip */*.txt"}
+{"id": "nl2bash-6250", "family": "benign-exec", "payload": "echo MYVAR | grep -oE '/[^/]+:' | cut -c2- | rev | cut -c2- | rev"}
+{"id": "nl2bash-6275", "family": "benign-exec", "payload": "cat /dev/urandom | tr -dc 'a-zA-Z0-9'"}
+{"id": "nl2bash-6300", "family": "benign-exec", "payload": "find . -printf \"%y %p\\n\""}
+{"id": "nl2bash-6325", "family": "benign-exec", "payload": "yes '' | nl -ba | sed -n -e 11,24p -e 24q"}
+{"id": "nl2bash-6350", "family": "benign-exec", "payload": "uniq"}
+{"id": "nl2bash-6375", "family": "benign-exec", "payload": "md5sum /path/to/destination/file"}
+{"id": "nl2bash-6400", "family": "benign-exec", "payload": "comm -12 <(awk '{print $3}' file1 | sort -u) <(awk '{print $3}' file2 | sort -u)"}
+{"id": "nl2bash-6425", "family": "benign-exec", "payload": "echo \"$(date +%H:%M:%S): done waiting. both jobs terminated on their own or via timeout; resuming script\""}
+{"id": "nl2bash-6450", "family": "benign-exec", "payload": "diff <(fold -w1 <(sed '2q;d' $f)) <(fold -w1 <(sed '3q;d' $f)) | awk '/[<>]/{printf $2}'"}
+{"id": "nl2bash-6475", "family": "benign-exec", "payload": "ls -1 | tr '\\n' ',' | sed 's/,$/\\n/'"}
+{"id": "nl2bash-650", "family": "benign-exec", "payload": "find . -type f  -mtime +7 | tee compressedP.list | xargs -I{} -P10 compress {} &"}
+{"id": "nl2bash-6500", "family": "benign-exec", "payload": "finger `id -un` | head -1 | cut -d: -f3-"}
+{"id": "nl2bash-6525", "family": "benign-exec", "payload": "cat /proc/config.gz | gunzip"}
+{"id": "nl2bash-6550", "family": "benign-exec", "payload": "find /myfiles -type d"}
+{"id": "nl2bash-6575", "family": "benign-exec", "payload": "find . -type d -name .svn -prune -o -print"}
+{"id": "nl2bash-6600", "family": "benign-exec", "payload": "find $(pwd)/* -type f -exec stat -c \"f%15s %n\" {} +"}
+{"id": "nl2bash-6625", "family": "benign-exec", "payload": "history|awk '{$1=\"\";print substr($0,2)}'"}
+{"id": "nl2bash-6650", "family": "benign-exec", "payload": "find ~/code -name '.*' -prune -o -type f -a -perm /u+x -printf ':%h\\n' | sort | uniq | tr -d '\\n'"}
+{"id": "nl2bash-6675", "family": "benign-exec", "payload": "sort file_a file_b|uniq -u"}
+{"id": "nl2bash-6700", "family": "benign-exec", "payload": "diff -q \"$file\" \"${file/${dir1}/${dir2}}\""}
+{"id": "nl2bash-6725", "family": "benign-exec", "payload": "du -ks * | sort -n -r"}
+{"id": "nl2bash-675", "family": "benign-exec", "payload": "ssh -o UserKnownHostsFile=/dev/null username@hostname"}
+{"id": "nl2bash-6750", "family": "benign-exec", "payload": "cal 01 2015 | sed -n '1,2b;/^.\\{6\\} \\{0,1\\}\\([0-9]\\{1,2\\}\\) .*/ {s//0\\1/;s/.*\\([0-9]\\{2\\}\\)$/\\1/p;q;}'"}
+{"id": "nl2bash-6775", "family": "benign-exec", "payload": "cp --help"}
+{"id": "nl2bash-6800", "family": "benign-exec", "payload": "find . -type f -printf '%T@ %p\\n' | sort -n | tail -1 | cut -f2- -d\" \" | sed 's/.*/\"&\"/' | xargs ls -l"}
+{"id": "nl2bash-6825", "family": "benign-exec", "payload": "echo \"Number files in SEARCH PATH with EXTENSION:\" $(ls -1 \"${SEARCHPATH}\"/*.\"${EXTENSION}\" | wc -l)"}
+{"id": "nl2bash-6850", "family": "benign-exec", "payload": "pstree -a \"$PID\""}
+{"id": "nl2bash-6875", "family": "benign-exec", "payload": "echo `cat $FILE | head -n 100 | wc -c` / 1024 | bc -l"}
+{"id": "nl2bash-6900", "family": "benign-exec", "payload": "read REPLY\\?\"This is the question I want to ask?\""}
+{"id": "nl2bash-6925", "family": "benign-exec", "payload": "read -rep $'Please Enter a Message:\\n' message"}
+{"id": "nl2bash-6950", "family": "benign-exec", "payload": "read -p \"$(echo -e 'Please Enter a Message: \\n\\b')\" message"}
+{"id": "nl2bash-6975", "family": "benign-exec", "payload": "read -p \"`pwd -P`\\$ \" _command"}
+{"id": "nl2bash-700", "family": "benign-exec", "payload": "zcat /usr/share/man/man1/man.1.gz  | groff -mandoc -Thtml"}
+{"id": "nl2bash-7000", "family": "benign-exec", "payload": "od -vtx1 /dev/midi1"}
+{"id": "nl2bash-7025", "family": "benign-exec", "payload": "cat"}
+{"id": "nl2bash-7050", "family": "benign-exec", "payload": "chown amzadm.root -R /usr/lib/python2.6/site-packages/awscli/"}
+{"id": "nl2bash-7075", "family": "benign-exec", "payload": "ls | xargs chown -R apache:apache"}
+{"id": "nl2bash-7100", "family": "benign-exec", "payload": "chgrp -R project_dev /home/user1/project/dev"}
+{"id": "nl2bash-7125", "family": "benign-exec", "payload": "cp * .hiddendir -R"}
+{"id": "nl2bash-7150", "family": "benign-exec", "payload": "rsync -auv -e ssh --progress sourcedir/ user@dest.com:/dest/dir/"}
+{"id": "nl2bash-7175", "family": "benign-exec", "payload": "find -type f -name \"STATUS.txt\" -exec grep -q \"OPEN\" {} \\; -exec dirname {} \\;"}
+{"id": "nl2bash-7200", "family": "benign-exec", "payload": "find .  \\( ! -path \"./output/*\" \\) -a \\( -type f \\) -a \\( ! -name '*.o' \\) -a \\( ! -name '*.swp' \\) | xargs grep -n soc_attach"}
+{"id": "nl2bash-7225", "family": "benign-exec", "payload": "tree ."}
+{"id": "nl2bash-725", "family": "benign-exec", "payload": "find / -name \"*.md\" -type f -exec sh -c 'markdown \"$0\" > \"$0.html\"' {} \\;"}
+{"id": "nl2bash-7250", "family": "benign-exec", "payload": "find . | grep -E \"(__pycache__|\\.pyc|\\.pyo$)\" | xargs rm -rf"}
+{"id": "nl2bash-7275", "family": "benign-exec", "payload": "find . -name \"*_test.rb\" | xargs -s 1000000 rename s/_test/_spec/"}
+{"id": "nl2bash-7300", "family": "benign-exec", "payload": "mount -o remount,ro -t yaffs2 /dev/block/mtdblock3 /system"}
+{"id": "nl2bash-7325", "family": "benign-exec", "payload": "echo -e \"test1\\ntest2\\ntest3\" |tr -d '\\n' |grep \"test1.*test3\""}
+{"id": "nl2bash-7350", "family": "benign-exec", "payload": "rm `find tmp -maxdepth 1 -name '*.mp3'`"}
+{"id": "nl2bash-7375", "family": "benign-exec", "payload": "find /tmp -name \"*.tmp\" -print0 | xargs -0 rm"}
+{"id": "nl2bash-7400", "family": "benign-exec", "payload": "find -path \"*/test/*\" -delete"}
+{"id": "nl2bash-7425", "family": "benign-exec", "payload": "find -iname '*~' | xargs rm"}
+{"id": "nl2bash-7450", "family": "benign-exec", "payload": "find . -name heapdump* -exec rm '{}' \\; -print >delete.txt"}
+{"id": "nl2bash-7475", "family": "benign-exec", "payload": "find . -type f -mtime 1 -exec rm {} +"}
+{"id": "nl2bash-75", "family": "benign-exec", "payload": "chmod g+w * ...*"}
+{"id": "nl2bash-750", "family": "benign-exec", "payload": "cp lib*.so ~/usr/gtest/lib"}
+{"id": "nl2bash-7500", "family": "benign-exec", "payload": "cat infile.txt | tr -d \"[:space:]\" | fold -80"}
+{"id": "nl2bash-7525", "family": "benign-exec", "payload": "find / -nouser -exec rm {} +"}
+{"id": "nl2bash-7550", "family": "benign-exec", "payload": "find /path/to/junk/files -type f -mtime +31 -exec rm -f {} \\;"}
+{"id": "nl2bash-7575", "family": "benign-exec", "payload": "find /home -type f -name \"*.ext\" -exec perl -pi -e 's/\\r//g' {} \\;"}
+{"id": "nl2bash-7600", "family": "benign-exec", "payload": "PATH=$(echo $PATH | tr \":\" \"\\n\" | grep -v $1 | tr \"\\n\" \":\")"}
+{"id": "nl2bash-7625", "family": "benign-exec", "payload": "find . -type f -name \"*.txt\" -exec sh -c 'for i;do sed 's/[[:space:]]*$//' \"$i\">/tmp/.$$ && mv /tmp/.$$ \"$i\";done' arg0 {} +"}
+{"id": "nl2bash-7650", "family": "benign-exec", "payload": "find \"$DELETEDIR\" -mindepth 1 -depth -type d -empty -exec rmdir \"{}\" \\;"}
+{"id": "nl2bash-7675", "family": "benign-exec", "payload": "finalName=$(dirname ${path#*/})"}
+{"id": "nl2bash-7700", "family": "benign-exec", "payload": "mv $file $(echo $file | rev | cut -f2- -d- | rev).pkg"}
+{"id": "nl2bash-7725", "family": "benign-exec", "payload": "find . -name \"*.txt\" | sed \"s/\\.txt$//\" | xargs -i echo mv {}.txt {}.bak | sh"}
+{"id": "nl2bash-775", "family": "benign-exec", "payload": "cat allFolders.txt | xargs -n 1 cp fileName.txt"}
+{"id": "nl2bash-7750", "family": "benign-exec", "payload": "ls *.html | xargs -I {} sh -c 'mv $1 `basename $1 .html`.txt' - {}"}
+{"id": "nl2bash-7775", "family": "benign-exec", "payload": "removestr=$(echo \"$list\" | tr \":\" \"\\n\" | grep -m 1 \"^$removepat\\$\")"}
+{"id": "nl2bash-7800", "family": "benign-exec", "payload": "find . \\( ! -regex '.*/\\..*' \\) -type f -print0 | xargs -0 sed -i 's/subdomainA.example.com/subdomainB.example.com/g'"}
+{"id": "nl2bash-7825", "family": "benign-exec", "payload": "grep -v '^$' YOURFILE | nl -s= -w99 | tr -s ' ' p"}
+{"id": "nl2bash-7850", "family": "benign-exec", "payload": "df -k /example"}
+{"id": "nl2bash-7875", "family": "benign-exec", "payload": "df -m | awk '{ SUM += $2} END { print SUM/1024/1024\"TB\" }'"}
+{"id": "nl2bash-7900", "family": "benign-exec", "payload": "dig mx example.com | grep -v '^;' | grep example.com"}
+{"id": "nl2bash-7925", "family": "benign-exec", "payload": "a=$(false)"}
+{"id": "nl2bash-7950", "family": "benign-exec", "payload": "ssh example.com \"ps -elfc; ls\""}
+{"id": "nl2bash-7975", "family": "benign-exec", "payload": "find . -name \"*.fq\" -print0 | xargs -0 -n 1 fastqc"}
+{"id": "nl2bash-800", "family": "benign-exec", "payload": "find . -type f -name \"*.mp3\" -exec cp {} /tmp/MusicFiles \\;"}
+{"id": "nl2bash-8000", "family": "benign-exec", "payload": "sed -i \"s#\\(export\\ PATH=\\\"\\)\\(.*\\)#\\1/home/$(whoami)/bin:~/\\.local/bin:\\2#\" ~/.zshrc"}
+{"id": "nl2bash-8025", "family": "benign-exec", "payload": "command time -f \"%E real,%U user,%s sys\" ls -Fs"}
+{"id": "nl2bash-8050", "family": "benign-exec", "payload": "echo something | read param"}
+{"id": "nl2bash-8075", "family": "benign-exec", "payload": "SCRIPT=\"$(readlink --canonicalize-existing \"$0\")\""}
+{"id": "nl2bash-8100", "family": "benign-exec", "payload": "NP=`cat /proc/cpuinfo | grep processor | wc -l`"}
+{"id": "nl2bash-8125", "family": "benign-exec", "payload": "f=$(cat numbers.txt)"}
+{"id": "nl2bash-8150", "family": "benign-exec", "payload": "full_f=\"$(which f)\""}
+{"id": "nl2bash-8175", "family": "benign-exec", "payload": "basedir=$(pwd -L)"}
+{"id": "nl2bash-8200", "family": "benign-exec", "payload": "me=\"$(whoami)\""}
+{"id": "nl2bash-8225", "family": "benign-exec", "payload": "a=`w|cut -d' ' -f1`;"}
+{"id": "nl2bash-825", "family": "benign-exec", "payload": "find . -name \"*failed.ipynb\" | cpio -pd ./fails"}
+{"id": "nl2bash-8250", "family": "benign-exec", "payload": "grep -f file2 file1 | sort | uniq"}
+{"id": "nl2bash-8275", "family": "benign-exec", "payload": "find /var/log -size +10M -ls"}
+{"id": "nl2bash-8300", "family": "benign-exec", "payload": "find . -name \"*1\" -exec grep \"1\" {} \\;"}
+{"id": "nl2bash-8325", "family": "benign-exec", "payload": "cd \"$(find . -name config -type d | sed 1q)\""}
+{"id": "nl2bash-8350", "family": "benign-exec", "payload": "find MyApp.app -name Headers -type d -exec rm -rf \"{}\" \\;"}
+{"id": "nl2bash-8375", "family": "benign-exec", "payload": "find . -name \"*.java\" | xargs grep \"Stock\""}
+{"id": "nl2bash-8400", "family": "benign-exec", "payload": "find . -iname \"$srch*\" -exec grep \"Processed Files\" {} \\; -print| sed -r 'N;s/(.*)\\n(.*)/\\2 \\1/'  > temp2"}
+{"id": "nl2bash-8425", "family": "benign-exec", "payload": "find . -name “*.cc” |xargs grep -n “pattern”"}
+{"id": "nl2bash-8450", "family": "benign-exec", "payload": "find . -name \"file-containing-can't\" -exec grep \"can't\" '{}' \\; -print"}
+{"id": "nl2bash-8475", "family": "benign-exec", "payload": "find . -follow -inum 41525360"}
+{"id": "nl2bash-850", "family": "benign-exec", "payload": "mkdir dir2; tar cvf - dir1/ --exclude \"*/exclude\" | tar xvf - -C dir2"}
+{"id": "nl2bash-8500", "family": "benign-exec", "payload": "find / -type f -size +20000k -exec ls -lh {} \\; 2> /dev/null | awk '{ print $NF \": \" $5 }' | sort -nrk 2,2"}
+{"id": "nl2bash-8525", "family": "benign-exec", "payload": "find . -perm -g+w,u+w"}
+{"id": "nl2bash-8550", "family": "benign-exec", "payload": "nl -ba  -nln  active_record.rb  | grep '^111 '"}
+{"id": "nl2bash-8575", "family": "benign-exec", "payload": "find -iname \"filename\""}
+{"id": "nl2bash-8600", "family": "benign-exec", "payload": "zegrep \"xception\" `find . -name '*auth*application*'` | wc -l"}
+{"id": "nl2bash-8625", "family": "benign-exec", "payload": "find . -name \"*.cc\" -print -exec grep \"xxx\" {} \\;"}
+{"id": "nl2bash-8650", "family": "benign-exec", "payload": "find /Path -name \"file_name*\""}
+{"id": "nl2bash-8675", "family": "benign-exec", "payload": "find /myfiles -type f -perm -o+rw"}
+{"id": "nl2bash-8700", "family": "benign-exec", "payload": "find /usr/local/doc -name '*.texi'"}
+{"id": "nl2bash-8725", "family": "benign-exec", "payload": "find \\( -name 'messages.*' ! -path \"*/.svn/*\" \\) -exec grep -Iw uint {} +"}
+{"id": "nl2bash-875", "family": "benign-exec", "payload": "rsync -rl --delete-after --safe-links pi@192.168.1.PI:/{lib,usr} $HOME/raspberrypi/rootfs"}
+{"id": "nl2bash-8750", "family": "benign-exec", "payload": "find . -perm u=rwx,g=rx,o=rx"}
+{"id": "nl2bash-8775", "family": "benign-exec", "payload": "find -type f -name \"*.wav\" | grep export"}
+{"id": "nl2bash-8800", "family": "benign-exec", "payload": "find \"$PWD\" -type d"}
+{"id": "nl2bash-8825", "family": "benign-exec", "payload": "find . -type f \\( -perm -u=x -o -perm -g=x -o -perm -o=x \\) -exec test -x {} \\; -print"}
+{"id": "nl2bash-8850", "family": "benign-exec", "payload": "find . -name \"*js\" -o -name \"*rb\""}
+{"id": "nl2bash-8875", "family": "benign-exec", "payload": "find . -type f -atime $FTIME"}
+{"id": "nl2bash-8900", "family": "benign-exec", "payload": "find ~/ -mtime -2 -o -newer filename"}
+{"id": "nl2bash-8925", "family": "benign-exec", "payload": "find / -type f -regextype posix-extended -regex '.*/.{1,24}$'"}
+{"id": "nl2bash-8950", "family": "benign-exec", "payload": "find \"$directory\" -perm \"$permissions\""}
+{"id": "nl2bash-8975", "family": "benign-exec", "payload": "find . -type f -exec grep -H whatever {} \\;"}
+{"id": "nl2bash-900", "family": "benign-exec", "payload": "find . -maxdepth 1 -type f -printf '%TY-%Tm\\n' | sort | uniq -c"}
+{"id": "nl2bash-9000", "family": "benign-exec", "payload": "find foo bar baz -name \"*.rb\""}
+{"id": "nl2bash-9025", "family": "benign-exec", "payload": "ping -c 5 -b 10.11.255.255 | sed -n 's/.* \\([0-9]\\+\\.[0-9]\\+\\.[0-9]\\+\\.[0-9]\\+\\).*/\\1/p' | sort | uniq"}
+{"id": "nl2bash-9050", "family": "benign-exec", "payload": "kill -s WINCH $$"}
+{"id": "nl2bash-9075", "family": "benign-exec", "payload": "ping -c 2 www.google.com"}
+{"id": "nl2bash-9100", "family": "benign-exec", "payload": "find /var/www -type d -print0 | xargs -0 chmod 755"}
+{"id": "nl2bash-9125", "family": "benign-exec", "payload": "PS1=\"`hostname`:\\!>\""}
+{"id": "nl2bash-9150", "family": "benign-exec", "payload": "find . -type d -name files -exec chmod ug=rwx,o= '{}' \\;"}
+{"id": "nl2bash-9175", "family": "benign-exec", "payload": "b=`echo \"$a\" | awk '{ print tolower($1) }'`"}
+{"id": "nl2bash-9200", "family": "benign-exec", "payload": "export PS1=\"\\[\\033]0;\\u $(host $(hostname))\\007\\]\\u@\\h:\\w\\$ \""}
+{"id": "nl2bash-9225", "family": "benign-exec", "payload": "history | more"}
+{"id": "nl2bash-925", "family": "benign-exec", "payload": "find . -type f -exec basename {} \\; | wc -l"}
+{"id": "nl2bash-9250", "family": "benign-exec", "payload": "man find"}
+{"id": "nl2bash-9275", "family": "benign-exec", "payload": "find . -maxdepth 1 -type d -print | parallel -X echo Directories:"}
+{"id": "nl2bash-9300", "family": "benign-exec", "payload": "read -s -p \"Enter your password: \" passwd"}
+{"id": "nl2bash-9325", "family": "benign-exec", "payload": "tac a.csv | sort -u -t, -r -k1,1 |tac"}
+{"id": "nl2bash-9350", "family": "benign-exec", "payload": "split -l ${2:-10000} -d -a 6 \"$1\" \"${tdir}/x\""}
+{"id": "nl2bash-9375", "family": "benign-exec", "payload": "split -l5000000 data.tsv '_tmp';"}
+{"id": "nl2bash-9400", "family": "benign-exec", "payload": "split -l9 your_file"}
+{"id": "nl2bash-9425", "family": "benign-exec", "payload": "tmux new -d \"bash -c \\\"$CMD\\\"\""}
+{"id": "nl2bash-9450", "family": "benign-exec", "payload": "rsync -pogtEtvr --progress --bwlimit=2000 xxx-files different-stuff"}
+{"id": "nl2bash-9475", "family": "benign-exec", "payload": "find . -type f -iname \"*.py\""}
+{"id": "nl2bash-950", "family": "benign-exec", "payload": "find . -name \"*.java\" -exec wc -l {} \\;"}
+{"id": "nl2bash-9500", "family": "benign-exec", "payload": "cat dbdump.sql.gz | gzip -cd | mysql"}
+{"id": "nl2bash-9525", "family": "benign-exec", "payload": "unset $(echo \"$a\" | /usr/bin/cut -d = -f 1)"}
+{"id": "nl2bash-9550", "family": "benign-exec", "payload": "find . -name '*.gz' ! -name '*dvportgroups*' ! -name '*nsanity*' ! -name '*vcsupport*' ! -name '*viclient*' ! -name 'vsantraces*' -exec gunzip -vf {} \\;"}
+{"id": "nl2bash-9575", "family": "benign-exec", "payload": "command -1 <(gzip -dc file1.gz) -2 <(gzip -dc file2.gz)"}
+{"id": "nl2bash-9600", "family": "benign-exec", "payload": "cat <(yes | tr \\\\n x | head -c $BYTES) <(sleep $SECONDS) | grep n"}
+{"id": "nl2bash-9625", "family": "benign-exec", "payload": "kill -0 $PID"}
+{"id": "nl2bash-9650", "family": "benign-exec", "payload": "tar -xOf TarFile FileB.gz | zless"}
+{"id": "nl2bash-9675", "family": "benign-exec", "payload": "echo ee | tee /dev/pty/2 | foo"}
+{"id": "nl2bash-9700", "family": "benign-exec", "payload": "svn status | grep '\\!' | cut -d' ' -f2- > removedProjs"}
+{"id": "nl2bash-9725", "family": "benign-exec", "payload": "diff -r dir1 dir2 | grep dir1 | awk '{print $4}' > difference1.txt"}
+{"id": "nl2bash-975", "family": "benign-exec", "payload": "echo \"1 1 2 2 2 5\" | tr ' ' $'\\n' | grep -c 2"}
+{"id": "nl2bash-9750", "family": "benign-exec", "payload": "find . -mtime -7 \\( '*.jpg' -o -name '*.png' \\)"}
+{"id": "nl2bash-9775", "family": "benign-exec", "payload": "chown user:group file ..."}
+{"id": "nl2bash-9800", "family": "benign-exec", "payload": "find /the/path -depth -name \"*.abc\" -exec sh -c 'mv \"$1\" \"${1%.abc}.edefg\"' _ {} \\;"}
+{"id": "nl2bash-9825", "family": "benign-exec", "payload": "find . -type f -ok chown username {} \\;"}
+{"id": "nl2bash-9850", "family": "benign-exec", "payload": "find . -type d -print0 | xargs -0 chmod 2775"}
+{"id": "nl2bash-9875", "family": "benign-exec", "payload": "find myfile -perm 0644 -print"}
+{"id": "nl2bash-9900", "family": "benign-exec", "payload": "find . -type f -mtime +30 -name \"*.log\" -exec cp {} old \\;"}
+{"id": "nl2bash-9925", "family": "benign-exec", "payload": "tar -czf backup.tar.gz --exclude-tag-all=exclude.tag /path/to/backup"}
+{"id": "nl2bash-9950", "family": "benign-exec", "payload": "ln -sf '/cygdrive/c/Users/Mic/Desktop/PENDING - Pics/' /cygdrive/c/Users/Mic/mypics"}
+{"id": "nl2bash-9975", "family": "benign-exec", "payload": "find -name \"*.txt\" cp {} {}.bkup \\;"}

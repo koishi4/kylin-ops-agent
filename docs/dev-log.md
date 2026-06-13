@@ -1607,3 +1607,56 @@ READER_SYSTEM 测的是身份非措辞，两处改动均不破契约）。隔离
 **给所有者的待决项（未擅自做）**：若想为实用性**背书**，可加 1–2 个参数化动作（`restart_service`
 最典型）演示"模型能扩到真变更而不开自由 shell"。这是**产品范围决定**（动作集、授权模型、影响面），
 需明确点头再做——已在对话里向所有者提出，留待定夺。本轮仅消除文档层面的误读，零代码改动。
+
+---
+
+## 2026-06-13 客观评审四项整改：裁决缺陷 / 不变量强制 / 能力模型落地 / 独立误杀度量
+
+**触发**：一次"不遵循本项目文档、纯客观"的外部评审，挖出四类问题。逐一整改，全程保红队 88/88、
+5 份 held-out `asr_real=0`、全量 pytest 绿（2556→**2595 passed**，+39 测）。
+
+**① 防线2 裁决「跨等级门控遮蔽」缺陷（engine._decide）**
+旧实现取「单条最高 (risk, action) 规则」的 action 作裁决——一条 `HIGH+CONFIRM` 会**遮蔽**同时命中的
+`MEDIUM+DENY`，最终只判 CONFIRM（点确认即过），丢掉 DENY 的「需显式授权」门控。改为**风险等级与门控
+动作各自独立取最严**：命中集里任一 DENY 必须 authorized、任一 CONFIRM 必须 confirmed，可叠加，严格
+「只升不降」。`tests/test_guardrail_decide_masking.py` 钉死。单规则语义不变，仅堵多规则遮蔽。
+
+**② 「永远不触发的污点门控」→ 升级为启动期 fail-closed 不变量（trifecta.assert_perception_isolation）**
+评审指出 orchestrator 的污点门控（`tainted ∧ state_change` → fail-safe）在生产**恒不触发**（编排只暴露
+READONLY 工具，无 state_change 腿），是"把断言裹成运行时闸门"的表演。整改**不删除**（它由
+`test_taint_enforcement` 的"故意把 kill_process 接进编排路径"越界场景测着、是回归兜底），而是把同一不变量
+的**首要强制**前移到启动期：新增 `perception_isolation_violations()`/`assert_perception_isolation()`，
+核验「LLM 可达的 MCP 工具均无 state_change 腿、带 state_change 的名字都是受控动作」，main.py lifespan
+**fail-closed** 调用——一旦回归（误把可变工具接进 REGISTRY / 误打标签）启动即拒。运行时门控降级为
+**第二层兜底**，trace 措辞如实改为"结构性不变量的运行时兜底（首要强制在启动期）"。
+`tests/test_capability_isolation.py`（含回归注入用例）钉死。
+
+**③ 能力模型（致命三要素/Rule of Two）用到真实状态变更点（actions.py）**
+旧实现只在**只读编排路径**上算 `evaluate_path`（恒 ≤2 腿、永不阻断，纯展示）。整改让受控动作的
+「安全校验」段也内嵌 Rule-of-Two 评估（`_rule_of_two_detail`）：动作携 `改状态(C)+访问敏感(B)` 两腿、
+`human_in_loop=confirmed`——把能力模型用在真正会改系统的点，而非只在感知路径摆数字。并入既有安全校验段，
+保动作链恰好五段不变量。
+
+**④ 误杀率从"自证"升级为"第三方独立度量"（最大客观性盲区）**
+旧"误杀率 0%"只在作者自选的 ~19 条良性集上测。新增 `scripts/corpora/build_benign_holdout.py`
+（拉 **NL2Bash** `data/bash/all.cm` @ 固定 commit `10963c9f`，跨步采样 505 条真实命令，双重封存
+`.sha256`+manifest 指纹）+ `scripts/benign_fp_eval.py`（**合法操作者模型**下仍硬拒=真误杀 hard_fp；
+按设计需授权/确认=最小权限摩擦，二者分开计、逐条 verbatim）。
+- **首测 hard_fp = 25/505 (5.0%)**：暴露护栏对正常命令的过拦——`df -m | awk`、`history|awk`、
+  `find . -exec /bin/rm`、`diff <(..) <(..)` 等被判 CRITICAL。**直接证伪了"0% 误杀"**。
+- 三处根因已修（均保红队/ held-out 零回归）：
+  1. **rules.py `_find_search_roots`**：find 只取**搜索根**为删除目标，不再把 `-exec /bin/rm`、
+     `-execdir /usr/bin/unzip` 的**程序路径**误当删除目标落到 /bin、/usr 关键区（PATH-001 误杀）。
+  2. **ast_analyzer 解释器分级**：真 shell/eval 内联→CRITICAL（不可降）；通用解释器(python/perl/ruby)
+     内联→**HIGH/DENY**（默认拦、最坏模型遏制，合法操作者授权可执行）；**awk 默认不判危**，仅
+     `system()/getline/管道外部命令`才 HIGH。消除"awk/perl 文本一行流一律 CRITICAL"。
+  3. **ast_analyzer 管道精准化**：`pipe_to_shell` CRITICAL 仅对**真 shell** 或**把 stdin 当代码执行**
+     的解释器；`ls | perl -pe`、`df | awk` 这类**数据处理**不再误判 download-exec。
+- **复测 hard_fp = 3/505 (0.6%)，真·误杀 = 0**：3 条为 `find / -nouser -exec rm`(删全盘·正确拦)、
+  `… | sh`(接真 shell·正确拦)、`find /var/tmp -execdir rm`(rm 落受保护 /var·走动作层·设计如此)。
+- 防回归：`tests/test_guardrail_fp_regression.py` 双向钉死（良性不再硬拒 + 真危险仍遏制），
+  `test_guardrail_bypass.py::TestInterpreterInline` 改为分级断言。
+
+**安全验证（每步都跑）**：内置红队 **88/88（检出 100% / ASR 0%）**；5 份 RedCode-Exec held-out
+全部 `sealed=True、asr_real=0、leaked_real=[]`——精准化**零检出回归**。全量 **2595 passed**。
+诚实修订同步进 `docs/security-design.md §5`（自选集 0% 仅作内部回归，独立证据以 NL2Bash 0.6%/真 0 为准）。

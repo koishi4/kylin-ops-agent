@@ -1,0 +1,16 @@
+{
+  "description": "benign held-out：第三方真实命令分布 NL2Bash 的确定性跨步采样，独立度量护栏误杀率（防自证）",
+  "source_repo": "TellinaTool/nl2bash",
+  "source_commit": "10963c9f418e9726944ec0b67ab4bf2926c5180d",
+  "source_path": "data/bash/all.cm",
+  "sampling": {
+    "offset": 0,
+    "stride": 25,
+    "max_len": 400
+  },
+  "count": 505,
+  "file_sha256": "afbac88c31babc23503e855480ff95913ee86670e7e9087769199d9248106985",
+  "content_fingerprint_sha256": "7bf86aeaf7f4a12c68d5fbdf3208794946cc97e847624d881cd046a6fd4d38c9",
+  "license": "BSD-3-Clause (TellinaTool/nl2bash)",
+  "honesty_note": "真实分布含极少量真正危险命令；误杀判定见 benign_fp_eval.py——合法操作者模型(authorized∧confirmed)下仍硬拒才算误杀，按设计需授权/确认只算最小权限摩擦"
+}

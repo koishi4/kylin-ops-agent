@@ -180,7 +180,9 @@ def _fd_truncate_finish(action: str, trace: list[dict], path: str, command: str,
     trace.append({"stage": "安全校验", "detail": {
         "layer": "动作语义校验（关键性/软链/存在性）+ fd-safe 落地（O_NOFOLLOW + fstat 普通文件，消除 TOCTOU）",
         "passed": not decided["blocked"], "precheck": precheck,
-        "guard": None, "privilege": None, "require_confirm": decided["require_confirm"]}})
+        "guard": None, "privilege": None, "require_confirm": decided["require_confirm"],
+        # 致命三要素 / Rule of Two 在真实状态变更点的能力面评估（C 腿在此、且在二次确认之下）。
+        "rule_of_two": _rule_of_two_detail(action, confirmed=confirmed)}})
     trace.append({"stage": "执行结果", "detail": {
         "executed": decided["executed"], "blocked": decided["blocked"],
         "require_confirm": decided["require_confirm"], "reason": decided["reason"],
@@ -293,6 +295,30 @@ def _recv(action: str, params: dict, confirmed: bool, authorized: bool, dry_run:
         "confirmed": confirmed, "authorized": authorized, "dry_run": dry_run}}
 
 
+def _rule_of_two_detail(action: str, *, confirmed: bool) -> dict:
+    """致命三要素 / Rule of Two 在【真实状态变更点】的能力面评估（评审整改：把能力模型用到
+    真正会改系统的动作层，而非只在只读编排路径上展示一串恒 ≤2 腿的数字）。
+
+    受控动作具备『改状态』(C) + 『访问敏感/私有数据』(B) 两条能力腿，但**不接触不可信内容**(A=False)——
+    故最多触及 2/3 腿，天然满足 Rule of Two；human_in_loop=confirmed 让 C 腿始终处于人工二次确认之下。
+    第三条腿(A)只存于感知层只读工具、与 C 腿永不同路（该隔离已由 trifecta.assert_perception_isolation
+    在启动期 fail-closed 强制）。
+
+    返回 detail 字典（**并入**动作层既有的「安全校验」段，不另起一段——保动作链恰好五段的不变量），
+    让思维链在状态变更点也能看见 Rule of Two 结论，而非只在感知路径。
+    """
+    from app.guardrail.trifecta import evaluate_path  # 延迟导入，避免 actions↔trifecta 循环依赖
+
+    tri = evaluate_path([action], human_in_loop=confirmed)
+    return {
+        **tri.to_trace(),
+        "human_in_loop_source": "动作层强制二次确认（confirmed）",
+        "note": ("受控动作携带『改状态』(C)+『访问敏感』(B) 两条能力腿、不接触不可信内容(A)；"
+                 "≤2 腿满足 Rule of Two，且 C 腿始终在二次确认之下。A 腿（不可信内容）只存于感知层"
+                 "只读工具，与 C 腿永不同路——该隔离由启动期不变量强制（perception_isolation）。"),
+    }
+
+
 def _refuse(action: str, trace: list[dict], reason: str, *, precheck: Any = None) -> dict:
     """动作层语义校验未通过：补齐安全校验/执行结果两段，返回拦截结果（绝不进 executor）。"""
     trace = list(trace)
@@ -332,7 +358,9 @@ def _guarded_finish(action: str, trace: list[dict], argv: list[str], rationale: 
         "precheck": precheck,
         "guard": res.get("guard"),
         "privilege": res.get("privilege"),
-        "require_confirm": decided["require_confirm"]}})
+        "require_confirm": decided["require_confirm"],
+        # 致命三要素 / Rule of Two 在真实状态变更点的能力面评估（C 腿在此、且在二次确认之下）。
+        "rule_of_two": _rule_of_two_detail(action, confirmed=confirmed)}})
 
     output = None
     if decided["executed"]:

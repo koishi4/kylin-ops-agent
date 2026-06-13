@@ -105,6 +105,52 @@ def caps_for(name: str) -> ToolCaps:
     return TOOL_CAPS.get(name, ToolCaps())
 
 
+# ---------------------------------------------------------------------------
+# 感知层能力隔离不变量 —— 启动期 fail-closed 闸门（把能力标签从「展示」升级为「强制」）
+# ---------------------------------------------------------------------------
+def perception_isolation_violations() -> list[str]:
+    """核验项目第一安全保证的结构性不变量：**LLM 可达的感知层（MCP 工具注册表）无『改状态』能力腿**。
+
+    背景与意义（这是把致命三要素/Rule-of-Two 能力模型真正「用起来」的地方）：
+      编排器只把 `REGISTRY` 里的工具暴露给模型，且它们全 READONLY。由此「污点 ∧ 状态变更 恒不成立」
+      这条不变量成立——危险动作不可能在编排路径上发生。过去它只靠人工纪律 + 单测维持，运行时的
+      污点门控只在「有人误接了可变工具」时才会被某个污点请求**偶然**触发。本函数把它升级为
+      **每次启动都强制核验**的静态闸门：一旦回归（把带 state_change 的工具接进 REGISTRY、或给
+      MCP 工具误打 state_change 标签），启动即拒绝，不必等运行时撞上。
+
+    返回违例描述列表（空 = 不变量成立）。纯函数，供启动 fail-closed 与测试调用。
+    """
+    violations: list[str] = []
+    # ① 正向：注册给 LLM 的每个 MCP 工具都不得具备『改状态/对外通信』腿。
+    for name in REGISTRY:
+        if caps_for(name).state_change:
+            violations.append(
+                f"MCP 工具 {name!r} 标注具备『改状态/对外通信』能力腿，却暴露在 LLM 可达的感知层"
+                "（REGISTRY）——违反『感知层无状态变更』不变量。状态变更只能走强制二次确认的受控"
+                "动作层（core/actions.ACTIONS），不得作为 MCP 工具暴露。")
+    # ② 反向：能力库里带 state_change 的名字必须都是受控动作，且不在 REGISTRY 里。
+    for name, caps in TOOL_CAPS.items():
+        if not caps.state_change:
+            continue
+        if name in REGISTRY:
+            violations.append(
+                f"{name!r} 同时标注 state_change 且登记在 MCP 工具注册表——状态变更能力泄漏到感知层。")
+        if name not in ACTIONS:
+            violations.append(
+                f"{name!r} 标注 state_change 却不在受控动作白名单 ACTIONS——状态变更必须经动作层强制确认。")
+    return violations
+
+
+def assert_perception_isolation() -> None:
+    """启动期 fail-closed：感知层能力隔离不变量不成立则抛 RuntimeError，拒绝启动。
+
+    由 main.py 的 lifespan 在装配编排器前调用——与「最小权限/审计密钥」等失败安全启动守卫同级。
+    """
+    v = perception_isolation_violations()
+    if v:
+        raise RuntimeError("感知层能力隔离不变量被破坏（拒绝启动）：" + "；".join(v))
+
+
 @dataclass
 class TrifectaResult:
     """一条执行路径的致命三要素评估结果。"""

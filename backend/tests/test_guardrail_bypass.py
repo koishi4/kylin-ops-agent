@@ -109,16 +109,36 @@ class TestBypassesClosed:
         assert r.matched_rules, f"绕过样例未命中任何规则/结构: {cmd!r}"
 
 
-class TestInterpreterInlineUnconditional:
-    """解释器内联代码是 CRITICAL：即便显式授权 + 确认也拦死（内层无法可信审查）。"""
+class TestInterpreterInline:
+    """解释器内联代码按【能力分级】裁决（评审整改：精准化，消除把 python/perl 文本一行流一律判
+    CRITICAL 的实测误杀，benign held-out 实证 25→3）：
+      - 真 shell（bash/sh/zsh…）/ eval：就地执行任意 shell 命令 → CRITICAL，授权+确认也拦死。
+      - 通用解释器（python/perl/ruby…）：HIGH/DENY——默认（未授权）即拦、红队最坏模型下仍遏制，
+        但合法操作者**显式授权**后可执行（最小权限授权，而非灾难级硬拒）。
+    """
 
-    SAMPLES = ['bash -c "rm -rf /"', "python3 -c 'x'", 'perl -e "1"']
+    SHELL_SAMPLES = ['bash -c "rm -rf /"', "sh -c 'id'", 'eval "rm -rf /"']
+    GENERAL_SAMPLES = ["python3 -c 'x'", 'perl -e "1"', "ruby -e 'puts 1'"]
 
-    @pytest.mark.parametrize("cmd", SAMPLES)
-    def test_critical_even_with_auth_confirm(self, cmd):
+    @pytest.mark.parametrize("cmd", SHELL_SAMPLES)
+    def test_shell_interp_critical_even_with_auth_confirm(self, cmd):
+        """shell 解释器内联：CRITICAL，授权 + 确认都不可绕过。"""
         r = check_command(cmd, authorized=True, confirmed=True)
         assert r.allowed is False and r.risk is RiskLevel.CRITICAL, \
-            f"解释器内联代码被授权/确认绕过: {cmd!r} → {r.reason}"
+            f"shell 解释器内联被授权/确认绕过: {cmd!r} → {r.reason}"
+
+    @pytest.mark.parametrize("cmd", GENERAL_SAMPLES)
+    def test_general_interp_blocked_by_default(self, cmd):
+        """通用解释器内联：默认（未授权）即被拦——红队最坏模型下仍遏制。"""
+        r = check_command(cmd)
+        assert r.allowed is False, f"通用解释器内联默认未被拦: {cmd!r} → {r.reason}"
+
+    @pytest.mark.parametrize("cmd", GENERAL_SAMPLES)
+    def test_general_interp_runnable_by_authorized_operator(self, cmd):
+        """通用解释器内联：HIGH 而非 CRITICAL——合法操作者显式授权后可执行（消除实测误杀的根因）。"""
+        r = check_command(cmd, authorized=True)
+        assert r.allowed is True and r.risk is RiskLevel.HIGH, \
+            f"通用解释器内联应为 HIGH/可授权执行: {cmd!r} → {r.reason}"
 
 
 class TestNoFalsePositive:

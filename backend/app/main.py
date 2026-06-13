@@ -18,6 +18,7 @@ from app.config import get_settings
 from app.core.orchestrator import Orchestrator
 from app.guardrail.privilege import is_running_as_root, least_privilege_check
 from app.guardrail.tool_scan import scan_with_drift
+from app.guardrail.trifecta import assert_perception_isolation
 from app.llm.provider import get_llm
 from app.mcp_server.client import MCPClient
 
@@ -40,6 +41,12 @@ async def lifespan(app: FastAPI):
     if refuse:
         raise RuntimeError("拒绝启动（最小权限）：" + msg)
     (logger.warning if is_running_as_root() else logger.info)(msg)
+
+    # 结构性不变量闸门：感知层（LLM 可达的 MCP 工具）必须无『状态变更』能力腿——状态变更只能走
+    # 强制二次确认的受控动作层。一旦回归（误把可变工具接进 REGISTRY / 误打 state_change 标签），
+    # 启动即 fail-closed 拒绝，而非寄望某个污点请求恰好撞上运行时门控才暴露（评审整改）。
+    assert_perception_isolation()
+    logger.info("感知层能力隔离不变量校验通过：MCP 工具均无状态变更能力，状态变更仅存于受控动作层。")
 
     # 启动：初始化审计库 + 连接 MCP 工具层 + 装配编排器
     store.init_db()

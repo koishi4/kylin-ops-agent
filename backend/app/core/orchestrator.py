@@ -315,11 +315,14 @@ class Orchestrator:
             tri = evaluate_path([c["tool"] for c in tool_calls])
             trace.append(TraceStep("安全校验", tri.to_trace()))
 
-            # —— P3-4 污点真正 gate（运行时强制，非散文）——
-            # 核心不变量「污点 ∧ 状态变更 恒不成立」过去只写在 trace 文本里、无强制。这里把它变成
-            # 运行时闸门：实际计算本路径是否出现「改状态」能力腿，若它与污点同时为真——即危险动作
-            # 竟在污点下放行——立即 **fail-safe**：清空答复、标记 blocked、落审计告警。结构上本就不可能
-            # 发生（编排只暴露 READONLY 工具），但此处把「不可能」从断言升级为被强制的运行时门控。
+            # —— P3-4 污点门控：结构性不变量的【运行时兜底】（诚实定位，见评审整改）——
+            # 核心不变量「污点 ∧ 状态变更 恒不成立」的**首要强制**在启动期：
+            # trifecta.assert_perception_isolation() 已 fail-closed 核验「LLM 可达的 MCP 工具均无
+            # state_change 腿」，一有回归（误把可变工具接进 REGISTRY）启动即拒绝。因此在生产路径上
+            # 本门控**恒不触发**（编排只暴露 READONLY 工具，state_change_in_path 恒 False）。
+            # 它仍保留为**第二层运行时兜底**：万一启动闸门被绕过/未跑，且某条污点路径上真出现了
+            # 状态变更能力，这里仍会 fail-safe（清空答复、标记 blocked、落审计）。其有效性由
+            # tests/test_taint_enforcement.py 的「故意把 kill_process 接进编排路径」越界场景证明。
             state_change_in_path = ("state_change" in tri.legs) or tri.trifecta_complete
             taint_gate_violated = tainted and state_change_in_path
             if taint_gate_violated:
@@ -332,9 +335,11 @@ class Orchestrator:
                 "state_change_in_path": state_change_in_path,
                 "taint_gate_enforced": True,
                 "taint_gate_violated": taint_gate_violated,
+                "role": "结构性不变量的运行时兜底（首要强制在启动期 assert_perception_isolation）",
                 "decision": ("fail-safe 中止（污点下出现状态变更）" if taint_gate_violated
                              else "放行（污点路径无状态变更能力 / 或非污点）"),
-                "invariant": "本路径无状态变更能力（全 READONLY），危险动作不可能在污点下放行",
+                "invariant": ("感知层（LLM 可达工具）无状态变更能力——已在启动期 fail-closed 强制；"
+                              "故生产路径下本门控恒不触发，仅作回归兜底（第二层）"),
                 "reason": ("已摄入外部不可信数据，路径被标记为污点（仅作只读分析，不驱动任何变更）；"
                            "且经隔离阅读器，原始不可信字节从未进入规划器上下文"
                            if tainted else "未摄入不可信数据，路径无污点"),

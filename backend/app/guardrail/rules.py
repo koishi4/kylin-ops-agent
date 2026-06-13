@@ -344,6 +344,28 @@ def _find_is_destructive(tokens: list[str]) -> bool:
     return False
 
 
+def _find_search_roots(rest: list[str]) -> list[str]:
+    """find 的「搜索根」= 表达式之前的前导路径操作数，这才是销毁作用的范围。
+
+    修复实测误杀（评审整改 · benign held-out）：旧实现 `_plain_path_operands(rest)` 会把 find
+    **表达式里**的路径也当删除目标——尤其 `-exec /bin/rm {} \\;` 的**被执行程序路径** `/bin/rm`、
+    `-exec /usr/bin/unzip …` 的 `/usr/bin/unzip` 会被 realpath 落到 /usr、/bin 关键区而误判 PATH-001，
+    可 `find . -exec /bin/rm {} \\;`（删的是 cwd）被当成删 /bin。实际上 find 只在**搜索根**下作用，
+    -exec 后的命令路径是「拿来跑的程序」而非「要删的文件」。故只取第一个表达式 token（`-name`/`-exec`/
+    `(` 等以 `-` 起头或括号/`!`）之前的前导操作数为搜索根。
+
+    `find / -nouser -exec rm {} +` → 搜索根 `/` → 仍判关键（正确拦）；
+    `find . -exec /bin/rm {} \\;` / `find /var/tmp/x -execdir /bin/rm …` → 搜索根 `.` / `/var/tmp/x`
+    → 不再被 -exec 的程序路径带偏（消除误杀）。
+    """
+    roots: list[str] = []
+    for tok in rest:
+        if tok.startswith("-") or tok in ("(", ")", "!", ";", "+", "{}"):
+            break  # 进入表达式区：其后是 tests/actions/-exec 命令，均非搜索根
+        roots.append(tok)
+    return _plain_path_operands(roots)
+
+
 # 命令包装器：把「真正被执行的命令」推后一位/几位，绕开「按 tokens[0] 取动词」的路径兜底。
 # 捕获 `env rm -rf /`、`/usr/bin/env find / -delete`、`nohup rm -rf /etc` 等变形（P0-E 元测试发现）。
 _CMD_WRAPPERS = {"env", "sudo", "doas", "command", "nice", "nohup", "time", "exec",
@@ -383,7 +405,8 @@ def _destruction_operands(tokens: list[str]) -> list[str]:
     if verb == "mkfs" or verb.startswith("mkfs."):
         return _plain_path_operands(rest)
     if verb == "find":
-        return _plain_path_operands(rest) if _find_is_destructive(tokens) else []
+        # 只取搜索根为删除目标，不把 -exec 的程序路径(/bin/rm 等)误当删除目标（见 _find_search_roots）。
+        return _find_search_roots(rest) if _find_is_destructive(tokens) else []
     return []
 
 

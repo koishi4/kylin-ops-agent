@@ -9,6 +9,7 @@ tool_baseline.json
 redteam-report.json
 nl-eval-report.json
 agentic-eval-report.json
+benign-fp-report.json
 node_modules/
 dist/
 .DS_Store

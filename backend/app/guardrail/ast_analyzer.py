@@ -30,11 +30,12 @@ import bashlex
 
 from .rules import Action, RiskLevel, Rule, match_rules
 
-# 解释器名单：命令出现在管道下游（`... | sh`）即「下载/解码即执行」范式，极高危。
-_SHELL_INTERPRETERS = {
-    "sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "ash",
-    "python", "python2", "python3", "perl", "ruby", "node", "php", "lua",
-}
+# 真 shell 名单：管道下游是它们（`curl … | sh`）即经典「下载/解码即执行」，极高危 → CRITICAL。
+_PIPE_SHELL_TARGETS = {"sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "ash"}
+# 通用解释器（python/perl/…）：piped 时**只有**把 stdin 当代码执行（裸调用 / 无 -e/-c 程序、无脚本
+# 文件）才算 download-exec；带 `-e/-c '程序'` 的是把上游当**数据**处理（`ls | perl -pe 's/a/b/'`、
+# `df | awk '{...}'`），绝非 download-exec——把它们也判 CRITICAL 是实测误杀的主因（benign held-out）。
+_GENERAL_INTERPRETERS = {"perl", "ruby", "node", "nodejs", "php", "lua"}  # python* 另按前缀判
 
 # P0-A：解释器 + 内联代码的「结构性高危」识别。
 # 真实绕过的根源：executor 用 shlex.split + shell=False，`bash -c "rm -rf /"` 会被拆成
@@ -174,16 +175,56 @@ def _has_inline_code(cmd: str, args: list[str]) -> bool:
     return False
 
 
+def _is_shell_interp(cmd: str) -> bool:
+    """真 shell 解释器 / eval —— 内联即「就地执行任意 shell 命令」，CRITICAL 不可降。"""
+    return cmd in _PIPE_SHELL_TARGETS or cmd == "eval"
+
+
+def _is_general_interp(cmd: str) -> bool:
+    """通用编程解释器（python*/perl/ruby/node/php/lua）：内联能力强，但海量良性一行流亦如此。"""
+    return cmd.startswith("python") or cmd in _GENERAL_INTERPRETERS
+
+
+# awk「就地 shell-out」信号：调用 system()/getline，或把 print 管道给外部命令（`| "cmd"`）。
+# 纯字段处理（`{print $2}`、`{s+=$0}`）无这些信号——故 awk 默认不判危，消除实测误杀。
+_AWK_SHELLOUT_RE = re.compile(r"system\s*\(|\bgetline\b|\|\s*\"")
+
+
 def _check_interpreter_inline(node, out: list[AstFinding]) -> None:
-    """P0-A 主修：命令首词是解释器且携带内联代码 → 结构性 CRITICAL/DENY。"""
+    """命令首词是解释器且携带内联代码 → 结构性高危，按解释器**能力分级**裁决（评审整改：精准化，
+    消除「把 awk/perl 文本一行流一律判 CRITICAL」的实测误杀，benign held-out 实证）：
+
+    - 真 shell（sh/bash/…）/ eval 内联：就地执行任意 shell 命令 → CRITICAL/DENY（不可降，硬拦）。
+    - 通用解释器（python/perl/ruby/…）-e/-c 内联：能力强但海量良性一行流亦如此 → HIGH/DENY
+      （仍拦截，但属"需显式授权"而非"灾难级硬拒"：合法操作者授权后可执行；红队最坏模型下仍被遏制）。
+    - awk：文本处理器，**默认不判危**；仅当程序串 system()/getline/管道外部命令（真 shell-out）才 HIGH/DENY。
+    （注：awk 写关键配置 `awk 'print > "/etc/passwd"'` 仍由正则 CFG-001 经规范化兜住，不依赖本层。）
+    """
     cmd, args = _cmd_and_args(node)
-    if not cmd or not _INTERPRETER_RE.fullmatch(cmd) or not _has_inline_code(cmd, args):
+    if not cmd or not _INTERPRETER_RE.fullmatch(cmd):
         return
-    out.append(AstFinding(
-        "interpreter_inline_code", RiskLevel.CRITICAL, Action.DENY,
-        f"解释器 {cmd} 携带内联代码（-c/-e/程序串/读 stdin）：内层代码语言不定、内容无界，"
-        "无法静态可信审查，按结构性高危拒绝。请改用结构化工具或执行受审计的脚本文件，"
-        "勿向 Agent 下发自由形态解释器命令。"))
+
+    if cmd == "awk":
+        prog = " ".join(a for a in args if not a.startswith("-"))
+        if _AWK_SHELLOUT_RE.search(prog):
+            out.append(AstFinding(
+                "interpreter_shellout", RiskLevel.HIGH, Action.DENY,
+                "awk 程序调用 system()/getline/管道外部命令（就地 shell-out），按最小权限需显式授权"))
+        return
+
+    if not _has_inline_code(cmd, args):
+        return
+
+    if _is_shell_interp(cmd):
+        out.append(AstFinding(
+            "interpreter_inline_code", RiskLevel.CRITICAL, Action.DENY,
+            f"shell 解释器 {cmd} 携带内联代码（-c/eval/读 stdin）：就地执行任意 shell 命令，"
+            "内层内容无界、静态不可信审查，按结构性灾难级拒绝。请改用结构化工具或受审计脚本文件。"))
+    else:
+        out.append(AstFinding(
+            "interpreter_inline_code", RiskLevel.HIGH, Action.DENY,
+            f"通用解释器 {cmd} 携带内联代码（-e/-c/程序串）：可就地执行任意代码（含 system 调用），"
+            "按最小权限需显式授权后方可执行；勿向 Agent 下发自由形态解释器命令。"))
 
 
 def _children(node) -> list:
@@ -269,14 +310,48 @@ def _handle_command(node, src: str, nested: bool, out: list[AstFinding]) -> None
                                   f"（子命令原文：{text}）"))
 
 
+# 解释器「携带内联程序串」的旗标：带程序串 = 把 stdin 当**数据**处理，不是把 stdin 当**代码**执行。
+_PROGRAM_FLAGS_LONG = {"--command", "--eval", "--print"}
+
+
+def _interp_has_program(args: list[str]) -> bool:
+    """解释器参数里是否带内联程序（-c/-e/-r/--eval/… 或组合短旗标含 c/e/r，含 perl -l40pe0 粘连写法）。"""
+    for a in args:
+        if a in _PROGRAM_FLAGS_LONG:
+            return True
+        if a.startswith("-") and not a.startswith("--") and any(ch in a[1:] for ch in "cer"):
+            return True
+    return False
+
+
+def _pipe_reads_stdin_as_code(cmd: str, args: list[str]) -> bool:
+    """管道下游命令是否构成「上游输出即被执行」(curl|sh / curl|python 范式)。
+
+    - 真 shell（sh/bash/…）：永远是 download-exec。
+    - 通用解释器（python/perl/…）：**仅当**把 stdin 当代码执行——无内联程序(-e/-c)、无脚本文件操作数
+      （裸调用 / `python -` 读 stdin）——才算。带 `-e/-c '程序'`（`ls | perl -pe 's/a/b/'`、
+      `df | awk` 走另路）是把上游当**数据**处理，不是 download-exec。这条精准区分是消除实测误杀的关键。
+    """
+    if cmd in _PIPE_SHELL_TARGETS:
+        return True
+    if not _is_general_interp(cmd):
+        return False
+    if _interp_has_program(args):
+        return False
+    has_script_file = any(not a.startswith("-") for a in args)
+    return not has_script_file
+
+
 def _handle_pipeline(node, src: str, nested: bool, out: list[AstFinding]) -> None:
     cmds = [p for p in node.parts if getattr(p, "kind", "") == "command"]
     out.append(AstFinding("pipeline", RiskLevel.MEDIUM, Action.CONFIRM,
                           "管道 | 串联多条命令、依赖 shell 解释（executor 为 shell=False，不会按预期执行），需分解或确认"))
     for i, c in enumerate(cmds):
-        if i > 0 and _effective_cmd(c) in _SHELL_INTERPRETERS:
-            out.append(AstFinding("pipe_to_shell", RiskLevel.CRITICAL, Action.DENY,
-                                  f"管道把上游输出直接喂给 {_effective_cmd(c)}（下载/解码即执行范式），极高风险"))
+        if i > 0:
+            ccmd, cargs = _cmd_and_args(c)
+            if _pipe_reads_stdin_as_code(ccmd, cargs):
+                out.append(AstFinding("pipe_to_shell", RiskLevel.CRITICAL, Action.DENY,
+                                      f"管道把上游输出直接喂给 {ccmd} 执行（下载/解码即执行范式），极高风险"))
         _walk(c, src, nested or i > 0, out)
 
 
