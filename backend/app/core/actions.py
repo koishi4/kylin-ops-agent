@@ -26,8 +26,10 @@ import shlex
 import stat
 from typing import Any, Callable
 
+from app.config import get_settings
 from app.core import executor
 from app.core.diagnosis import FileClass, classify_file
+from app.guardrail.privilege import privilege_posture
 from app.mcp_server.tools.process import process_detail
 
 # 白名单动作名
@@ -160,8 +162,16 @@ def _fd_truncate_finish(action: str, trace: list[dict], path: str, command: str,
     trace = list(trace)
     trace.append({"stage": "推理决策", "detail": {"command": command, "rationale": rationale}})
 
+    # 最小权限落地态势：truncate 走进程内 os.ftruncate（syscall，不经子进程，无法 setuid 降权）→
+    # drops_privilege=False：以 root 运行时它就是以 root 落地。如实标注，并接受 REQUIRE_PRIVILEGE_DROP 裁决。
+    will_execute = confirmed and not dry_run
+    posture, priv_refuse = _privilege_gate(action, drops_privilege=False, will_execute=will_execute)
+
     output = None
-    if not confirmed:
+    if priv_refuse:
+        decided = {"executed": False, "blocked": True, "require_confirm": False, "ok": False,
+                   "reason": priv_refuse}
+    elif not confirmed:
         decided = {"executed": False, "blocked": False, "require_confirm": True, "ok": False,
                    "reason": "动作语义校验通过，等待用户二次确认后执行。"}
     elif dry_run:
@@ -181,6 +191,8 @@ def _fd_truncate_finish(action: str, trace: list[dict], path: str, command: str,
         "layer": "动作语义校验（关键性/软链/存在性）+ fd-safe 落地（O_NOFOLLOW + fstat 普通文件，消除 TOCTOU）",
         "passed": not decided["blocked"], "precheck": precheck,
         "guard": None, "privilege": None, "require_confirm": decided["require_confirm"],
+        # 最小权限「落地身份」态势：truncate 进程内 syscall，以 root 运行即以 root 落地（如实可见）。
+        "privilege_posture": posture,
         # 致命三要素 / Rule of Two 在真实状态变更点的能力面评估（C 腿在此、且在二次确认之下）。
         "rule_of_two": _rule_of_two_detail(action, confirmed=confirmed)}})
     trace.append({"stage": "执行结果", "detail": {
@@ -319,6 +331,24 @@ def _rule_of_two_detail(action: str, *, confirmed: bool) -> dict:
     }
 
 
+def _privilege_gate(action: str, *, drops_privilege: bool, will_execute: bool) -> tuple[dict, str | None]:
+    """变更动作的「落地权限」态势 + fail-closed 裁决（评审整改 · 最小权限默认）。
+
+    返回 (posture, refuse_reason|None)：
+    - posture 始终如实写进「安全校验」段——让思维链 per-action 看见「这条变更以什么身份落地」
+      （非 root / 降权到 opsagent / 以 root 落地），是赛题需求④「核心运维动作在受限 Account 下运行」
+      的**可演示证据**，而非只靠部署配置口头保证。
+    - 仅当 REQUIRE_PRIVILEGE_DROP=true 且本动作**确会以 root 落地**且**确要执行**时给出拒绝原因
+      （fail-closed）。默认（未开该开关）只标注不拦，保 demo 顺滑（与 refuse_root/operator_token 同范式）。
+    """
+    settings = get_settings()
+    posture = privilege_posture(settings.exec_user, drops_privilege=drops_privilege)
+    if will_execute and settings.require_privilege_drop and posture["elevated_landing"]:
+        return posture, ("已启用 REQUIRE_PRIVILEGE_DROP（强制最小权限落地），但本变更动作会以 root 落地："
+                         + posture["reason"] + " → fail-closed 拒绝执行。")
+    return posture, None
+
+
 def _refuse(action: str, trace: list[dict], reason: str, *, precheck: Any = None) -> dict:
     """动作层语义校验未通过：补齐安全校验/执行结果两段，返回拦截结果（绝不进 executor）。"""
     trace = list(trace)
@@ -349,15 +379,27 @@ def _guarded_finish(action: str, trace: list[dict], argv: list[str], rationale: 
 
     # 未确认绝不真执行：强制 dry_run，仅取护栏裁决供前端预览。
     effective_dry = dry_run or not confirmed
-    res = executor.execute_argv(argv, confirmed=confirmed, authorized=authorized, dry_run=effective_dry)
-    decided = _decide(res, confirmed=confirmed, dry_run=dry_run)
+    # 最小权限落地态势 + fail-closed 裁决（kill/clean 经沙箱子进程，可 setuid 降权 → drops_privilege=True）。
+    will_execute = confirmed and not dry_run
+    posture, priv_refuse = _privilege_gate(action, drops_privilege=True, will_execute=will_execute)
+
+    # 强制降权开启且本动作会以 root 落地 → 只取护栏 dry_run 裁决供展示，绝不真正执行（fail-closed）。
+    res = executor.execute_argv(argv, confirmed=confirmed, authorized=authorized,
+                                dry_run=effective_dry or bool(priv_refuse))
+    if priv_refuse:
+        decided = {"executed": False, "blocked": True, "require_confirm": False,
+                   "ok": False, "reason": priv_refuse}
+    else:
+        decided = _decide(res, confirmed=confirmed, dry_run=dry_run)
 
     trace.append({"stage": "安全校验", "detail": {
         "layer": "executor 护栏（防线2 规则库 + 防线4 最小权限）",
-        "passed": not res.get("blocked"),
+        "passed": not res.get("blocked") and not priv_refuse,
         "precheck": precheck,
         "guard": res.get("guard"),
         "privilege": res.get("privilege"),
+        # 最小权限「落地身份」态势：本变更以 root / 降权账户 / 非 root 落地（赛题需求④可演示证据）。
+        "privilege_posture": posture,
         "require_confirm": decided["require_confirm"],
         # 致命三要素 / Rule of Two 在真实状态变更点的能力面评估（C 腿在此、且在二次确认之下）。
         "rule_of_two": _rule_of_two_detail(action, confirmed=confirmed)}})

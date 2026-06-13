@@ -1660,3 +1660,30 @@ READONLY 工具，无 state_change 腿），是"把断言裹成运行时闸门"�
 **安全验证（每步都跑）**：内置红队 **88/88（检出 100% / ASR 0%）**；5 份 RedCode-Exec held-out
 全部 `sealed=True、asr_real=0、leaked_real=[]`——精准化**零检出回归**。全量 **2595 passed**。
 诚实修订同步进 `docs/security-design.md §5`（自选集 0% 仅作内部回归，独立证据以 NL2Bash 0.6%/真 0 为准）。
+
+---
+
+## 2026-06-13 最小权限默认落地：从「配置依赖」到「per-action 可演示 + 可 fail-closed」
+
+**触发**：评审指出赛题基本需求④「核心运维动作需在受限 Account 下运行」此前**只靠部署配置**，
+无 per-action 证据、且有静默缺口——以 root 跑且 `exec_user` 账户不存在时，kill/clean 子进程**无法降权
+静默以 root 落地**，truncate 走进程内 ftruncate **本就以 root 落地**，二者都不显性。把它从"配置依赖"
+做成"默认可见 + 可强制"。
+
+**做了什么**：
+- `privilege.privilege_posture(exec_user, *, drops_privilege)`（纯函数）：判定本次执行的**落地身份**
+  ——非 root（最小权限已满足）/ root 经沙箱降权到受限账户 / root 但账户缺失或进程内 → **以 root 落地**。
+- `actions.py`：两条收尾路径（`_guarded_finish` 子进程 / `_fd_truncate_finish` 进程内）都把 posture
+  **写进「安全校验」段**（并入既有段，保动作链恰好五段）——思维链回放即可看见"这条变更以谁的身份落地"，
+  是需求④的**一手演示证据**。新增 `_privilege_gate`：`REQUIRE_PRIVILEGE_DROP=true` 时对**会以 root 落地**
+  的变更动作 **fail-closed 拒绝**（与 `REFUSE_ROOT` 互补：那管"能否以 root 启动"，这管"变更能否以 root 落地"）。
+- `main.py`：启动播报"落地身份"，以 root + 账户缺失时显式告警并给处置建议（堵静默缺口）。
+- `config.py` + `.env.example`：新增 `REQUIRE_PRIVILEGE_DROP`（默认 false，demo 顺滑）。
+- `docs/deploy-loongarch.md` §3.5：补**最小权限部署**整节——`useradd -r opsagent` + systemd `User=opsagent`
+  + posture 演示 + 生产 fail-closed，坐实需求④（含 §6 验证清单一项）。
+
+**默认行为不变（关键）**：CI/非 root 下 `elevated_landing=False`、门控恒不触发，既有动作语义全绿；
+新增的只是"落地身份如实标注"（始终）+ "强制降权"（仅显式开启时）。`tests/test_privilege_posture.py`
+覆盖四种落地情形 + fail-closed 拒绝 + 默认只标注不拦（root 情形用 monkeypatch 模拟）。
+
+**收尾**：全量 **2602 passed**（+7）；红队 88/88、误杀独立度量与 held-out 不受影响（未碰命令裁决逻辑）。

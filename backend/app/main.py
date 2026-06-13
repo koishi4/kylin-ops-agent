@@ -16,7 +16,7 @@ from app.api.routes import router
 from app.audit import store
 from app.config import get_settings
 from app.core.orchestrator import Orchestrator
-from app.guardrail.privilege import is_running_as_root, least_privilege_check
+from app.guardrail.privilege import is_running_as_root, least_privilege_check, privilege_posture
 from app.guardrail.tool_scan import scan_with_drift
 from app.guardrail.trifecta import assert_perception_isolation
 from app.llm.provider import get_llm
@@ -41,6 +41,16 @@ async def lifespan(app: FastAPI):
     if refuse:
         raise RuntimeError("拒绝启动（最小权限）：" + msg)
     (logger.warning if is_running_as_root() else logger.info)(msg)
+
+    # 最小权限「落地身份」启动播报（评审整改）：把"变更动作会以谁的身份落地"这个静默缺口显性化——
+    # 以 root 跑且 exec_user 账户不存在/未配 → 变更动作将以 root 落地，明确告警并给出处置；
+    # 生产可置 REQUIRE_PRIVILEGE_DROP=true 让动作层 fail-closed 拒绝以 root 落地的变更。
+    posture = privilege_posture(settings.exec_user, drops_privilege=True)
+    if posture["elevated_landing"]:
+        logger.warning("最小权限提醒：%s 生产建议 REQUIRE_PRIVILEGE_DROP=true（强制拒绝 root 落地），"
+                       "或创建 exec_user 受限账户 / 改用非 root 启动后端。", posture["reason"])
+    else:
+        logger.info("最小权限落地身份：%s", posture["reason"])
 
     # 结构性不变量闸门：感知层（LLM 可达的 MCP 工具）必须无『状态变更』能力腿——状态变更只能走
     # 强制二次确认的受控动作层。一旦回归（误把可变工具接进 REGISTRY / 误打 state_change 标签），

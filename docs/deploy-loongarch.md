@@ -96,6 +96,53 @@ pytest -q                                                     # 全套回归（�
 
 > `pytest -q` 全绿是「LoongArch 适配成功」最硬的证据：它会真实拉起 MCP 子进程、跑护栏/根因/审计全链路。把这条实测结果回填到课程报告「第5章 部署」。
 
+## 3.5 最小权限部署（赛题基本需求④：核心运维动作在受限 Account 下运行）
+
+赛题硬性要求「核心运维动作需在受限的 Account 下运行，非必要不使用 root」。本项目对此有**三层**落地，
+部署时务必按下面坐实——否则变更动作会以 root 落地，丢这一分。
+
+**① 创建受限运维账户（推荐做法，一步到位满足需求④）**
+```bash
+sudo useradd -r -s /usr/sbin/nologin opsagent      # 无登录权的服务账户，名字与 exec_user 默认值一致
+sudo chown -R opsagent:opsagent /opt/kylin-ops-agent
+```
+
+**② 让后端以非 root 身份运行**——推荐用 systemd，`User=opsagent` 直接坐实「非必要不 root」：
+```ini
+# /etc/systemd/system/kylin-ops-agent.service
+[Unit]
+Description=Kylin Ops Agent
+After=network.target
+[Service]
+User=opsagent
+Group=opsagent
+WorkingDirectory=/opt/kylin-ops-agent/backend
+ExecStart=/opt/kylin-ops-agent/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio --http h11
+# 生产/联网再按需开下面两项（见 §安全启动守卫）
+# Environment=OPERATOR_TOKEN=<强随机>
+# Environment=AUDIT_HMAC_KEY=<独立密钥>
+# Environment=REQUIRE_PRIVILEGE_DROP=true
+NoNewPrivileges=yes
+[Install]
+WantedBy=multi-user.target
+```
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now kylin-ops-agent
+```
+
+**③ 落地身份是可演示、可审计的（评分证据，不是口头保证）**：每个变更动作（truncate/kill/clean）的
+思维链「安全校验」段都带 `privilege_posture`，明确写出它**以什么身份落地**：
+- 后端以 `opsagent` 跑 → `running_as_root=false`，落地命令天然受限于该账户（最小权限已满足）；
+- 若以 root 跑且配了 `EXEC_USER=opsagent`（默认）→ kill/clean 经沙箱 **setuid 降权**到 opsagent 落地；
+- 若以 root 跑且 `opsagent` 账户**不存在** → 如实标注「将以 root 落地」并在启动日志告警（曾经的静默缺口）。
+
+**④ 生产强制（可选，fail-closed）**：设 `REQUIRE_PRIVILEGE_DROP=true`，动作层会**拒绝任何会以 root
+落地的变更动作**（与 `REFUSE_ROOT` 互补：后者管「能否以 root 启动」，前者管「变更能否以 root 落地」）。
+演示默认不开，保顺滑；隔离/生产建议开。
+
+> 验证：起服务后看启动日志应有「最小权限落地身份：后端以非 root 运行……」；在前端跑一次「安全清理」，
+> 回放 trace 的安全校验段能看到 `privilege_posture.running_as_root=false`——这就是需求④的一手演示证据。
+
 ## 4. 国产化 LLM 运行时
 
 「国产化」由 **DeepSeek 本身满足**（深度求索，权重开源）——无需在 LoongArch 设备上跑本地大模型。
@@ -129,6 +176,8 @@ pytest -q                                                     # 全套回归（�
 - [ ] `/tools` 列出 15 个 MCP 工具
 - [ ] `python scripts/demo.py --provider mock --auto` 七幕全过、exit 0
 - [ ] `pytest -q` 全套通过（回填通过数与耗时）
+- [ ] **最小权限（需求④）**：以 `opsagent` 非 root 起服务，启动日志含「最小权限落地身份：……非 root……」；
+      跑一次「安全清理」回放 trace，安全校验段 `privilege_posture.running_as_root=false`（落地身份可演示证据）
 - [ ] `LLM_PROVIDER=deepseek` 联网可用性结论（设备能否访问 api.deepseek.com）：______
 - [ ] 前端 `dist/` 托管后页面可访问、对话/规则库/回放三抽屉正常
 

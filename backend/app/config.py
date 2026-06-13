@@ -45,11 +45,17 @@ class Settings(BaseSettings):
     # 之后工具 description/schema 被悄改→指纹变→自动隔离；合法升级经 /guardrail/tool-scan/pin 重锚。
     tool_baseline_path: str = "./tool_baseline.json"
 
-    # 执行账户（最小权限，非 root）
+    # 执行账户（最小权限，非 root）。以 root 运行时变更动作会经沙箱 setuid 降权到该账户；
+    # 该账户**不存在**则无法降权，变更命令将以 root 落地（见 privilege.privilege_posture）。
     exec_user: str = "opsagent"
     # 以 root 运行时是否拒绝启动（最小权限启动闸门，审查整改②）。
     # 默认仅告警不阻断（避免误伤官方虚机/容器里的 root 演示）；隔离/生产环境置 true 强制拒绝。
     refuse_root: bool = False
+    # 强制最小权限落地（评审整改 · 赛题需求④「核心运维动作需在受限 Account 下运行」）。
+    # 默认 False（demo 顺滑，仅在动作 trace 如实标注落地身份）；置 true → fail-closed：
+    # 任何会**以 root 落地（未降权 / 降权目标账户不存在 / 在进程内以 root 跑）**的变更动作直接拒绝执行。
+    # 与 refuse_root 互补：refuse_root 管「能不能以 root 启动」，本项管「变更动作能不能以 root 落地」。
+    require_privilege_drop: bool = False
 
     # 执行沙箱（护栏放行后真正落地命令时套的资源/权限保险丝，P4-3）。
     # 机制按可用性自动降级：bwrap/nsjail → 纯 rlimit 兜底（见 core/sandbox.py）。
