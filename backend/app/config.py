@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # 之后工具 description/schema 被悄改→指纹变→自动隔离；合法升级经 /guardrail/tool-scan/pin 重锚。
     tool_baseline_path: str = "./tool_baseline.json"
 
+    # 系统关键配置文件指纹基线（根因分析：配置文件漂移，赛题背景明示场景之一）。TOFU：首次诊断锚定，
+    # 之后 /etc 关键配置被改→指纹变→根因分析报「漂移」；合法变更经 /diagnose?topic=configdrift&pin=true 重锚。
+    config_baseline_path: str = "./config_baseline.json"
+
     # 执行账户（最小权限，非 root）。以 root 运行时变更动作会经沙箱 setuid 降权到该账户；
     # 该账户**不存在**则无法降权，变更命令将以 root 落地（见 privilege.privilege_posture）。
     exec_user: str = "opsagent"

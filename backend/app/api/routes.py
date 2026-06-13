@@ -349,12 +349,15 @@ async def posture(live: bool = False) -> dict:
 
 
 @router.get("/diagnose", dependencies=[Depends(require_operator)])
-async def diagnose(topic: str = "all", path: str = "/") -> dict:
-    """智能根因分析（评分④）：disk/zombie/load/all。只分析给建议，绝不执行处置。
+async def diagnose(topic: str = "all", path: str = "/", pin: bool = False) -> dict:
+    """智能根因分析（评分④）：disk/zombie/load/io/memory/configdrift/all。只分析给建议，绝不处置。
 
+    - memory：内存压力/泄漏关联（RSS 增长泄漏信号 + swap 颠簸，证据链 + 置信度）。
+    - configdrift：配置文件漂移（赛题场景）。TOFU 锚定关键配置基线，之后报 changed/removed/added；
+      确认变更合法后用 pin=true 重锚。
     诊断含同步的磁盘扫描/lsof/采样等阻塞调用，放线程池避免阻塞事件循环（P0-5）。
     """
-    return await asyncio.to_thread(diagnosis.diagnose, topic, path)
+    return await asyncio.to_thread(diagnosis.diagnose, topic, path, pin=pin)
 
 
 @router.post("/action/execute", dependencies=[Depends(require_operator)])

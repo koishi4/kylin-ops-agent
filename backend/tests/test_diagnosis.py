@@ -69,7 +69,9 @@ class TestDiagnoseOthers:
     def test_all_dispatch(self):
         r = diagnosis.diagnose("all", path="/tmp")
         assert r["ok"] is True and r["topic"] == "all"
-        assert len(r["reports"]) == 3
+        # disk/zombie/load/memory 四类纯诊断（configdrift 有 TOFU 锚定副作用，不并入 all）
+        assert len(r["reports"]) == 4
+        assert {"memory", "disk", "zombie", "load"} == {x["topic"] for x in r["reports"]}
         assert "summary" in r
 
     def test_unknown_topic(self):

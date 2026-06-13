@@ -489,8 +489,331 @@ def diagnose_io_correlation(path: str = "/var/log", *,
     return report
 
 
-def diagnose(topic: str = "all", path: str = "/") -> dict:
-    """根因分析统一入口。topic ∈ {disk, zombie, load, io, all}。"""
+# ============================================================================
+# 内存压力 / 泄漏关联根因分析 —— 评分④「智能」核心扩展（与 IO 关联同范式）。
+#
+# 单点「内存使用率高」只是监控；把【内存使用率告警 + 定位到占用最高进程 + 该进程 RSS 在采样窗内
+# 持续增长（泄漏强信号）+ swap 吃紧 + swap 正在换入换出（颠簸）】关联成证据链、据信号强度给
+# confidence，并区分「单进程泄漏 / 整体吃紧 / swap 颠簸」三类根因，才算「根因」而非「告警」。
+# 设计同 IO：**采集与推理分离**，correlate_memory_signals 是纯函数，可用构造数据确定性测试。
+# ============================================================================
+
+# 内存使用率告警阈值（百分比）
+MEM_WARN_PERCENT = 85.0
+# swap 使用率达此值视为存在 swap 压力（内存外溢到磁盘）
+SWAP_PRESSURE_PERCENT = 25.0
+
+# 各信号对「内存压力/泄漏」结论的支撑权重（观测到即累加为 confidence）
+_MEM_WEIGHTS = {
+    "mem_high": 0.25,         # 症状：内存使用率告警
+    "consumer_found": 0.20,   # 关联：定位到占用最高的进程
+    "rss_growing": 0.30,      # 实锤：该进程 RSS 在采样窗内持续增长（泄漏强信号）
+    "swap_pressure": 0.15,    # 旁证：swap 使用率高（内存外溢到磁盘）
+    "swap_thrashing": 0.10,   # 印证：swap 正在换入/换出（颠簸，性能急剧下降）
+}
+
+
+def correlate_memory_signals(sig: dict) -> dict:
+    """纯函数：把已采集的内存信号关联成根因 + 证据链 + 置信度。
+
+    Args:
+        sig: 信号字典（缺失键视为未观测，不参与加权）：
+            mem_percent / mem_warn / available_mb / swap_percent /
+            top{pid,name,rss_mb,rss_grew_bytes,interval_s} / swap_thrashing(bool)
+    Returns:
+        含 root_cause / confidence / evidence / chain / findings / suggestions 的报告。绝不处置。
+    """
+    evidence: list[dict] = []
+    chain: list[str] = []
+    conf = 0.0
+
+    # —— 信号①：内存使用率告警（症状）——
+    mem_percent = sig.get("mem_percent")
+    mem_warn = sig.get("mem_warn", MEM_WARN_PERCENT)
+    mem_high = mem_percent is not None and mem_percent >= mem_warn
+    if mem_high:
+        conf += _MEM_WEIGHTS["mem_high"]
+        evidence.append({"signal": "mem_high",
+                         "detail": f"内存使用率 {mem_percent}% ≥ 告警阈值 {mem_warn}%"})
+        chain.append(f"① 内存使用率 {mem_percent}% 触发告警（可用 {sig.get('available_mb')}MB）")
+
+    # —— 信号②：占用最高进程（关联）——
+    top = sig.get("top") or {}
+    consumer_found = bool(top.get("pid"))
+    if consumer_found:
+        conf += _MEM_WEIGHTS["consumer_found"]
+        evidence.append({"signal": "consumer_found",
+                         "detail": f"{top.get('name')}(pid={top['pid']}) 占用 RSS {top.get('rss_mb')}MB（最高）"})
+        chain.append(f"② 占用最高进程：{top.get('name')}(pid={top['pid']})，RSS {top.get('rss_mb')}MB")
+
+    # —— 信号③：该进程 RSS 持续增长（泄漏实锤）——
+    grew = top.get("rss_grew_bytes", 0) or 0
+    rss_growing = consumer_found and grew > 0
+    if rss_growing:
+        conf += _MEM_WEIGHTS["rss_growing"]
+        evidence.append({"signal": "rss_growing",
+                         "detail": f"pid={top['pid']} 的 RSS 在 {top.get('interval_s')}s 内增长 "
+                                   f"{round(grew / 1024, 1)}KB（泄漏信号）"})
+        chain.append(f"③ 该进程 RSS 在采样窗内 +{round(grew / 1024, 1)}KB（疑似泄漏，持续不释放）")
+
+    # —— 信号④：swap 使用率高（旁证）——
+    swap_percent = sig.get("swap_percent")
+    swap_pressure = swap_percent is not None and swap_percent >= SWAP_PRESSURE_PERCENT
+    if swap_pressure:
+        conf += _MEM_WEIGHTS["swap_pressure"]
+        evidence.append({"signal": "swap_pressure",
+                         "detail": f"swap 使用率 {swap_percent}%（内存外溢到磁盘）"})
+        chain.append(f"④ swap 使用率 {swap_percent}%，内存已外溢到磁盘")
+
+    # —— 信号⑤：swap 正在换入换出（颠簸印证）——
+    swap_thrashing = bool(sig.get("swap_thrashing"))
+    if swap_thrashing:
+        conf += _MEM_WEIGHTS["swap_thrashing"]
+        evidence.append({"signal": "swap_thrashing", "detail": "swap 正在活跃换入/换出（颠簸）"})
+        chain.append("⑤ swap 正在活跃换入换出，系统颠簸、性能急剧下降")
+
+    conf = round(min(conf, 1.0), 2)
+    root_cause, severity, suggestions = _mem_conclusion(
+        mem_high=mem_high, consumer_found=consumer_found, rss_growing=rss_growing,
+        swap_pressure=swap_pressure, swap_thrashing=swap_thrashing,
+        top=top, mem_percent=mem_percent, conf=conf)
+
+    findings = [f"关联了 {len(evidence)} 个信号，置信度 {conf}（{_confidence_label(conf)}）。"]
+    if not chain:
+        chain.append("未采集到内存压力关联异常信号。")
+
+    return {
+        "ok": True, "topic": "memory", "severity": severity,
+        "root_cause": root_cause, "confidence": conf,
+        "confidence_label": _confidence_label(conf),
+        "evidence": evidence, "chain": chain,
+        "findings": findings, "suggestions": suggestions,
+    }
+
+
+def _mem_conclusion(*, mem_high, consumer_found, rss_growing, swap_pressure, swap_thrashing,
+                    top, mem_percent, conf) -> tuple[str, str, list[str]]:
+    """据内存信号组合给根因/严重度/建议（建议是给人看的命令文本，绝不自动执行）。"""
+    if not mem_high and not swap_pressure and not rss_growing:
+        return ("内存与 swap 指标正常，未见内存压力或泄漏迹象。", "ok",
+                ["内存充足，暂无需处理。"])
+
+    severity = "critical" if (conf >= 0.7 and (mem_percent or 0) >= 95) else "warning"
+    name, pid = top.get("name"), top.get("pid")
+    suggestions: list[str] = []
+
+    if rss_growing and consumer_found:
+        root = (f"疑似进程 {name}(pid={pid}) 内存泄漏：RSS 在采样窗内持续增长且未释放，"
+                "若不处置将逐步吃尽内存并触发 OOM。")
+        suggestions.append(
+            f"确认是否泄漏：`process_detail({pid})` / 多次 `ps -o pid,rss,vsz,cmd -p {pid}` 看 RSS 是否单调上升。")
+        suggestions.append(
+            "  · 若确认泄漏：优先**优雅重启**该服务止血（释放内存），再从应用侧查泄漏点（对象未释放/无上限缓存）。")
+        suggestions.append(
+            "  · 切勿盲目 `kill -9`；受控处置走『安全清理/kill』按钮，在护栏二次确认下执行（绝不自动处置）。")
+    elif consumer_found and mem_high:
+        root = (f"进程 {name}(pid={pid}) 内存占用最高，叠加整体内存吃紧——"
+                "更像负载/配置过高而非单进程泄漏。")
+        suggestions.append(
+            f"评估 {name} 的内存配置是否合理（JVM -Xmx / 连接池 / 缓存上限）；必要时扩容或限流。")
+    elif swap_thrashing or swap_pressure:
+        root = "内存不足导致 swap 颠簸（频繁换入换出），磁盘 IO 飙升、系统整体变慢。"
+        suggestions.append(
+            "定位内存大户：`list_processes(sort_by='memory')`；考虑加物理内存或优化大户进程。")
+    else:
+        root = "内存使用率偏高但无单一元凶，多为多进程累积占用。"
+        suggestions.append("`list_processes(sort_by='memory')` 看 Top N 累积占用；评估是否需扩容。")
+
+    if conf < 0.4:
+        suggestions.append("注：当前关联信号较弱（置信度低），建议多采样几次确认趋势后再处置。")
+    return root, severity, suggestions
+
+
+def diagnose_memory(*, grow_interval: float = 0.5,
+                    warn_percent: float = MEM_WARN_PERCENT) -> dict:
+    """内存压力/泄漏关联根因采集入口：采全只读信号后交 correlate_memory_signals 推理。
+
+    全程只读（psutil），绝不处置。grow_interval 为判 RSS 增长（泄漏信号）的两次采样间隔，设 0 则跳过。
+    """
+    vm = psutil.virtual_memory()
+    sm0 = psutil.swap_memory()
+    mem_percent = round(vm.percent, 1)
+    available_mb = round(vm.available / 1e6, 1)
+    swap_percent = round(sm0.percent, 1) if sm0.total else 0.0
+
+    # 占用最高进程（按 RSS）
+    procs: list[tuple[int, str, int]] = []
+    for p in psutil.process_iter(["pid", "name", "memory_info"]):
+        try:
+            mi = p.info.get("memory_info")
+            if mi:
+                procs.append((p.info["pid"], p.info.get("name") or "?", mi.rss))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    procs.sort(key=lambda x: x[2], reverse=True)
+
+    pid = name = None
+    rss = 0
+    if procs:
+        pid, name, rss = procs[0]
+
+    # 围绕一次采样窗：判榜首 RSS 增长（泄漏）+ swap 是否在换入换出（颠簸）
+    grew = 0
+    swap_thrashing = False
+    if grow_interval > 0:
+        time.sleep(grow_interval)
+        if pid is not None:
+            try:
+                rss1 = psutil.Process(pid).memory_info().rss
+                grew = max(rss1 - rss, 0)
+                rss = rss1
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        if sm0.total:
+            sm1 = psutil.swap_memory()
+            swap_thrashing = (sm1.sin - sm0.sin) > 0 or (sm1.sout - sm0.sout) > 0
+
+    top = ({"pid": pid, "name": name, "rss_mb": round(rss / 1e6, 1),
+            "rss_grew_bytes": grew, "interval_s": grow_interval} if pid is not None else {})
+
+    signals = {
+        "mem_percent": mem_percent, "mem_warn": warn_percent, "available_mb": available_mb,
+        "swap_percent": swap_percent, "top": top, "swap_thrashing": swap_thrashing,
+    }
+    return correlate_memory_signals(signals)
+
+
+# ============================================================================
+# 配置文件漂移检测 —— 赛题背景明示场景「配置文件漂移」的根因分析落点（原创 IP）。
+#
+# 思路同 MCP 工具 schema 基线（TOFU）：首次诊断把一组系统关键配置文件的指纹锚定为基线；
+# 之后每次诊断比对当前指纹，报告 changed/removed/added，关键配置（passwd/sudoers/sshd_config…）
+# 漂移判 critical。纯函数 compare_config_fingerprints 与采集分离，可确定性测试。
+# 只读系统配置 + 只写「Agent 自己的基线文件」（非系统文件），绝不改任何系统配置。
+# ============================================================================
+
+# 受监控的系统关键配置（变更影响安全/启动/登录/网络）。无权读内容时退回元数据指纹，不依赖 root。
+_WATCHED_CONFIGS = [
+    "/etc/passwd", "/etc/group", "/etc/sudoers", "/etc/fstab",
+    "/etc/ssh/sshd_config", "/etc/hosts", "/etc/hostname", "/etc/crontab",
+    "/etc/resolv.conf", "/etc/nsswitch.conf", "/etc/login.defs",
+]
+# 这些配置一旦漂移即高危（提权/登录/启动/挂载面）
+_CRITICAL_CONFIGS = {"/etc/passwd", "/etc/group", "/etc/sudoers",
+                     "/etc/ssh/sshd_config", "/etc/fstab"}
+
+
+def _config_fingerprint(path: str) -> dict:
+    """单个配置文件的指纹：优先内容 sha256；无权读则退回元数据（size+mtime+mode）。"""
+    try:
+        st = os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return {"exists": False}
+    except OSError as e:
+        return {"exists": True, "error": f"stat 失败：{e}"}
+    meta = {"exists": True, "size": st.st_size, "mode": oct(st.st_mode & 0o7777),
+            "mtime": int(st.st_mtime)}
+    try:
+        import hashlib
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        meta["sha256"] = h.hexdigest()
+    except (PermissionError, OSError):
+        meta["sha256"] = None      # 无权读内容 → 用元数据指纹兜底（不依赖 root）
+        meta["unreadable"] = True
+    return meta
+
+
+def _fp_key(fp: dict):
+    """指纹的「可比较核心」：有内容哈希用哈希，否则用元数据三元组。"""
+    if fp.get("sha256"):
+        return ("sha256", fp["sha256"])
+    return ("meta", fp.get("size"), fp.get("mtime"), fp.get("mode"))
+
+
+def compare_config_fingerprints(baseline: dict, current: dict) -> dict:
+    """纯函数：比对基线与当前配置指纹，分出 changed/removed/added/unchanged + 严重度。"""
+    changed, removed, added, unchanged = [], [], [], []
+    for p, base_fp in baseline.items():
+        cur_fp = current.get(p) or {}
+        base_exists, cur_exists = base_fp.get("exists", False), cur_fp.get("exists", False)
+        if base_exists and not cur_exists:
+            removed.append(p)
+        elif cur_exists and not base_exists:
+            added.append(p)        # 基线时不存在、现在出现
+        elif cur_exists and base_exists:
+            (changed if _fp_key(cur_fp) != _fp_key(base_fp) else unchanged).append(p)
+    for p, cur_fp in current.items():  # 基线里没有、当前监控到的新关键配置
+        if p not in baseline and cur_fp.get("exists"):
+            added.append(p)
+    drift = changed + removed + added
+    crit = sorted({p for p in drift if p in _CRITICAL_CONFIGS})
+    severity = "critical" if crit else ("warning" if drift else "ok")
+    return {"changed": sorted(changed), "removed": sorted(removed), "added": sorted(set(added)),
+            "unchanged": sorted(unchanged), "critical_drift": crit, "severity": severity}
+
+
+def diagnose_config_drift(*, baseline_path: str | None = None, pin: bool = False) -> dict:
+    """配置文件漂移根因分析（赛题场景）。TOFU：首次（无基线）或 pin=True 时锚定基线；否则比对报漂移。
+
+    只读系统配置 + 只写 Agent 自己的基线文件（config_baseline.json），绝不改任何系统配置。
+    """
+    import json
+
+    from app.config import get_settings
+    path = baseline_path or get_settings().config_baseline_path
+    current = {p: _config_fingerprint(p) for p in _WATCHED_CONFIGS}
+
+    baseline = None
+    if not pin and os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                baseline = json.load(f).get("fingerprints")
+        except (json.JSONDecodeError, OSError):
+            baseline = None
+
+    if baseline is None:  # 首锚（TOFU）/ 重锚：写基线，不报漂移
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"pinned_at": int(time.time()), "fingerprints": current}, f,
+                          ensure_ascii=False, indent=2)
+        except OSError as e:
+            return {"ok": False, "topic": "configdrift", "error": f"基线写入失败（{path}）：{e}"}
+        note = "重新锚定" if pin else "首次锚定（TOFU）"
+        return {"ok": True, "topic": "configdrift", "severity": "ok", "baseline_pinned": True,
+                "watched": len(current),
+                "findings": [f"已{note} {len(current)} 个关键配置的基线指纹；后续诊断据此报漂移。"],
+                "suggestions": ["首次锚定后，对 /etc 关键配置的任何改动都会在下次诊断中显现。"]}
+
+    cmp = compare_config_fingerprints(baseline, current)
+    findings = [f"比对 {len(current)} 个关键配置：变更 {len(cmp['changed'])}、"
+                f"消失 {len(cmp['removed'])}、新增 {len(cmp['added'])}。"]
+    suggestions: list[str] = []
+    if cmp["severity"] == "ok":
+        findings.append("未检测到配置漂移，与基线一致。")
+        suggestions.append("配置稳定，无需处理。")
+    else:
+        if cmp["critical_drift"]:
+            findings.append(f"⚠ 关键配置发生漂移：{cmp['critical_drift']}（涉及提权/登录/启动/挂载，高危）。")
+            suggestions.append(f"立即核对是否授权：`diff` 当前与备份，重点查 {cmp['critical_drift']}。")
+        if cmp["changed"]:
+            suggestions.append(f"已变更：{cmp['changed']} —— 确认是否计划内变更，非计划应回滚并排查改动来源。")
+        if cmp["removed"]:
+            suggestions.append(f"已消失：{cmp['removed']} —— 关键配置缺失可能致服务异常，尽快恢复。")
+        if cmp["added"]:
+            suggestions.append(f"新增：{cmp['added']} —— 确认来源合法（防植入）。")
+        suggestions.append("确认所有变更合法后，可经 `?topic=configdrift&pin=true` 重锚基线。")
+    return {"ok": True, "topic": "configdrift", "baseline_pinned": False,
+            "watched": len(current), **cmp, "findings": findings, "suggestions": suggestions}
+
+
+def diagnose(topic: str = "all", path: str = "/", *, pin: bool = False) -> dict:
+    """根因分析统一入口。topic ∈ {disk, zombie, load, io, memory, configdrift, all}。
+
+    pin: 仅 configdrift 用——True 时重锚配置基线（确认变更合法后调用）。
+    """
     if topic == "disk":
         return diagnose_disk(path)
     if topic == "zombie":
@@ -500,12 +823,19 @@ def diagnose(topic: str = "all", path: str = "/") -> dict:
     if topic == "io":
         # io 关联诊断聚焦日志高发地；未显式指定时用 /var/log 而非全盘扫描
         return diagnose_io_correlation("/var/log" if path == "/" else path)
+    if topic == "memory":
+        return diagnose_memory()
+    if topic == "configdrift":
+        return diagnose_config_drift(pin=pin)
     if topic == "all":
-        reports = [diagnose_disk(path), diagnose_zombies(), diagnose_load()]
+        # 含内存关联（disk/zombie/load/memory 四类纯诊断）；configdrift 有 TOFU 锚定副作用，
+        # 故不并入 all，留作显式 topic 调用（避免 all 在首次运行时静默写基线）。
+        reports = [diagnose_disk(path), diagnose_zombies(), diagnose_load(), diagnose_memory()]
         problems = [r for r in reports if r.get("severity") not in ("ok", "unknown", None)]
         return {
             "ok": True, "topic": "all",
             "summary": (f"共 {len(problems)} 项需关注。" if problems else "系统各项指标正常。"),
             "reports": reports,
         }
-    return {"ok": False, "error": f"未知诊断主题: {topic}（可选 disk/zombie/load/io/all）"}
+    return {"ok": False,
+            "error": f"未知诊断主题: {topic}（可选 disk/zombie/load/io/memory/configdrift/all）"}

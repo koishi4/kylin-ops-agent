@@ -6,6 +6,7 @@ audit.sqlite
 *.sqlite
 *.sqlite-*
 tool_baseline.json
+config_baseline.json
 redteam-report.json
 nl-eval-report.json
 agentic-eval-report.json

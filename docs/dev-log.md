@@ -1687,3 +1687,33 @@ READONLY 工具，无 state_change 腿），是"把断言裹成运行时闸门"�
 覆盖四种落地情形 + fail-closed 拒绝 + 默认只标注不拦（root 情形用 monkeypatch 模拟）。
 
 **收尾**：全量 **2602 passed**（+7）；红队 88/88、误杀独立度量与 held-out 不受影响（未碰命令裁决逻辑）。
+
+---
+
+## 2026-06-13 加厚根因分析（评分④）：内存泄漏/压力关联 + 配置文件漂移（赛题明示场景）
+
+**触发**：评审指出④根因分析是 55% 里的整 1/4、却相对护栏栈单薄，且赛题背景明示三场景
+「僵尸进程 / 磁盘 I/O 异常 / **配置文件漂移**」——前两者已覆盖，**配置漂移完全缺失**。按"工程精力
+该投④而非继续磨护栏"的结论，补两个**跨信号关联分析器**，沿用既有 IO 关联的「采集与推理分离 +
+证据链 + 置信度」范式（纯函数可确定性测试）。
+
+**① 内存压力/泄漏关联（`correlate_memory_signals` + `diagnose_memory`）**
+把【内存使用率告警 + 定位占用最高进程 + 该进程 **RSS 在采样窗内持续增长（泄漏强信号）** + swap
+吃紧 + swap 换入换出（颠簸）】五信号关联成证据链、加权出置信度，并区分**三类根因**：单进程泄漏
+（RSS 单调涨）/ 整体吃紧（多进程累积）/ swap 颠簸。处置建议分流（泄漏→优雅重启止血查泄漏点；
+颠簸→加内存/优化大户），一律只给命令文本、绝不自动处置。
+
+**② 配置文件漂移（`compare_config_fingerprints` + `diagnose_config_drift`）—— 赛题明示场景，原创 IP**
+思路同 MCP 工具 schema 基线（TOFU）：首次诊断把一组 `/etc` 关键配置（passwd/group/sudoers/fstab/
+sshd_config…）的指纹锚定为基线（**内容 sha256；无权读退回 size+mtime+mode 元数据，不依赖 root**），
+之后比对报 **changed/removed/added**，关键配置（提权/登录/启动/挂载面）漂移判 **critical**。确认变更
+合法后经 `?topic=configdrift&pin=true` 重锚。只读系统配置 + 只写 Agent 自己的基线文件，绝不改系统配置。
+
+**接线**：`diagnose()` 调度新增 `memory`/`configdrift` 两 topic（`pin` 参数）；`all` 并入 memory
+（configdrift 有 TOFU 写基线副作用，留作显式 topic）；API `/diagnose` 暴露新 topic + pin。
+`config.py` 新增 `config_baseline_path`（仿 tool_baseline）。
+
+**测试**：`tests/test_diagnosis_ext.py` —— 内存四类场景（泄漏 critical/conf 1.0/五段证据链、压力非泄漏、
+颠簸、正常、低置信度提示）+ 配置漂移纯函数（changed/removed/added/元数据兜底）+ **端到端**（TOFU 锚定→
+改关键文件报 critical→删文件报 removed→重锚回 ok）+ 调度。既有 `test_all_dispatch` 同步更新（3→4 报告）。
+**全量 2616 passed**（+14）。红队/误杀/held-out 不受影响（只读分析，未碰命令裁决）。
