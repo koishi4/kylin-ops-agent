@@ -9,7 +9,8 @@ import { computed } from 'vue'
 
 const props = defineProps({ guard: { type: Object, required: true } })
 
-const riskType = { critical: 'danger', high: 'warning', medium: '', low: 'info' }
+// medium 复用 warning（EP el-tag type 仅接受 primary/success/info/warning/danger，不接受空串）
+const riskType = { critical: 'danger', high: 'warning', medium: 'warning', low: 'info' }
 const actionType = { deny: 'danger', confirm: 'warning', allow: 'success' }
 
 // 正则/路径命中：剔除 AST- 前缀的合成规则（那些单列到右栏，避免两栏重复）

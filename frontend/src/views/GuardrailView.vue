@@ -22,7 +22,8 @@ const TABS = [
 const rulesData = ref(null)
 const rulesLoading = ref(false)
 const rulesReloading = ref(false)
-const riskType = { critical: 'danger', high: 'warning', medium: '', low: 'info' }
+// medium 复用 warning（EP el-tag type 仅接受 primary/success/info/warning/danger，不接受空串）
+const riskType = { critical: 'danger', high: 'warning', medium: 'warning', low: 'info' }
 const actionType = { deny: 'danger', confirm: 'warning', allow: 'success' }
 const catText = { delete: '删除', permission: '权限', disk: '磁盘', privilege: '提权', config: '配置', inject: '注入', egress: '外联' }
 const CATS = ['delete', 'permission', 'disk', 'privilege', 'config', 'inject', 'egress']
