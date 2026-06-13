@@ -1717,3 +1717,42 @@ sshd_config…）的指纹锚定为基线（**内容 sha256；无权读退回 si
 颠簸、正常、低置信度提示）+ 配置漂移纯函数（changed/removed/added/元数据兜底）+ **端到端**（TOFU 锚定→
 改关键文件报 critical→删文件报 removed→重锚回 ok）+ 调度。既有 `test_all_dispatch` 同步更新（3→4 报告）。
 **全量 2616 passed**（+14）。红队/误杀/held-out 不受影响（只读分析，未碰命令裁决）。
+
+---
+
+## 2026-06-13 前端全面升级：从「EP 默认模板」到「麒麟运维指挥台」（评分：文档与演示 20%）
+
+**触发**：后端已较完善（护栏栈 + 五段可追溯 + 加厚的根因分析），但前端仍是 Element Plus 默认观感
+——深蓝导航条 + 默认蓝主色 + 一排 emoji 按钮弹抽屉，**「一眼 AI 模板」**，且本次新增的后端能力
+（内存/配置漂移诊断、`privilege_posture`/`rule_of_two` 思维链字段）完全没有可视化入口。评分含
+「文档与演示 20%」，演示界面的辨识度与对核心卖点的承载直接影响这一项，故做一次有设计主张的重构。
+
+**设计主张**：取「安全运维指挥台 (SOC console)」隐喻而非通用后台。一套墨底 + **玉色(jade)主调**
+的语义化告警色阶（玉=安全/放行，琥珀=警示，珊瑚红=危急，青=感知，紫=策略闸门），呼应「麒麟/玉」与
+项目灵魂「安全护栏」。去 emoji：导航与状态全部换成**自绘一致笔触的描边 SVG 图标**（`Icon.vue`），
+并自绘一枚**盾形+脉冲的麒麟徽标**——这是去模板化最直接的视觉信号。全本地字体栈（部署目标可能离线，
+**绝不挂外网字体**），技术令牌（trace_id/指纹/命令/pid）一律等宽。
+
+**结构重构**：`顶栏一排按钮 + 一堆右侧抽屉` → `顶部实时状态条 + 左侧常驻导航栏 + 工作区视图切换`。
+状态条含玉色脉冲「LLM 在线」、MCP 工具数、`护栏 ARMED`、实时钟；左栏五个常驻视图按评分子项组织，
+评委模式单列高亮。视图用 `keep-alive` 保活，切换不丢状态（如对话记录、诊断结果）。
+
+**承载新后端能力（关键）**：
+- `DiagnoseView` 全面支持 7 个诊断主题，**新增 memory / configdrift**；把根因结论、**置信度计量条**、
+  **证据链（信号关联）** 可视化；配置漂移按 changed/removed/added 分列、关键漂移标红、可「确认合法→重锚」。
+- `TraceDetail` 新增渲染 **最小权限落地身份**（`privilege_posture`：非 root / 降权 / ⚠以 root 落地）
+  与 **致命三要素·Rule of Two**（`rule_of_two`：腿数/满足态/能力腿 chips）——本次后端整改的可演示一手证据。
+- 共享 `TraceTimeline`：自绘五段竖向链路（按阶段语义着色 + 发光节点），统一承载「可追溯思维链」，
+  复用于对话内联 / 审计回放 / 评委模式（取代三处重复的 el-timeline）。
+- `AuditView` 补**证据包导出 + 下载 JSON**（自封口 HMAC seal）；`GuardrailView` 把规则库/命令检测台/
+  执行沙箱并入一个分段视图；`CapabilityView` 把能力矩阵 + 供应链扫描并入，三腿用发光圆点矩阵呈现。
+
+**实现取舍**：保留 Element Plus（表格/输入/消息等），但经 `theme.css` 改写其暗色 CSS 变量，让框架组件
+并入墨+玉调色板而非默认蓝；signature 外壳（状态条/导航/卡片/时间线/告警色）自绘。`api.js` 补 `diagnose` 的
+`pin` 参数与 `exportEvidence`。`main.js` 启用 EP 暗色变量 + 注入 theme.css；`index.html` 置 `html.dark`。
+
+**验证**：`vite build` 通过（编译全部 .vue 模板，仅 EP 体积告警，属预期）；起 dev+后端实测：vite 服务正常、
+`/api` 代理通；逐一核对**新视图绑定 vs 真实后端数据**——memory（severity/confidence/chain/root_cause）、
+configdrift（baseline_pinned/watched/severity）、trifecta（tools/invariant）、guardrail check（allowed/risk/
+ast_findings）、chat（intent/trace 五段/tool_calls）、action dry-run（安全校验段确含 privilege_posture +
+rule_of_two，键与 `TraceDetail` 绑定一一对应）。纯前端改动，后端与全部测试不受影响。

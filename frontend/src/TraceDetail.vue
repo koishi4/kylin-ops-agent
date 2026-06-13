@@ -1,22 +1,42 @@
 <script setup>
 /**
- * 执行链单段明细渲染（P4-2/P4-3 前端接入）。
- * 在原本的「原始 JSON」基础上，对两类结构做友好可视化：
- *   - 安全校验段含 guard（含 ast_findings）→ 渲染「正则 / AST 结构分析」两栏（GuardVerdict）
- *   - 执行结果段 output 含沙箱字段 → 渲染「沙箱内执行 / 失控被掐死」横幅
- * 其余明细仍回退为原始 JSON。复用于内联对话 trace 与回放抽屉。
+ * 执行链单段明细渲染。在「原始 JSON」之上对若干结构做友好可视化：
+ *   - 安全校验段含 guard（含 ast_findings）→ 正则 / AST 双栏（GuardVerdict）
+ *   - 安全校验段含 privilege_posture → 「最小权限落地身份」徽标（赛题需求④ per-action 证据）
+ *   - 安全校验段含 rule_of_two → 「致命三要素 / Rule of Two」能力面小结
+ *   - 执行结果段 output 含沙箱字段 → 「沙箱内执行 / 失控被掐死」横幅
+ * 其余明细回退为原始 JSON。复用于内联对话 trace、回放与评委模式。
  */
 import { computed } from 'vue'
 import GuardVerdict from './GuardVerdict.vue'
+import Icon from './Icon.vue'
 
 const props = defineProps({ detail: { default: null } })
 
 const isObj = computed(() => props.detail && typeof props.detail === 'object')
-// 命令护栏裁决（executor 护栏段把 GuardResult.to_dict() 放在 detail.guard）
 const guard = computed(() =>
   isObj.value && props.detail.guard && typeof props.detail.guard === 'object'
     ? props.detail.guard : null)
-// 沙箱处置（执行结果段 detail.output 里带 sandbox_killed/limit_hit/sandbox）
+
+// 最小权限落地态势（actions.py 写入安全校验段）
+const posture = computed(() =>
+  isObj.value && props.detail.privilege_posture && typeof props.detail.privilege_posture === 'object'
+    ? props.detail.privilege_posture : null)
+const postureKind = computed(() => {
+  const p = posture.value
+  if (!p) return null
+  if (p.elevated_landing) return { cls: 'bad', text: '⚠ 以 root 落地', ic: 'alert' }
+  if (!p.running_as_root) return { cls: 'ok', text: '非 root · 受限账户落地', ic: 'lock' }
+  if (p.drop_usable) return { cls: 'ok', text: `降权 → ${p.drop_target}`, ic: 'lock' }
+  return { cls: 'warn', text: '权限态势', ic: 'lock' }
+})
+
+// 致命三要素 / Rule of Two 能力面（actions.py 写入安全校验段）
+const rot = computed(() =>
+  isObj.value && props.detail.rule_of_two && typeof props.detail.rule_of_two === 'object'
+    ? props.detail.rule_of_two : null)
+
+// 沙箱处置（执行结果段）
 const sandbox = computed(() => {
   const o = isObj.value ? props.detail.output : null
   if (o && typeof o === 'object' && ('limit_hit' in o || 'sandbox_killed' in o)) return o
@@ -24,7 +44,7 @@ const sandbox = computed(() => {
 })
 const sbKilled = computed(() => !!sandbox.value && !!(sandbox.value.sandbox_killed || sandbox.value.limit_hit))
 
-const enriched = computed(() => !!guard.value || !!sandbox.value)
+const enriched = computed(() => !!guard.value || !!sandbox.value || !!posture.value || !!rot.value)
 function pretty(d) { return typeof d === 'string' ? d : JSON.stringify(d, null, 2) }
 </script>
 
@@ -32,24 +52,48 @@ function pretty(d) { return typeof d === 'string' ? d : JSON.stringify(d, null, 
   <div class="td-body">
     <GuardVerdict v-if="guard" :guard="guard" />
 
-    <el-alert
-      v-if="sandbox"
-      :type="sbKilled ? 'error' : 'success'"
-      :closable="false"
-      class="sb"
-      show-icon
-      :title="sbKilled
-        ? `⛔ 失控进程被执行沙箱掐死（命中限额：${sandbox.limit_hit || '未知'}）`
-        : `✓ 命令在执行沙箱内安全落地（后端：${sandbox.sandbox || 'rlimit'}）`"
-    >
-      <div class="sb-meta">
-        沙箱后端：<code>{{ sandbox.sandbox || '-' }}</code> ·
-        被杀：{{ sandbox.sandbox_killed }} ·
-        命中限额：{{ sandbox.limit_hit || '无（未触发）' }}
+    <!-- 最小权限落地身份 -->
+    <div v-if="posture" class="mini" :class="postureKind.cls">
+      <div class="mini-h">
+        <Icon :name="postureKind.ic" :size="14" />
+        <span class="mini-t">最小权限落地</span>
+        <span class="mini-badge" :class="postureKind.cls">{{ postureKind.text }}</span>
       </div>
-    </el-alert>
+      <div class="mini-r">{{ posture.reason }}</div>
+    </div>
 
-    <!-- 富视图存在时，原始 JSON 收进折叠；否则直接展示 JSON（保持旧行为） -->
+    <!-- 致命三要素 / Rule of Two -->
+    <div v-if="rot" class="mini" :class="rot.rule_of_two_satisfied ? 'ok' : 'bad'">
+      <div class="mini-h">
+        <Icon name="capability" :size="14" />
+        <span class="mini-t">致命三要素 · Rule of Two</span>
+        <span class="mini-badge neutral">{{ rot.leg_count }}/3 腿</span>
+        <span class="mini-badge" :class="rot.rule_of_two_satisfied ? 'ok' : 'bad'">
+          {{ rot.rule_of_two_satisfied ? '✓ 满足' : '✗ 需人工审批' }}
+        </span>
+        <span v-if="rot.human_in_loop" class="mini-badge warn">人工在环</span>
+      </div>
+      <div v-if="rot.legs && rot.legs.length" class="mini-legs">
+        <span v-for="l in rot.legs" :key="l" class="leg-chip">{{ l }}</span>
+      </div>
+      <div v-if="rot.note" class="mini-r">{{ rot.note }}</div>
+    </div>
+
+    <!-- 沙箱处置 -->
+    <div v-if="sandbox" class="sb" :class="sbKilled ? 'bad' : 'ok'">
+      <Icon :name="sbKilled ? 'bolt' : 'check'" :size="15" />
+      <div class="sb-body">
+        <div class="sb-t">{{ sbKilled
+          ? `失控进程被执行沙箱掐死（命中限额：${sandbox.limit_hit || '未知'}）`
+          : `命令在执行沙箱内安全落地（后端：${sandbox.sandbox || 'rlimit'}）` }}</div>
+        <div class="sb-meta">
+          后端 <code>{{ sandbox.sandbox || '-' }}</code> · 被杀 {{ sandbox.sandbox_killed }} ·
+          命中限额 {{ sandbox.limit_hit || '无' }}
+        </div>
+      </div>
+    </div>
+
+    <!-- 富视图存在时原始 JSON 收进折叠；否则直接展示（保旧行为） -->
     <el-collapse v-if="enriched" class="td-raw">
       <el-collapse-item title="原始明细 (JSON)" name="raw">
         <pre class="detail">{{ pretty(detail) }}</pre>
@@ -61,8 +105,36 @@ function pretty(d) { return typeof d === 'string' ? d : JSON.stringify(d, null, 
 
 <style scoped>
 .td-body { display: flex; flex-direction: column; gap: 8px; }
-.sb { margin: 0; }
-.sb-meta { font-size: 12px; margin-top: 2px; }
-.sb-meta code { background: rgba(0,0,0,.06); padding: 0 4px; border-radius: 3px; }
-.td-raw :deep(.el-collapse-item__header) { font-size: 12px; height: 30px; line-height: 30px; }
+
+.mini { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--ink-1); border-left-width: 3px; }
+.mini.ok { border-left-color: var(--jade); }
+.mini.warn { border-left-color: var(--amber); }
+.mini.bad { border-left-color: var(--coral); }
+.mini-h { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; color: var(--text-1); }
+.mini-t { font-size: 12.5px; font-weight: 600; color: var(--text-0); }
+.mini-badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; font-weight: 600; }
+.mini-badge.ok { background: var(--jade-soft); color: var(--jade); }
+.mini-badge.warn { background: var(--amber-soft); color: var(--amber); }
+.mini-badge.bad { background: var(--coral-soft); color: var(--coral); }
+.mini-badge.neutral { background: var(--ink-3); color: var(--text-1); font-family: var(--mono); }
+.mini-r { font-size: 11.5px; color: var(--text-2); line-height: 1.55; margin-top: 5px; }
+.mini-legs { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+.leg-chip { font-family: var(--mono); font-size: 10.5px; color: var(--cyan); background: var(--cyan-soft); padding: 1px 7px; border-radius: 6px; }
+
+.sb { display: flex; gap: 9px; align-items: flex-start; border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+.sb.ok { background: var(--jade-soft); color: var(--jade); }
+.sb.bad { background: var(--coral-soft); color: var(--coral); }
+.sb-body { min-width: 0; }
+.sb-t { font-size: 12.5px; font-weight: 600; }
+.sb-meta { font-size: 11px; color: var(--text-2); margin-top: 2px; }
+.sb-meta code { background: var(--ink-3); padding: 0 4px; border-radius: 3px; color: var(--text-1); }
+
+.detail {
+  margin: 0; padding: 9px 11px; background: var(--ink-0); border: 1px solid var(--line-soft); border-radius: 7px;
+  font-size: 11.5px; white-space: pre-wrap; word-break: break-all; color: var(--text-1); line-height: 1.55;
+}
+.td-raw { border: none; --el-collapse-border-color: var(--line-soft); }
+.td-raw :deep(.el-collapse-item__header) { font-size: 12px; height: 30px; line-height: 30px; background: transparent; color: var(--text-2); border: none; }
+.td-raw :deep(.el-collapse-item__wrap) { background: transparent; border: none; }
+.td-raw :deep(.el-collapse-item__content) { padding-bottom: 6px; }
 </style>

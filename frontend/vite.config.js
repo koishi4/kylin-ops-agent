@@ -4,12 +4,10 @@ import vue from '@vitejs/plugin-vue'
 // 开发服务器默认 5173；/api 代理到 FastAPI 后端，避免跨域配置散落
 export default defineConfig({
   plugins: [vue()],
-  // 代码分割（P1 vendor 拆分 + P2 业务懒加载）：
-  // ① manualChunks 把体积大头 element-plus 与 vue 运行时拆成独立 vendor chunk，
-  //    业务代码改动不再使整个 ~1.08MB 包失效缓存，首屏也能并行下载。
-  // ② 评委模式面板（JudgeMode.vue）用 defineAsyncComponent 动态 import（见 App.vue），
-  //    Vite 自动为它切出独立 async chunk，首屏主包不再包含这块，点开抽屉时才按需下载。
-  // 轻量配置，不重写前端。
+  // 代码分割（vendor 拆分）：manualChunks 把体积大头 element-plus 与 vue 运行时拆成独立
+  // vendor chunk，业务代码改动不再使整个包失效缓存，首屏也能并行下载。
+  // 业务视图（views/*）已是常驻指挥台的一部分、体积很小（业务主包仅 ~90KB），随主包加载即可，
+  // 无需再切 async chunk；大头始终是 element-plus（约 922KB），由 vendor 拆分独立缓存。
   build: {
     rollupOptions: {
       output: {

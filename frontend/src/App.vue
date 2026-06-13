@@ -1,788 +1,107 @@
 <script setup>
-import { ref, computed, onMounted, nextTick, defineAsyncComponent } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { chat, getHealth, listTools, listTraces, getTrace, verifyTrace, diagnose, executeAction, getRules, reloadRules, getTrifecta, getToolScan, checkCommand, sandboxDemo } from './api.js'
-import GuardVerdict from './GuardVerdict.vue'
-import TraceDetail from './TraceDetail.vue'
-// 评委模式面板只在抽屉打开时（v-if="judgeOpen"）才渲染，故懒加载：拆成独立 chunk，
-// 仅在点开「🏆 评委模式」时按需下载，首屏主包不含这块（连同其专属依赖）。P2 代码分割。
-const JudgeMode = defineAsyncComponent(() => import('./JudgeMode.vue'))
+/**
+ * 麒麟运维指挥台 · 应用外壳（Kylin Ops Command Deck）。
+ * 取「安全运维指挥台」隐喻：顶部实时状态条 + 左侧常驻导航栏 + 右侧工作区视图切换，
+ * 取代原先「顶栏一排按钮弹抽屉」的通用后台模板。各视图按评分子项组织，keep-alive 保活切换不丢状态。
+ */
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { getHealth, listTools } from './api.js'
+import Icon from './Icon.vue'
+import ConsoleView from './views/ConsoleView.vue'
+import DiagnoseView from './views/DiagnoseView.vue'
+import GuardrailView from './views/GuardrailView.vue'
+import CapabilityView from './views/CapabilityView.vue'
+import AuditView from './views/AuditView.vue'
+import JudgeMode from './JudgeMode.vue'
 
-const provider = ref('-')
-const tools = ref([])
-const input = ref('')
-const loading = ref(false)
-const messages = ref([
-  { role: 'assistant', answer: '你好，我是麒麟安全智能运维助手。试试问我：磁盘还剩多少 / 内存占用 / 哪个进程最吃 CPU。也可以点右上角「一键体检」做根因分析。', trace: [] },
-])
-const scroller = ref(null)
+const provider = ref('…')
+const toolCount = ref(0)
+const connected = ref(false)
+const clock = ref('')
 
-// trace 阶段 → Element Plus timeline 颜色，呼应「五段执行链」
-const stageColor = {
-  接收指令: '#909399',
-  感知环境: '#409EFF',
-  推理决策: '#E6A23C',
-  安全校验: '#F56C6C',
-  执行结果: '#67C23A',
-}
-// 意图分类 → 标签类型
-const intentTag = { white: 'success', gray: 'warning', black: 'danger', action: 'primary' }
-const intentText = { white: '白·只读放行', gray: '灰·需校验', black: '黑·已拦截', action: '动作执行' }
+const view = ref('console')
+const NAV = [
+  { key: 'console', label: '智能对话', ic: 'console', comp: ConsoleView },
+  { key: 'diagnose', label: '根因体检', ic: 'diagnose', comp: DiagnoseView },
+  { key: 'guardrail', label: '安全护栏', ic: 'guardrail', comp: GuardrailView },
+  { key: 'capability', label: '能力边界', ic: 'capability', comp: CapabilityView },
+  { key: 'audit', label: '审计回放', ic: 'audit', comp: AuditView },
+]
+const judge = { key: 'judge', label: '评委模式', ic: 'judge', comp: JudgeMode }
+const current = computed(() => (view.value === 'judge' ? judge : NAV.find(n => n.key === view.value) || NAV[0]).comp)
 
-// ---- 执行链回放抽屉 ----
-const replayOpen = ref(false)
-const traceList = ref([])
-const replayLoading = ref(false)
-const activeTrace = ref(null)
-
-// ---- 根因分析抽屉 ----
-const diagOpen = ref(false)
-const diagLoading = ref(false)
-const diagReport = ref(null)
+let timer = null
+function tick() { clock.value = new Date().toLocaleTimeString('zh-CN', { hour12: false }) }
 
 onMounted(async () => {
+  tick(); timer = setInterval(tick, 1000)
   try {
     provider.value = (await getHealth()).llm_provider
-    tools.value = await listTools()
-  } catch (e) {
-    provider.value = '后端未连接'
-  }
+    toolCount.value = (await listTools()).length
+    connected.value = true
+  } catch { provider.value = '后端未连接'; connected.value = false }
 })
-
-function fmtTime(ts) {
-  return ts ? new Date(ts * 1000).toLocaleString() : ''
-}
-
-async function scrollBottom() {
-  await nextTick()
-  if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight
-}
-
-async function send() {
-  const text = input.value.trim()
-  if (!text || loading.value) return
-  messages.value.push({ role: 'user', answer: text })
-  input.value = ''
-  loading.value = true
-  await scrollBottom()
-  try {
-    const data = await chat(text)
-    messages.value.push({
-      role: 'assistant', answer: data.answer, trace: data.trace || [],
-      intent: data.intent, blocked: data.blocked, trace_id: data.trace_id,
-    })
-  } catch (e) {
-    messages.value.push({ role: 'assistant', answer: '请求失败：' + (e.message || e), trace: [] })
-  } finally {
-    loading.value = false
-    await scrollBottom()
-  }
-}
-
-// 打开回放抽屉并拉取历史
-async function openReplay() {
-  replayOpen.value = true
-  activeTrace.value = null
-  replayLoading.value = true
-  try {
-    traceList.value = await listTraces(50)
-  } finally {
-    replayLoading.value = false
-  }
-}
-async function loadTrace(id) {
-  replayLoading.value = true
-  verifyResult.value = null   // 切换会话时清空上一条的校验结果
-  try {
-    activeTrace.value = await getTrace(id)
-  } finally {
-    replayLoading.value = false
-  }
-}
-// 审计防篡改：校验当前回放会话的哈希链完整性（P1-3 可信审计 demo）
-const verifyResult = ref(null)
-const verifying = ref(false)
-async function doVerify() {
-  if (!activeTrace.value) return
-  verifying.value = true
-  try {
-    verifyResult.value = await verifyTrace(activeTrace.value.trace_id)
-  } finally {
-    verifying.value = false
-  }
-}
-
-// 一键体检（根因分析）
-async function runDiagnose() {
-  diagOpen.value = true
-  diagLoading.value = true
-  diagReport.value = null
-  try {
-    diagReport.value = await diagnose('all', '/')
-  } finally {
-    diagLoading.value = false
-  }
-}
-const sevType = { ok: 'success', warning: 'warning', critical: 'danger', unknown: 'info' }
-
-// ---- 受控安全清理（P0-3）：根因分析判定「可清理」的文件，用户点按 → 二次确认 → 经护栏执行 ----
-const cleaning = ref('')  // 正在清理的路径，用于按钮 loading
-
-// 日志类用 truncate（保留句柄），其余可清理文件用 rm
-function actionFor(path) {
-  return /\.log($|\.)/i.test(path) ? 'truncate_log' : 'clean_path'
-}
-
-async function safeClean(file) {
-  const path = file.path
-  const action = actionFor(path)
-  cleaning.value = path
-  try {
-    // 第一步：dry_run 预览，拿到护栏裁决（绝不执行）
-    const preview = await executeAction(action, { path }, { dryRun: true })
-    if (preview.blocked) {
-      // 即便根因分析判「可清理」，命令层护栏仍可能独立拦截（如 rm 落在 /var）——展示纵深防御
-      await ElMessageBox.alert(
-        `护栏拦截，未执行。\n命令：${preview.command || '-'}\n原因：${preview.reason}`,
-        '⛔ 被安全护栏拦截', { type: 'error' })
-      return
-    }
-    // 第二步：二次确认（展示将执行的命令与护栏放行结论）
-    await ElMessageBox.confirm(
-      `将执行：${preview.command}\n护栏结论：${preview.reason}\n确认安全清理？`,
-      '⚠️ 二次确认', { type: 'warning', confirmedButtonText: '确认执行', cancelButtonText: '取消' })
-    // 第三步：确认后真正执行（confirmed + 非 dry_run），全程记入执行链
-    const res = await executeAction(action, { path }, { confirmed: true, dryRun: false })
-    if (res.executed && res.ok) {
-      ElMessage.success(`已安全清理：${path}（已记入执行链 ${res.trace_id?.slice(0, 8)}）`)
-      await runDiagnose()  // 刷新报告，清理后大文件应消失/缩小
-    } else if (res.blocked) {
-      ElMessage.error(`护栏拦截：${res.reason}`)
-    } else {
-      ElMessage.warning(res.reason || '未执行')
-    }
-  } catch (e) {
-    if (e !== 'cancel' && e !== 'close') ElMessage.info('已取消')
-  } finally {
-    cleaning.value = ''
-  }
-}
-
-// ---- 护栏规则库（P2-1 可配置化/热加载）----
-const rulesOpen = ref(false)
-const rulesLoading = ref(false)
-const rulesReloading = ref(false)
-const rulesData = ref(null)  // { count, source, errors, rules }
-const riskType = { critical: 'danger', high: 'warning', medium: '', low: 'info' }
-const actionType = { deny: 'danger', confirm: 'warning', allow: 'success' }
-const catText = {
-  delete: '删除', permission: '权限', disk: '磁盘',
-  privilege: '提权', config: '配置', inject: '注入',
-}
-
-// ---- P2-4 规则可视化：分类筛选 + 风险筛选 + 关键词搜索 ----
-const ruleCat = ref('all')     // all / delete / permission / disk / privilege / config / inject
-const ruleRisk = ref('all')    // all / critical / high / medium / low
-const ruleSearch = ref('')
-const CATS = ['delete', 'permission', 'disk', 'privilege', 'config', 'inject']
-
-// 每个分类的规则条数，做成带计数的筛选标签（答辩时「25 条规则一目了然」）
-const catCounts = computed(() => {
-  const all = (rulesData.value && rulesData.value.rules) || []
-  const m = { all: all.length }
-  for (const c of CATS) m[c] = all.filter(r => r.category === c).length
-  return m
-})
-
-const filteredRules = computed(() => {
-  const all = (rulesData.value && rulesData.value.rules) || []
-  const kw = ruleSearch.value.trim().toLowerCase()
-  return all.filter(r =>
-    (ruleCat.value === 'all' || r.category === ruleCat.value) &&
-    (ruleRisk.value === 'all' || r.risk === ruleRisk.value) &&
-    (!kw || r.id.toLowerCase().includes(kw) || (r.description || '').toLowerCase().includes(kw)),
-  )
-})
-
-async function openRules() {
-  rulesOpen.value = true
-  rulesLoading.value = true
-  try {
-    rulesData.value = await getRules()
-  } finally {
-    rulesLoading.value = false
-  }
-}
-
-// 热加载：改完 rules.yaml 后点此即生效，无需重启后端（展示「插件化/可扩展」）
-async function doReloadRules() {
-  rulesReloading.value = true
-  try {
-    const res = await reloadRules()
-    rulesData.value = res
-    if (res.ok) {
-      ElMessage.success(`规则已热加载：共 ${res.count} 条（来源 ${res.source}）`)
-    } else {
-      // 故障安全：坏配置不换入、维持原规则，把错误明确告知用户
-      ElMessage.error(`配置校验未通过，已维持原规则（${res.count} 条）`)
-    }
-  } catch (e) {
-    ElMessage.error('热加载失败：' + (e.message || e))
-  } finally {
-    rulesReloading.value = false
-  }
-}
-
-// ---- P3-2 致命三要素 / Rule of Two 能力面板 ----
-const trifectaOpen = ref(false)
-const trifectaLoading = ref(false)
-const trifectaData = ref(null)  // { legend, tools, invariant }
-const levelType = { READONLY: 'success', MUTATING: 'warning', UNKNOWN: 'info' }
-// 三腿配色：腿越多越醒目（红 > 橙 > 蓝），呼应「能力越集中越危险」
-const legCountType = { 0: 'info', 1: '', 2: 'warning', 3: 'danger' }
-
-async function openTrifecta() {
-  trifectaOpen.value = true
-  trifectaLoading.value = true
-  try {
-    trifectaData.value = await getTrifecta()
-  } finally {
-    trifectaLoading.value = false
-  }
-}
-
-// ---- P3-4 + P0-C MCP 工具供应链扫描（投毒/影子/隐形载荷）+ 命中后处置 ----
-const scanning = ref(false)
-const scanData = ref(null)  // { ok, scanned, flagged, tools, quarantined, review, cleared, ... }
-// 处置档位 → 标签样式/中文（P0-C：已隔离 / 需人工复核 / 已放行）
-const scanStatusType = { isolated: 'danger', review: 'warning', cleared: 'success' }
-const scanStatusLabel = { isolated: '已隔离', review: '需人工复核', cleared: '已放行' }
-async function runToolScan() {
-  scanning.value = true
-  try {
-    scanData.value = await getToolScan()
-    if (scanData.value.ok) {
-      ElMessage.success(`供应链扫描通过：${scanData.value.scanned} 个工具元数据无投毒/影子/隐形载荷`)
-    } else {
-      ElMessage.warning(`扫描命中 ${scanData.value.flagged} 个可疑工具，请查看详情`)
-    }
-  } catch (e) {
-    ElMessage.error('扫描失败：' + (e.message || e))
-  } finally {
-    scanning.value = false
-  }
-}
-
-// ---- P4-2/P4-3 护栏检测台：命令护栏「正则/AST 双栏」 + 执行沙箱「失控击杀」实测 ----
-const probeOpen = ref(false)
-
-// 命令护栏检测：输入一条命令 → 三重裁决（正则 + 路径 + AST）→ 两栏对比
-const probeCmd = ref('echo $(rm -rf /etc)')
-const probeChecking = ref(false)
-const probeGuard = ref(null)
-// 预置样本：含「正则漏网、AST 抓到」的变形绕过，一键演示
-const PROBE_SAMPLES = [
-  'echo $(rm -rf /etc)',
-  'cat /var/log/app.log | bash',
-  'rm -rf /var/lib/mysql',
-  'ls -la /etc',
-]
-async function doProbeCheck() {
-  const cmd = probeCmd.value.trim()
-  if (!cmd) return
-  probeChecking.value = true
-  try {
-    probeGuard.value = await checkCommand(cmd)
-  } catch (e) {
-    ElMessage.error('检测失败：' + (e.message || e))
-  } finally {
-    probeChecking.value = false
-  }
-}
-function useSample(s) { probeCmd.value = s; doProbeCheck() }
-
-// 执行沙箱演示：跑服务端预定义的无害吃资源命令，看失控进程被限额掐死
-const sbScenario = ref('')
-const sbResult = ref(null)
-const SB_SCENARIOS = [
-  { key: 'normal', label: '正常命令', tip: 'echo：秒回、不被误杀' },
-  { key: 'cpu', label: 'CPU 失控', tip: '死循环自旋：撞墙钟超时被击杀' },
-  { key: 'memory', label: '内存失控', tip: '申请 1GB：撞内存上限被阻断' },
-]
-async function runSandbox(scenario) {
-  sbScenario.value = scenario
-  sbResult.value = null
-  try {
-    sbResult.value = await sandboxDemo(scenario)
-  } catch (e) {
-    ElMessage.error('沙箱演示失败：' + (e.message || e))
-  } finally {
-    sbScenario.value = ''
-  }
-}
-const sbKilled = computed(() => !!sbResult.value && !!(sbResult.value.sandbox_killed || sbResult.value.limit_hit))
-
-async function openProbe() {
-  probeOpen.value = true
-  if (!probeGuard.value) await doProbeCheck()  // 首开即给一个「AST 抓到变形」的镜头
-}
-
-// ---- P1-5 评委模式：四张卡对应评分四子项，一键演示整条链路 ----
-const judgeOpen = ref(false)
+onUnmounted(() => clearInterval(timer))
 </script>
 
 <template>
-  <el-container class="app">
-    <el-header class="header">
-      <div class="title">🐉 麒麟安全智能运维 Agent</div>
-      <div class="meta">
-        <el-tag size="small" type="success">LLM: {{ provider }}</el-tag>
-        <el-tag size="small" type="info">工具: {{ tools.length }}</el-tag>
-        <el-button size="small" type="warning" @click="judgeOpen = true">🏆 评委模式</el-button>
-        <el-button size="small" @click="runDiagnose">🩺 一键体检</el-button>
-        <el-button size="small" @click="openReplay">🔍 执行链回放</el-button>
-        <el-button size="small" @click="openRules">🛡️ 规则库</el-button>
-        <el-button size="small" @click="openTrifecta">⚖️ 能力面板</el-button>
-        <el-button size="small" @click="openProbe">🧪 护栏检测台</el-button>
-      </div>
-    </el-header>
-
-    <el-main class="main">
-      <div ref="scroller" class="stream">
-        <div v-for="(m, i) in messages" :key="i" :class="['row', m.role]">
-          <div class="bubble">
-            <div v-if="m.role === 'assistant' && m.intent" class="tags">
-              <el-tag size="small" :type="intentTag[m.intent] || 'info'">
-                {{ intentText[m.intent] || m.intent }}
-              </el-tag>
-              <el-tag v-if="m.blocked" size="small" type="danger" effect="dark">护栏拦截</el-tag>
-            </div>
-            <div class="text">{{ m.answer }}</div>
-            <el-collapse v-if="m.trace && m.trace.length" class="trace">
-              <el-collapse-item :title="`🔍 执行链回放（${m.trace.length} 步）`" name="t">
-                <el-timeline>
-                  <el-timeline-item
-                    v-for="(s, j) in m.trace"
-                    :key="j"
-                    :color="stageColor[s.stage] || '#909399'"
-                  >
-                    <span class="stage">{{ s.stage }}</span>
-                    <TraceDetail :detail="s.detail" />
-                  </el-timeline-item>
-                </el-timeline>
-              </el-collapse-item>
-            </el-collapse>
-          </div>
+  <div class="deck-bg" />
+  <div class="deck">
+    <!-- 顶部状态条 -->
+    <header class="deck-header">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 32 32" fill="none">
+          <defs>
+            <linearGradient id="qg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#3ce3a6" /><stop offset="1" stop-color="#23a3d6" />
+            </linearGradient>
+          </defs>
+          <path d="M16 2.5l12 4.3v8.4c0 7.6-4.9 12.5-12 15-7.1-2.5-12-7.4-12-15V6.8z"
+                fill="rgba(43,217,154,.08)" stroke="url(#qg)" stroke-width="1.6" stroke-linejoin="round" />
+          <path d="M7.5 16.5h3.6l2 5.2 4.2-11.4 2.1 6.2H25" fill="none" stroke="#3ce3a6"
+                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <div class="brand-text">
+          <div class="brand-title">麒麟运维指挥台</div>
+          <div class="brand-sub">Kylin Ops Command Deck</div>
         </div>
       </div>
 
-      <div class="composer">
-        <el-input
-          v-model="input"
-          type="textarea"
-          :rows="2"
-          resize="none"
-          placeholder="用自然语言描述运维需求，回车发送（Shift+回车换行）"
-          @keydown.enter.exact.prevent="send"
-        />
-        <el-button type="primary" :loading="loading" @click="send">发送</el-button>
+      <div class="vitals">
+        <span class="vital" :class="connected ? 'live' : 'down'">
+          <span class="dot" /><span class="lbl">LLM</span><b>{{ provider }}</b>
+        </span>
+        <span class="vital"><span class="lbl">MCP</span><b>{{ toolCount }}</b> 工具</span>
+        <span class="vital armed"><Icon name="guardrail" :size="13" /> 护栏 ARMED</span>
+        <span class="vital"><span class="lbl mono">{{ clock }}</span></span>
       </div>
-    </el-main>
+    </header>
 
-    <!-- 评委模式首页：四张卡对应评分四子项，一键演示整条链路（P1-5） -->
-    <el-drawer v-model="judgeOpen" title="🏆 评委模式 · 评分四子项一键演示" size="72%" direction="rtl">
-      <JudgeMode v-if="judgeOpen" />
-    </el-drawer>
-
-    <!-- 执行链回放抽屉：左侧历史列表，右侧整条五段时间线 -->
-    <el-drawer v-model="replayOpen" title="🔍 执行链回放（可追溯审计）" size="60%" direction="rtl">
-      <div v-loading="replayLoading" class="replay">
-        <div class="trace-list">
-          <el-empty v-if="!traceList.length" description="暂无历史会话" />
-          <div
-            v-for="t in traceList"
-            :key="t.trace_id"
-            :class="['trace-item', { active: activeTrace && activeTrace.trace_id === t.trace_id }]"
-            @click="loadTrace(t.trace_id)"
-          >
-            <div class="ti-head">
-              <el-tag size="small" :type="intentTag[t.intent] || 'info'">{{ t.intent || '-' }}</el-tag>
-              <el-tag v-if="t.blocked" size="small" type="danger">拦截</el-tag>
-              <el-tag v-if="t.tainted" size="small" type="warning" effect="plain"
-                      title="本路径摄入过外部不可信数据（仅只读分析，未驱动任何变更）">☣ 污点</el-tag>
-              <span class="ti-time">{{ fmtTime(t.created_at) }}</span>
-            </div>
-            <div class="ti-input">{{ t.user_input }}</div>
-          </div>
-        </div>
-        <div class="trace-detail">
-          <el-empty v-if="!activeTrace" description="点击左侧会话回放整条执行链" />
-          <template v-else>
-            <div class="td-meta">
-              <b>trace_id：</b><code>{{ activeTrace.trace_id }}</code>
-              <el-tag size="small" type="info" style="margin-left:8px">{{ activeTrace.llm_provider }}</el-tag>
-              <el-tag size="small" :type="activeTrace.tainted ? 'warning' : 'success'" effect="plain"
-                      style="margin-left:8px">
-                {{ activeTrace.tainted ? '☣ 污点路径（仅只读）' : '✓ 无污点' }}
-              </el-tag>
-              <el-button size="small" :loading="verifying" style="margin-left:8px" @click="doVerify">🔒 校验完整性</el-button>
-              <el-tag
-                v-if="verifyResult"
-                size="small"
-                :type="verifyResult.valid ? 'success' : 'danger'"
-                style="margin-left:8px"
-              >
-                {{ verifyResult.valid
-                    ? `✓ 哈希链完整（${verifyResult.steps} 段）`
-                    : `✗ 检测到篡改${verifyResult.broken_at != null ? '（断链于第 ' + verifyResult.broken_at + ' 段）' : ''}` }}
-              </el-tag>
-            </div>
-            <div v-if="verifyResult" class="verify-reason">{{ verifyResult.reason }}</div>
-            <el-timeline>
-              <el-timeline-item
-                v-for="(s, j) in activeTrace.steps"
-                :key="j"
-                :color="stageColor[s.stage] || '#909399'"
-                :timestamp="fmtTime(s.ts)"
-              >
-                <span class="stage">{{ s.stage }}</span>
-                <TraceDetail :detail="s.detail" />
-              </el-timeline-item>
-            </el-timeline>
-          </template>
-        </div>
-      </div>
-    </el-drawer>
-
-    <!-- 根因分析抽屉 -->
-    <el-drawer v-model="diagOpen" title="🩺 智能根因分析" size="50%" direction="rtl">
-      <div v-loading="diagLoading">
-        <el-alert v-if="diagReport" :title="diagReport.summary" type="info" :closable="false" style="margin-bottom:12px" />
-        <el-card v-for="(r, i) in (diagReport ? diagReport.reports : [])" :key="i" class="diag-card" shadow="never">
-          <template #header>
-            <b>{{ r.topic }}</b>
-            <el-tag size="small" :type="sevType[r.severity] || 'info'" style="margin-left:8px">{{ r.severity }}</el-tag>
-          </template>
-          <div v-for="(f, k) in r.findings" :key="'f'+k" class="diag-finding">· {{ f }}</div>
-          <div v-if="r.large_files && r.large_files.length" class="diag-files">
-            <div v-for="(lf, k) in r.large_files" :key="'lf'+k" class="diag-file">
-              <el-tag size="small" :type="lf.class === 'critical' ? 'danger' : lf.class === 'cleanable' ? 'success' : 'info'">
-                {{ lf.class }}
-              </el-tag>
-              <span class="lf-path">{{ lf.path }}</span>
-              <span class="lf-size">{{ lf.size_mb }}MB</span>
-              <!-- 仅「可清理」类给出安全清理入口，点按必经二次确认 + 护栏 -->
-              <el-button
-                v-if="lf.class === 'cleanable'"
-                size="small" type="success" plain
-                :loading="cleaning === lf.path"
-                @click="safeClean(lf)"
-              >安全清理</el-button>
-            </div>
-          </div>
-          <div v-if="r.suggestions && r.suggestions.length" class="diag-sugg">
-            <div v-for="(s, k) in r.suggestions" :key="'s'+k">{{ s }}</div>
-          </div>
-        </el-card>
-      </div>
-    </el-drawer>
-
-    <!-- 护栏规则库抽屉（P2-1 可配置化/热加载）：规则即配置，改 rules.yaml → 热加载即生效 -->
-    <el-drawer v-model="rulesOpen" title="🛡️ 安全护栏规则库（可配置 / 热加载）" size="58%" direction="rtl">
-      <div v-loading="rulesLoading">
-        <div class="rules-bar">
-          <el-tag size="small" :type="rulesData && rulesData.source === 'yaml' ? 'success' : 'danger'">
-            {{ rulesData && rulesData.source === 'yaml' ? '来源：rules.yaml' : '来源：红线兜底集（配置异常）' }}
-          </el-tag>
-          <el-tag size="small" type="info">共 {{ rulesData ? rulesData.count : 0 }} 条</el-tag>
-          <el-button size="small" type="primary" plain :loading="rulesReloading" @click="doReloadRules">
-            ♻️ 重新加载规则库
-          </el-button>
-          <span class="rules-hint">改 rules.yaml 后点此热加载，无需重启后端</span>
-        </div>
-        <el-alert
-          v-if="rulesData && rulesData.errors && rulesData.errors.length"
-          type="error" :closable="false" style="margin-bottom:10px"
-          title="配置校验未通过——已维持原规则（故障安全，护栏不空窗）">
-          <div v-for="(e, i) in rulesData.errors" :key="i" class="rules-err">· {{ e }}</div>
-        </el-alert>
-
-        <!-- P2-4 筛选：分类（带计数）+ 风险 + 关键词搜索 -->
-        <div v-if="rulesData" class="rules-filter">
-          <el-radio-group v-model="ruleCat" size="small">
-            <el-radio-button value="all">全部 {{ catCounts.all }}</el-radio-button>
-            <el-radio-button v-for="c in CATS" :key="c" :value="c">
-              {{ catText[c] }} {{ catCounts[c] }}
-            </el-radio-button>
-          </el-radio-group>
-          <div class="rules-filter2">
-            <el-select v-model="ruleRisk" size="small" style="width:130px">
-              <el-option label="全部风险" value="all" />
-              <el-option label="critical" value="critical" />
-              <el-option label="high" value="high" />
-              <el-option label="medium" value="medium" />
-              <el-option label="low" value="low" />
-            </el-select>
-            <el-input
-              v-model="ruleSearch" size="small" clearable style="width:240px"
-              placeholder="搜索规则 ID 或说明" />
-            <span class="rules-hint">命中 {{ filteredRules.length }} 条</span>
-          </div>
+    <div class="deck-body">
+      <!-- 左侧导航 -->
+      <nav class="rail">
+        <div class="rail-group-label">运维台</div>
+        <div v-for="n in NAV" :key="n.key" class="nav-item" :class="{ active: view === n.key }" @click="view = n.key">
+          <span class="ni-icon"><Icon :name="n.ic" :size="19" /></span>
+          <span class="ni-text">{{ n.label }}</span>
         </div>
 
-        <el-table v-if="rulesData" :data="filteredRules" size="small" stripe height="calc(100vh - 240px)">
-          <el-table-column prop="id" label="ID" width="92" />
-          <el-table-column label="分类" width="72">
-            <template #default="{ row }">{{ catText[row.category] || row.category }}</template>
-          </el-table-column>
-          <el-table-column label="风险" width="84" sortable :sort-by="row => ({critical:3,high:2,medium:1,low:0})[row.risk]">
-            <template #default="{ row }">
-              <el-tag size="small" :type="riskType[row.risk]">{{ row.risk }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="动作" width="84">
-            <template #default="{ row }">
-              <el-tag size="small" effect="plain" :type="actionType[row.action]">{{ row.action }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="description" label="说明" min-width="220" show-overflow-tooltip />
-          <el-table-column prop="pattern" label="匹配正则" min-width="200" show-overflow-tooltip />
-        </el-table>
-      </div>
-    </el-drawer>
-
-    <!-- P3-2 致命三要素 / Rule of Two 能力面板：每个工具的三腿能力 + 结构性安全不变量 -->
-    <el-drawer v-model="trifectaOpen" title="⚖️ 致命三要素 / Rule of Two 能力面板" size="62%" direction="rtl">
-      <div v-loading="trifectaLoading">
-        <el-alert
-          v-if="trifectaData" type="success" :closable="false" show-icon
-          style="margin-bottom:12px"
-          title="结构性安全不变量：感知层永不集齐致命三要素">
-          <div class="tri-note">{{ trifectaData.invariant.note }}</div>
-          <div class="tri-note">
-            只读工具能力腿上限：<b>{{ trifectaData.invariant.readonly_max_legs }}/3</b>；
-            含「改状态/外联」腿的只读工具：
-            <b>{{ trifectaData.invariant.readonly_has_state_change ? '有（异常！）' : '无' }}</b>。
-          </div>
-        </el-alert>
-
-        <div v-if="trifectaData" class="tri-legend">
-          <span class="rules-hint">致命三要素（Lethal Trifecta · Meta Rule of Two）：</span>
-          <el-tag v-for="l in trifectaData.legend" :key="l.key" size="small" effect="plain">
-            {{ l.label }}
-          </el-tag>
-          <span class="rules-hint">— 一条路径同时集齐三者才危险；至多两者即安全</span>
+        <div class="rail-spacer" />
+        <div class="rail-group-label">演示</div>
+        <div class="nav-item accent" :class="{ active: view === 'judge' }" @click="view = 'judge'">
+          <span class="ni-icon"><Icon name="judge" :size="19" /></span>
+          <span class="ni-text">{{ judge.label }}</span>
+          <span class="ni-badge">①②③④</span>
         </div>
+        <div class="rail-foot">A2 · 麒麟智能运维<br />安全护栏 · 可追溯 · 根因分析</div>
+      </nav>
 
-        <!-- P3-4 供应链扫描：检测工具元数据里的投毒/影子/隐形载荷 -->
-        <div class="tri-legend">
-          <el-button size="small" type="primary" plain :loading="scanning" @click="runToolScan">
-            🔬 工具投毒扫描
-          </el-button>
-          <el-tag v-if="scanData" size="small" :type="scanData.ok ? 'success' : 'danger'">
-            {{ scanData.ok
-                ? `✓ ${scanData.scanned} 工具均无投毒/影子/隐形载荷`
-                : `✗ 命中 ${scanData.flagged}/${scanData.scanned} 个可疑工具` }}
-          </el-tag>
-          <el-tag v-if="scanData && scanData.quarantined && scanData.quarantined.length"
-                  size="small" type="danger" effect="dark">
-            🚫 已隔离 {{ scanData.quarantined.length }}（不进 LLM 上下文）
-          </el-tag>
-          <span class="rules-hint">本地静态扫描，不上传文件/凭据（致敬 mcp-scan）；命中即隔离（fail-closed）</span>
-        </div>
-        <!-- P0-C：命中后「隔离/复核/放行」处置，而非只展示报告 -->
-        <el-alert
-          v-if="scanData && !scanData.ok" type="error" :closable="false" style="margin-bottom:10px"
-          title="检出可疑工具元数据——已按档位处置（high 隔离 / medium 默认隔离 / low 告警可用）">
-          <div v-for="t in scanData.tools.filter(x => x.suspicious)" :key="t.name" class="rules-err">
-            <el-tag size="small" :type="scanStatusType[t.status] || 'info'" effect="dark"
-                    style="margin-right:6px">{{ scanStatusLabel[t.status] || t.status }}</el-tag>
-            {{ t.name }}（{{ t.max_severity }}）：{{ t.findings.map(f => f.code).join(', ') }}
-          </div>
-        </el-alert>
-
-        <el-table v-if="trifectaData" :data="trifectaData.tools" size="small" stripe
-                  height="calc(100vh - 230px)" :default-sort="{ prop: 'leg_count', order: 'descending' }">
-          <el-table-column prop="name" label="工具 / 动作" min-width="160" show-overflow-tooltip />
-          <el-table-column label="级别" width="104">
-            <template #default="{ row }">
-              <el-tag size="small" :type="levelType[row.level]">{{ row.level }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="接触不可信内容" width="120" align="center">
-            <template #default="{ row }">
-              <el-tag v-if="row.untrusted" size="small" type="danger" effect="plain">A ✓</el-tag>
-              <span v-else class="tri-dash">—</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="访问敏感数据" width="112" align="center">
-            <template #default="{ row }">
-              <el-tag v-if="row.sensitive" size="small" type="warning" effect="plain">B ✓</el-tag>
-              <span v-else class="tri-dash">—</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="改状态/外联" width="108" align="center">
-            <template #default="{ row }">
-              <el-tag v-if="row.state_change" size="small" type="danger">C ✓</el-tag>
-              <span v-else class="tri-dash">—</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="leg_count" label="能力腿" width="92" align="center" sortable>
-            <template #default="{ row }">
-              <el-tag size="small" :type="legCountType[row.leg_count]">{{ row.leg_count }}/3</el-tag>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
-    </el-drawer>
-
-    <!-- P4-2/P4-3 护栏检测台：命令护栏「正则/AST 双栏」+ 执行沙箱「失控击杀」实测 -->
-    <el-drawer v-model="probeOpen" title="🧪 护栏检测台（正则/AST 双栏 · 执行沙箱）" size="56%" direction="rtl">
-      <div class="probe">
-        <!-- ① 命令护栏检测：正则 + 路径 + AST 三重裁决，两栏对比 -->
-        <div class="probe-sec">
-          <div class="probe-t">① 命令护栏检测 · 正则 vs AST 结构分析</div>
-          <div class="probe-hint">
-            正面回答「正则能被变形绕过吗」：把危险藏进 <code>$()</code>/管道接 shell 等结构，
-            纯正则字面失配，但 Bash 语法树照样抓得到。
-          </div>
-          <div class="probe-input">
-            <el-input
-              v-model="probeCmd" size="default" clearable
-              placeholder="输入一条命令，如 echo $(rm -rf /etc)"
-              @keydown.enter="doProbeCheck" />
-            <el-button type="primary" :loading="probeChecking" @click="doProbeCheck">检测</el-button>
-          </div>
-          <div class="probe-samples">
-            <span class="probe-hint">试试：</span>
-            <el-tag
-              v-for="s in PROBE_SAMPLES" :key="s"
-              size="small" effect="plain" class="probe-sample" @click="useSample(s)">{{ s }}</el-tag>
-          </div>
-          <GuardVerdict v-if="probeGuard" :guard="probeGuard" />
-        </div>
-
-        <el-divider />
-
-        <!-- ② 执行沙箱：护栏放行后真正落地命令的资源/权限保险丝 -->
-        <div class="probe-sec">
-          <div class="probe-t">② 执行沙箱 · 失控进程被限额掐死</div>
-          <div class="probe-hint">
-            护栏判「该不该执行」，沙箱保「就算放行也炸不了」。下面跑<b>服务端预定义的无害命令</b>，
-            看失控进程怎样被 rlimit/超时当场掐死（对应 OWASP LLM06 过度代理）。
-          </div>
-          <div class="probe-sb-btns">
-            <el-button
-              v-for="sc in SB_SCENARIOS" :key="sc.key"
-              size="small" :loading="sbScenario === sc.key"
-              :type="sc.key === 'normal' ? 'success' : 'danger'" plain
-              @click="runSandbox(sc.key)">{{ sc.label }}</el-button>
-            <span class="probe-hint">命令为服务端常量，不接受任意输入</span>
-          </div>
-
-          <el-alert
-            v-if="sbResult"
-            :type="sbKilled ? 'error' : 'success'" :closable="false" show-icon
-            :title="sbKilled
-              ? `⛔ 失控进程被沙箱掐死（命中限额：${sbResult.limit_hit || '未知'}）`
-              : `✓ 命令在沙箱内安全完成（${sbResult.backend || 'rlimit'}）`">
-            <div class="sb-detail">
-              <div><b>场景：</b>{{ sbResult.description }}</div>
-              <div><b>命令：</b><code>{{ sbResult.command }}</code></div>
-              <div>
-                <b>限额：</b>CPU {{ sbResult.limits.cpu_s }}s · 内存 {{ sbResult.limits.mem_mb }}MB ·
-                进程 {{ sbResult.limits.max_procs }} · 文件 {{ sbResult.limits.fsize_mb }}MB ·
-                墙钟 {{ sbResult.limits.timeout_s }}s
-              </div>
-              <div>
-                <b>结果：</b>后端 <code>{{ sbResult.backend }}</code> ·
-                被杀 {{ sbResult.sandbox_killed }} ·
-                命中限额 {{ sbResult.limit_hit || '无' }} ·
-                耗时 {{ sbResult.elapsed_s }}s
-              </div>
-              <div v-if="sbResult.stdout_tail"><b>输出：</b><code>{{ sbResult.stdout_tail }}</code></div>
-              <div v-if="sbResult.stderr_tail" class="sb-err"><b>错误：</b><code>{{ sbResult.stderr_tail }}</code></div>
-            </div>
-          </el-alert>
-        </div>
-      </div>
-    </el-drawer>
-  </el-container>
+      <!-- 工作区 -->
+      <main class="workspace">
+        <keep-alive>
+          <component :is="current" :provider="provider" />
+        </keep-alive>
+      </main>
+    </div>
+  </div>
 </template>
-
-<style>
-html, body, #app { height: 100%; margin: 0; }
-.app { height: 100vh; }
-.header {
-  display: flex; align-items: center; justify-content: space-between;
-  background: #1f2d3d; color: #fff;
-}
-.title { font-weight: 600; }
-.meta { display: flex; gap: 8px; align-items: center; }
-.main { display: flex; flex-direction: column; background: #f5f7fa; padding: 16px; }
-.stream { flex: 1; overflow-y: auto; padding-right: 8px; }
-.row { display: flex; margin-bottom: 14px; }
-.row.user { justify-content: flex-end; }
-.bubble {
-  max-width: 75%; background: #fff; border-radius: 10px; padding: 12px 14px;
-  box-shadow: 0 1px 4px rgba(0,0,0,.08);
-}
-.row.user .bubble { background: #ecf5ff; }
-.tags { display: flex; gap: 6px; margin-bottom: 6px; }
-.text { white-space: pre-wrap; line-height: 1.6; }
-.trace { margin-top: 8px; }
-.stage { font-weight: 600; }
-.detail {
-  margin: 4px 0 0; padding: 8px; background: #f5f7fa; border-radius: 6px;
-  font-size: 12px; white-space: pre-wrap; word-break: break-all;
-}
-.composer { display: flex; gap: 8px; margin-top: 12px; align-items: flex-end; }
-.composer .el-textarea { flex: 1; }
-
-/* 回放抽屉 */
-.replay { display: flex; gap: 12px; height: 100%; }
-.trace-list { width: 38%; overflow-y: auto; border-right: 1px solid #ebeef5; padding-right: 8px; }
-.trace-item { padding: 8px; border-radius: 6px; cursor: pointer; margin-bottom: 6px; border: 1px solid #ebeef5; }
-.trace-item:hover { background: #f5f7fa; }
-.trace-item.active { background: #ecf5ff; border-color: #409EFF; }
-.ti-head { display: flex; gap: 6px; align-items: center; }
-.ti-time { font-size: 12px; color: #909399; margin-left: auto; }
-.ti-input { margin-top: 4px; font-size: 13px; word-break: break-all; }
-.trace-detail { flex: 1; overflow-y: auto; }
-.td-meta { margin-bottom: 10px; font-size: 13px; }
-.verify-reason { margin: -2px 0 10px; color: #909399; font-size: 12px; }
-
-/* 诊断抽屉 */
-.diag-card { margin-bottom: 12px; }
-.diag-finding { line-height: 1.7; }
-.diag-files { margin: 8px 0; }
-.diag-file { display: flex; gap: 8px; align-items: center; font-size: 13px; padding: 2px 0; }
-.lf-path { word-break: break-all; }
-.lf-size { color: #909399; margin-left: auto; white-space: nowrap; }
-.diag-sugg { margin-top: 8px; padding: 8px; background: #f5f7fa; border-radius: 6px; font-size: 13px; white-space: pre-wrap; line-height: 1.7; }
-
-/* 规则库抽屉 */
-.rules-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
-.rules-hint { font-size: 12px; color: #909399; }
-.rules-err { font-size: 12px; line-height: 1.6; }
-.rules-filter { margin-bottom: 10px; }
-.rules-filter2 { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
-
-/* 能力面板（致命三要素 / Rule of Two）抽屉 */
-.tri-note { font-size: 12px; line-height: 1.7; }
-.tri-legend { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
-.tri-dash { color: #c0c4cc; }
-
-/* 护栏检测台抽屉（P4-2/P4-3） */
-.probe-sec { margin-bottom: 8px; }
-.probe-t { font-weight: 600; margin-bottom: 4px; }
-.probe-hint { font-size: 12px; color: #909399; line-height: 1.6; }
-.probe-hint code, .sb-detail code { background: #f0f2f5; padding: 0 4px; border-radius: 3px; }
-.probe-input { display: flex; gap: 8px; margin: 8px 0; }
-.probe-samples { margin-bottom: 10px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.probe-sample { cursor: pointer; font-family: monospace; }
-.probe-sample:hover { background: #ecf5ff; }
-.probe-sb-btns { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
-.sb-detail { font-size: 12px; line-height: 1.8; word-break: break-all; }
-.sb-detail .sb-err { color: #c45656; }
-</style>

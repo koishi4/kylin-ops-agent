@@ -46,9 +46,16 @@ export async function verifyTrace(traceId) {
   return data // { valid, steps, broken_at, reason, head_hash }
 }
 
-// 智能根因分析（评分④）
-export async function diagnose(topic = 'all', path = '/') {
-  const { data } = await http.get('/diagnose', { params: { topic, path } })
+// 导出自封口审计证据包（P2）：完整五段 + verify + 规则/工具基线指纹 + HMAC 封口（seal）。
+// 属敏感导出，后端挂 operator 鉴权（演示模式豁免）。
+export async function exportEvidence(traceId) {
+  const { data } = await http.get(`/traces/${traceId}/evidence`)
+  return data // { ok, trace, verify, components, seal, ... }
+}
+
+// 智能根因分析（评分④）。pin 仅 configdrift 用：确认配置变更合法后重锚 TOFU 基线。
+export async function diagnose(topic = 'all', path = '/', { pin = false } = {}) {
+  const { data } = await http.get('/diagnose', { params: { topic, path, pin } })
   return data
 }
 

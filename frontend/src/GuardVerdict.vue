@@ -69,20 +69,20 @@ const astSaved = computed(() => regexRules.value.length === 0 && ast.value.lengt
 </template>
 
 <style scoped>
-.gv { border: 1px solid #ebeef5; border-radius: 8px; padding: 10px; background: #fff; }
+.gv { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--ink-1); }
 .gv-head { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
 .gv-cols { display: flex; gap: 10px; }
-.gv-col { flex: 1; min-width: 0; background: #f8f9fb; border-radius: 6px; padding: 8px; }
-.gv-col-t { font-weight: 600; font-size: 12px; color: #5a6677; margin-bottom: 6px; }
+.gv-col { flex: 1; min-width: 0; background: var(--ink-0); border: 1px solid var(--line-soft); border-radius: 6px; padding: 9px; }
+.gv-col-t { font-weight: 600; font-size: 12px; color: var(--text-1); margin-bottom: 7px; }
 .gv-rules { display: flex; gap: 6px; flex-wrap: wrap; }
-.gv-rule { font-family: monospace; }
-.gv-empty { font-size: 12px; color: #909399; }
-.gv-finding { border-left: 3px solid #e6a23c; padding: 2px 0 2px 8px; margin-bottom: 6px; }
+.gv-rule { font-family: var(--mono); }
+.gv-empty { font-size: 12px; color: var(--text-2); }
+.gv-finding { border-left: 3px solid var(--amber); padding: 2px 0 2px 8px; margin-bottom: 6px; }
 .gv-finding-h { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.gv-finding-h code { font-size: 12px; background: #eef1f6; padding: 1px 5px; border-radius: 4px; }
-.gv-finding-r { font-size: 12px; color: #606266; line-height: 1.5; margin-top: 2px; }
+.gv-finding-h code { font-size: 12px; font-family: var(--mono); background: var(--ink-3); color: var(--amber); padding: 1px 5px; border-radius: 4px; }
+.gv-finding-r { font-size: 12px; color: var(--text-1); line-height: 1.5; margin-top: 2px; }
 .gv-saved {
-  margin-top: 8px; padding: 6px 10px; border-radius: 6px; font-size: 12px;
-  background: #fff7e6; color: #b88230; border: 1px dashed #f0c78a;
+  margin-top: 8px; padding: 7px 10px; border-radius: 6px; font-size: 12px;
+  background: var(--amber-soft); color: var(--amber); border: 1px dashed rgba(243, 181, 61, .4);
 }
 </style>
