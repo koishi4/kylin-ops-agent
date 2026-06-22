@@ -73,3 +73,37 @@ def service_status(name: str) -> dict:
         "active": (active.get("stdout") or "").strip(),
         "enabled": (enabled.get("stdout") or "").strip(),
     }
+
+
+def list_failed_units() -> dict:
+    """列出所有处于 failed 状态的 systemd 单元（封装 systemctl --failed）。READONLY。
+
+    评分④根因分析：「哪些服务挂了」是排障第一问。systemctl --failed 直接给出失败单元清单，
+    比逐个 service_status 查快得多，也是 service_status / query_journal 的天然入口（先看谁挂了，
+    再去查它的日志）。
+
+    Returns:
+        含 failed 列表（unit/load/active/sub/description）与 count 的字典；
+        systemd 不可用时优雅返回结构化错误
+    """
+    from ._shell import run_cmd
+    # --plain 去掉项目符号、--no-legend 去掉表头脚注、--no-pager 防分页阻塞，便于稳定解析。
+    r = run_cmd(["systemctl", "--failed", "--no-legend", "--plain", "--no-pager"])
+    if not r["ok"] and r.get("error"):
+        # command not found / 非 systemd 系统：结构化报错而非崩溃。
+        return {"ok": False, "level": "READONLY",
+                "error": r.get("error", "systemctl 不可用")}
+    failed = []
+    for line in (r.get("stdout") or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # 行格式：UNIT LOAD ACTIVE SUB DESCRIPTION（前四列定长，描述可含空格）
+        parts = line.split(None, 4)
+        if len(parts) < 4:
+            continue
+        unit, load, active, sub = parts[:4]
+        desc = parts[4] if len(parts) == 5 else ""
+        failed.append({"unit": unit, "load": load, "active": active,
+                       "sub": sub, "description": desc})
+    return {"ok": True, "level": "READONLY", "count": len(failed), "failed": failed}

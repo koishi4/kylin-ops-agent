@@ -128,3 +128,38 @@ def dir_size(path: str, max_scan: int = 500000) -> dict:
     if truncated:
         out["reason"] = f"max_scan limit reached ({max_scan})"
     return out
+
+
+def inode_usage(path: str = "/") -> dict:
+    """查询挂载点的 inode（索引节点）使用情况。READONLY。
+
+    评分④根因分析差异化：磁盘「字节没满却写不进文件」的经典故障——inode 耗尽（海量小文件/
+    邮件队列/会话缓存把 inode 用光）。`disk_usage` 只看字节占用，看不出这种；本工具补上 inode 维度，
+    与 disk_usage 配成一对，让「No space left on device 但 df 显示还有空间」能被一眼定位。
+
+    Args:
+        path: 要查询的挂载点路径，默认根目录 "/"
+    Returns:
+        含 inodes_total/used/free/percent 的字典；路径不存在/不可达时返回结构化错误
+    """
+    try:
+        # statvfs 是只读 syscall，不触发任何遍历或外部命令，零副作用、零开销。
+        st = os.statvfs(path)
+    except (FileNotFoundError, OSError) as e:
+        return {"ok": False, "level": "READONLY", "error": f"path not found: {path} ({e})"}
+    total = st.f_files                      # 文件系统 inode 总数
+    free = st.f_ffree                       # 空闲 inode 数
+    used = total - free
+    # 某些文件系统（如 tmpfs 动态分配、overlay）f_files 可能为 0，避免除零。
+    percent = round(used / total * 100, 1) if total else 0.0
+    return {
+        "ok": True,
+        "level": "READONLY",
+        "path": path,
+        "inodes_total": total,
+        "inodes_used": used,
+        "inodes_free": free,
+        "percent": percent,
+        # 给根因分析一个直接可用的判据：inode 近满但字节未满 = 典型「小文件耗尽 inode」。
+        "exhausted": percent >= 95.0,
+    }

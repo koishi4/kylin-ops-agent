@@ -55,3 +55,22 @@ def valid_since(s: str) -> bool:
 def valid_priority(p: str) -> bool:
     p = str(p).strip()
     return (len(p) == 1 and p in "01234567") or p in _PRIORITY_NAMES
+
+
+# journalctl --vacuum-size 取值：数字 + 可选单位 K/M/G/T（如 100M、1G、500K）。
+# 受控动作 clean_journal 用，杜绝把任意字符串透传给 journalctl（参数注入/开销失控）。
+_VACUUM_SIZE_RE = re.compile(r"^\d{1,6}[KMGT]?$")
+# journalctl --vacuum-time 取值：数字 + 时间单位（s/m/h/days/weeks/months/years 等常见形态）。
+_VACUUM_TIME_RE = re.compile(
+    r"^\d{1,6}\s?(s|sec|second|seconds|m|min|minute|minutes|h|hour|hours|"
+    r"d|day|days|week|weeks|month|months|year|years)$")
+
+
+def valid_vacuum_size(s: str) -> bool:
+    """journalctl --vacuum-size 合法性：100M / 1G / 500K（数字 + 可选 K/M/G/T）。"""
+    return bool(_VACUUM_SIZE_RE.match(str(s).strip()))
+
+
+def valid_vacuum_time(s: str) -> bool:
+    """journalctl --vacuum-time 合法性：7d / 2weeks / 30min / 1month。"""
+    return bool(_VACUUM_TIME_RE.match(str(s).strip()))

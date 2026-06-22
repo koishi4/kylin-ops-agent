@@ -12,9 +12,11 @@
 3. 前端「能力面板」可视化每个工具的三腿标签与风险计数（差异化亮点，竞品多为只读/无此面板）。
 
 本项目的结构性安全论证（这是真正拿分的点）：
-- 15 个 MCP 工具**全部 READONLY**，没有任何一个具备「改状态/外联」(C) 这条腿——感知层路径的能力上限
-  恒为 A+B（≤2 腿），结构上不可能单独凑齐致命三要素。
-- 唯一带 (C) 的是动作层 truncate_log/kill_process/clean_path，而它们**一律强制二次确认**（human-in-loop）。
+- 全部 MCP 工具（22 个）**一律 READONLY**，没有任何一个具备「改状态/外联」(C) 这条腿——感知层路径的
+  能力上限恒为 A+B（≤2 腿），结构上不可能单独凑齐致命三要素。**扩工具只增不破此不变量**。
+- 带 (C) 的只存在于动作层的受控动作（truncate_log/kill_process/clean_path/restart_service/
+  reload_config/block_ip/clean_journal），而它们**一律强制二次确认**（human-in-loop）。
+  实用性靠「加受控动作」增长，C 腿始终被人工闸门挡在感知路径之外。
 - 故任何可能触及第三条腿的路径，都必然穿过一道人工闸门——**Rule of Two 由架构强制保证，而非靠提醒**。
 """
 from __future__ import annotations
@@ -93,10 +95,21 @@ TOOL_CAPS: dict[str, ToolCaps] = {
     # —— 漏洞情报 / 内核姿态：引入外部情报内容(A)，无敏感外泄面、不改状态 ——
     "query_vuln_intel": ToolCaps(untrusted=True),
     "kernel_posture": ToolCaps(untrusted=True),
-    # —— 受控 MUTATING 动作：改状态(C) + 需读取分类/进程详情判定(B)；不接触外部不可信内容(A=F) ——
+    # —— P1 扩展只读工具：同样无『改状态』腿，感知层能力上限仍 ≤2 ——
+    "inode_usage": ToolCaps(),                                   # 纯 inode 指标，无能力腿
+    "firewall_status": ToolCaps(sensitive=True),                 # 暴露防火墙拓扑/暴露面(B)
+    "list_failed_units": ToolCaps(untrusted=True),               # 失败单元描述为自由文本(A)
+    "login_history": ToolCaps(untrusted=True, sensitive=True),   # 用户/来源外部可控(A)+登录隐私(B)
+    "list_cron_jobs": ToolCaps(untrusted=True, sensitive=True),  # cron 命令行外部可控(A)+可含敏感(B)
+    # —— 受控 MUTATING 动作：改状态(C) + 需读取分类/进程/连接详情判定(B)；不接触外部不可信内容(A=F) ——
     "truncate_log": ToolCaps(sensitive=True, state_change=True),
     "kill_process": ToolCaps(sensitive=True, state_change=True),
     "clean_path": ToolCaps(sensitive=True, state_change=True),
+    # —— P1 扩展受控动作：同为 B+C 两条腿、A=F，恒不集齐三要素，且强制二次确认 ——
+    "restart_service": ToolCaps(sensitive=True, state_change=True),
+    "reload_config": ToolCaps(sensitive=True, state_change=True),
+    "block_ip": ToolCaps(sensitive=True, state_change=True),
+    "clean_journal": ToolCaps(sensitive=True, state_change=True),
 }
 
 

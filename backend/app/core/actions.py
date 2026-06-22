@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 import shlex
 import stat
@@ -30,10 +31,13 @@ from app.config import get_settings
 from app.core import executor
 from app.core.diagnosis import FileClass, classify_file
 from app.guardrail.privilege import privilege_posture
+from app.mcp_server.tools._validate import valid_unit, valid_vacuum_size, valid_vacuum_time
 from app.mcp_server.tools.process import process_detail
 
-# 白名单动作名
-ACTIONS = ("truncate_log", "kill_process", "clean_path")
+# 白名单动作名。扩展实用性的正确方向：往此表加【参数化受控动作】（每个都过语义闸门 + 二次确认 +
+# executor 护栏 + 审计），而非给 LLM 自由 shell——能力随之增长而不破坏「LLM 够不到危险路径」的不变量。
+ACTIONS = ("truncate_log", "kill_process", "clean_path",
+           "restart_service", "reload_config", "block_ip", "clean_journal")
 
 # 受保护 PID：一律禁止终止（即便护栏命令规则未覆盖 kill）。0=内核占位，1=init/systemd。
 _PROTECTED_PIDS = {0, 1}
@@ -48,6 +52,14 @@ _CRITICAL_PROC_NAMES = {
 # 允许的终止信号白名单（名称 → 信号号）。默认用温和的 SIGTERM。
 _ALLOWED_SIGNALS = {
     "SIGTERM": 15, "SIGINT": 2, "SIGHUP": 1, "SIGQUIT": 3, "SIGKILL": 9,
+}
+
+# 关键 systemd 单元：禁止 restart/reload（重启会中断会话、拖垮系统）。按去掉 .service 后缀的基名小写比对。
+_CRITICAL_UNITS = {
+    "systemd", "init", "sshd", "ssh", "dbus", "dbus-broker",
+    "systemd-journald", "systemd-logind", "systemd-networkd", "systemd-resolved",
+    "networkmanager", "network", "polkit", "polkitd", "getty", "serial-getty",
+    "rescue", "emergency", "firewalld",
 }
 
 
@@ -289,10 +301,143 @@ def _clean_path(params: dict, *, confirmed: bool, authorized: bool, dry_run: boo
                            confirmed=confirmed, authorized=authorized, dry_run=dry_run)
 
 
+# ---------------------------------------------------------------------------
+# 扩展受控动作（P1 实用性扩展）——服务处置 / 安全封禁 / 日志清盘。
+# 同一纪律：动作层语义闸门（白名单/范围/关键性）→ 结构化 argv → _guarded_finish 过 executor
+# （防线2 规则库 + 防线4 最小权限）+ 强制二次确认 + 五段 trace 落审计。一律不进 MCP 注册表。
+# ---------------------------------------------------------------------------
+
+def _manage_service(params: dict, *, verb: str, action: str,
+                    confirmed: bool, authorized: bool, dry_run: bool) -> dict:
+    """systemctl <verb> <unit> 的共享实现（restart_service / reload_config）。
+
+    语义闸门：① unit 名白名单校验（防注入）；② 关键单元（sshd/systemd/dbus/网络…）一律拒——
+    重启它们会断会话/搞挂系统。管理服务必然需提权，故命令经 executor 时由防线4 要求显式 authorized，
+    未授权即拦（这正是赛题「核心运维动作需显式授权运行」的可演示证据）。
+    """
+    unit = params.get("unit")
+    trace = [_recv(action, {"unit": unit, "verb": verb}, confirmed, authorized, dry_run)]
+    if not unit or not isinstance(unit, str) or not valid_unit(unit):
+        return _refuse(action, trace,
+                       f"非法或缺失的服务名 unit={unit!r}"
+                       "（仅允许字母数字与 . _ @ : -，可选 .service 后缀）。")
+
+    base = unit[:-len(".service")] if unit.endswith(".service") else unit
+    is_critical = base.lower() in _CRITICAL_UNITS
+    precheck = {"unit": unit, "verb": verb, "base": base, "critical": is_critical}
+    trace.append({"stage": "感知环境", "detail": {
+        "unit": unit, "base": base, "is_critical_unit": is_critical}})
+    if is_critical:
+        return _refuse(action, trace,
+                       f"单元 {unit!r} 属关键系统服务（restart/reload 会中断会话或拖垮系统），已拒绝。",
+                       precheck=precheck)
+
+    argv = ["systemctl", verb, unit]
+    rationale = (f"对非关键服务 {unit!r} 执行 systemctl {verb}；管理服务需提权，"
+                 "命令经 executor 由防线4 校验显式授权，并经沙箱降权落地。")
+    return _guarded_finish(action, trace, argv, rationale, precheck,
+                           confirmed=confirmed, authorized=authorized, dry_run=dry_run)
+
+
+def _restart_service(params: dict, *, confirmed: bool, authorized: bool, dry_run: bool) -> dict:
+    """重启 systemd 服务（systemctl restart）。关键单元拒；需显式授权（防线4）。"""
+    return _manage_service(params, verb="restart", action="restart_service",
+                           confirmed=confirmed, authorized=authorized, dry_run=dry_run)
+
+
+def _reload_config(params: dict, *, confirmed: bool, authorized: bool, dry_run: bool) -> dict:
+    """重载 systemd 服务配置（systemctl reload，不中断服务）。关键单元拒；需显式授权（防线4）。"""
+    return _manage_service(params, verb="reload", action="reload_config",
+                           confirmed=confirmed, authorized=authorized, dry_run=dry_run)
+
+
+def _block_ip(params: dict, *, confirmed: bool, authorized: bool, dry_run: bool) -> dict:
+    """封禁来源 IP（iptables -I INPUT -s <ip> -j DROP）。安全运维：发现爆破→封禁。
+
+    语义闸门（防自锁/防误伤大范围）：只允许单个主机 IP；拒绝整段子网(CIDR)、回环/未指定/组播/
+    链路本地地址、以及当前 SSH 来源（封它=把自己锁在门外）。iptables 改防火墙需提权，命令经
+    executor 由防线4 要求显式 authorized。
+    """
+    ip = params.get("ip")
+    trace = [_recv("block_ip", {"ip": ip}, confirmed, authorized, dry_run)]
+    if not ip or not isinstance(ip, str):
+        return _refuse("block_ip", trace, "缺少参数 ip，无法封禁。")
+    if "/" in ip:
+        return _refuse("block_ip", trace,
+                       f"拒绝封禁网段 {ip!r}：只允许单个主机 IP，封整段子网易误伤/自锁。")
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return _refuse("block_ip", trace, f"非法 IP 地址：{ip!r}。")
+
+    is_special = (addr.is_loopback or addr.is_unspecified
+                  or addr.is_multicast or addr.is_link_local)
+    precheck = {"ip": ip, "version": addr.version, "is_special": is_special}
+    trace.append({"stage": "感知环境", "detail": {
+        "ip": ip, "version": addr.version, "is_special": is_special}})
+    if is_special:
+        return _refuse("block_ip", trace,
+                       f"拒绝封禁特殊地址 {ip!r}（回环/未指定/组播/链路本地），封禁无意义且可能自锁。",
+                       precheck=precheck)
+    # 当前 SSH 来源：SSH_CONNECTION = "客户端IP 客户端口 服务端IP 服务端口"。封它会把自己锁在门外。
+    ssh_conn = os.environ.get("SSH_CONNECTION", "")
+    peer = ssh_conn.split()[0] if ssh_conn else ""
+    if peer and peer == ip:
+        return _refuse("block_ip", trace,
+                       f"{ip!r} 是当前 SSH 登录来源，封禁会导致自锁（把自己关在门外），已拒绝。",
+                       precheck=precheck)
+
+    argv = ["iptables", "-I", "INPUT", "-s", ip, "-j", "DROP"]
+    rationale = (f"在 INPUT 链头部插入 DROP 规则封禁来源 {ip!r}（已确认非网段/特殊地址/当前 SSH 来源）；"
+                 "改防火墙需提权，命令经 executor 由防线4 校验授权。")
+    return _guarded_finish("block_ip", trace, argv, rationale, precheck,
+                           confirmed=confirmed, authorized=authorized, dry_run=dry_run)
+
+
+def _clean_journal(params: dict, *, confirmed: bool, authorized: bool, dry_run: bool) -> dict:
+    """按大小或时间安全回收 systemd 日志（journalctl --vacuum-size/--vacuum-time）。
+
+    比 clean_path 更 systemd 原生的清盘：journalctl --vacuum 只回收**已轮转的旧日志**，保留近期
+    日志、不影响正在写入的服务。语义闸门：size/time 二选一且格式白名单校验，杜绝任意串透传给 journalctl。
+    """
+    size = params.get("size")
+    time_spec = params.get("time")
+    trace = [_recv("clean_journal", {"size": size, "time": time_spec},
+                   confirmed, authorized, dry_run)]
+
+    provided = [k for k, v in (("size", size), ("time", time_spec)) if v]
+    if len(provided) != 1:
+        return _refuse("clean_journal", trace,
+                       "需且仅需提供 size 或 time 之一（如 size=200M 或 time=7d）。")
+
+    if size:
+        if not valid_vacuum_size(size):
+            return _refuse("clean_journal", trace,
+                           f"非法 size={size!r}（应形如 100M / 1G / 500K：数字 + 可选 K/M/G/T）。")
+        argv = ["journalctl", f"--vacuum-size={size}"]
+        rationale = f"journalctl --vacuum-size={size}：把 journal 总量回收到不超过 {size}，仅删旧日志。"
+        precheck = {"mode": "size", "value": size}
+    else:
+        if not valid_vacuum_time(time_spec):
+            return _refuse("clean_journal", trace,
+                           f"非法 time={time_spec!r}（应形如 7d / 2weeks / 30min）。")
+        argv = ["journalctl", f"--vacuum-time={time_spec}"]
+        rationale = f"journalctl --vacuum-time={time_spec}：删除早于 {time_spec} 的旧日志。"
+        precheck = {"mode": "time", "value": time_spec}
+
+    trace.append({"stage": "感知环境", "detail": precheck})
+    return _guarded_finish("clean_journal", trace, argv, rationale, precheck,
+                           confirmed=confirmed, authorized=authorized, dry_run=dry_run)
+
+
 _HANDLERS: dict[str, Callable[..., dict]] = {
     "truncate_log": _truncate_log,
     "kill_process": _kill_process,
     "clean_path": _clean_path,
+    "restart_service": _restart_service,
+    "reload_config": _reload_config,
+    "block_ip": _block_ip,
+    "clean_journal": _clean_journal,
 }
 
 

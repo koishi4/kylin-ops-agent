@@ -57,10 +57,15 @@ class GuardCheckRequest(BaseModel):
 
 
 class ActionRequest(BaseModel):
-    # Literal 收敛到三个白名单动作：未知动作名在入口即 422，不进 run_action。
-    action: Literal["truncate_log", "kill_process", "clean_path"]
+    # Literal 收敛到白名单动作：未知动作名在入口即 422，不进 run_action。
+    # 扩展实用性 = 往此白名单加参数化受控动作（每个都过语义闸门 + 二次确认 + executor 护栏），
+    # 绝不放开自由 shell——见 core/actions.ACTIONS 与 CLAUDE.md §4.0。
+    action: Literal[
+        "truncate_log", "kill_process", "clean_path",
+        "restart_service", "reload_config", "block_ip", "clean_journal",
+    ]
     # 用 default_factory 而非可变默认 {}（P0-5：可变默认会在实例间共享、是经典陷阱）
-    params: dict = Field(default_factory=dict)  # 动作参数（path / pid+signal）
+    params: dict = Field(default_factory=dict)  # 动作参数（path / pid+signal / unit / ip / size|time）
     confirmed: bool = False     # 用户是否二次确认（未确认绝不真执行）
     authorized: bool = False    # 是否对需提权操作显式授权（防线4）
     dry_run: bool = True        # 默认只校验不执行
@@ -68,7 +73,8 @@ class ActionRequest(BaseModel):
     @model_validator(mode="after")
     def _check_params(self) -> "ActionRequest":
         """按动作校验 params 形状（独立 schema 的轻量落地）：缺必填项即 422。
-        细粒度语义校验（关键性/受保护进程/信号白名单）仍在 actions.py，比 schema 更全。"""
+        细粒度语义校验（关键性/受保护进程/信号白名单/单元关键性/IP 范围/vacuum 格式）仍在
+        actions.py，比 schema 更全。"""
         if self.action in ("truncate_log", "clean_path"):
             p = self.params.get("path")
             if not isinstance(p, str) or not p:
@@ -76,6 +82,17 @@ class ActionRequest(BaseModel):
         elif self.action == "kill_process":
             if "pid" not in self.params:
                 raise ValueError("kill_process 需要参数 pid")
+        elif self.action in ("restart_service", "reload_config"):
+            u = self.params.get("unit")
+            if not isinstance(u, str) or not u:
+                raise ValueError(f"{self.action} 需要非空字符串参数 unit")
+        elif self.action == "block_ip":
+            ip = self.params.get("ip")
+            if not isinstance(ip, str) or not ip:
+                raise ValueError("block_ip 需要非空字符串参数 ip")
+        elif self.action == "clean_journal":
+            if not (self.params.get("size") or self.params.get("time")):
+                raise ValueError("clean_journal 需要参数 size 或 time 之一")
         return self
 
 

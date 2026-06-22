@@ -12,14 +12,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from .disk import disk_usage, dir_size, find_large_files
+from .auth import login_history
+from .disk import disk_usage, dir_size, find_large_files, inode_usage
 from .handle import list_open_files
 from .log import query_journal, tail_log
 from .memory import memory_info
-from .network import check_port, list_listening_ports
+from .network import check_port, firewall_status, list_listening_ports
 from .posture_tool import kernel_posture
 from .process import find_zombie_processes, list_processes, process_detail
-from .system import service_status, system_load, uptime_info
+from .schedule import list_cron_jobs
+from .system import list_failed_units, service_status, system_load, uptime_info
 from .vuln_intel import query_vuln_intel
 
 
@@ -35,11 +37,13 @@ REGISTRY: dict[str, ToolSpec] = {
     "disk_usage": ToolSpec(disk_usage, "READONLY"),
     "find_large_files": ToolSpec(find_large_files, "READONLY"),
     "dir_size": ToolSpec(dir_size, "READONLY"),
+    "inode_usage": ToolSpec(inode_usage, "READONLY"),
     # 内存 / 系统
     "memory_info": ToolSpec(memory_info, "READONLY"),
     "system_load": ToolSpec(system_load, "READONLY"),
     "uptime_info": ToolSpec(uptime_info, "READONLY"),
     "service_status": ToolSpec(service_status, "READONLY"),
+    "list_failed_units": ToolSpec(list_failed_units, "READONLY"),
     # 进程
     "list_processes": ToolSpec(list_processes, "READONLY"),
     "find_zombie_processes": ToolSpec(find_zombie_processes, "READONLY"),
@@ -47,11 +51,15 @@ REGISTRY: dict[str, ToolSpec] = {
     # 网络
     "list_listening_ports": ToolSpec(list_listening_ports, "READONLY"),
     "check_port": ToolSpec(check_port, "READONLY"),
+    "firewall_status": ToolSpec(firewall_status, "READONLY"),
     # 日志
     "tail_log": ToolSpec(tail_log, "READONLY"),
     "query_journal": ToolSpec(query_journal, "READONLY"),
     # 句柄
     "list_open_files": ToolSpec(list_open_files, "READONLY"),
+    # 登录审计 / 定时任务（安全态势 + 周期性根因分析）
+    "login_history": ToolSpec(login_history, "READONLY"),
+    "list_cron_jobs": ToolSpec(list_cron_jobs, "READONLY"),
     # 漏洞情报 / 内核姿态（P1：内核漏洞遏制三件套之「时效化情报」+「主机姿态」）
     "query_vuln_intel": ToolSpec(query_vuln_intel, "READONLY"),
     "kernel_posture": ToolSpec(kernel_posture, "READONLY"),
@@ -59,10 +67,11 @@ REGISTRY: dict[str, ToolSpec] = {
 
 __all__ = [
     "REGISTRY", "ToolSpec",
-    "disk_usage", "find_large_files", "dir_size",
-    "memory_info", "system_load", "uptime_info", "service_status",
+    "disk_usage", "find_large_files", "dir_size", "inode_usage",
+    "memory_info", "system_load", "uptime_info", "service_status", "list_failed_units",
     "list_processes", "find_zombie_processes", "process_detail",
-    "list_listening_ports", "check_port",
+    "list_listening_ports", "check_port", "firewall_status",
     "tail_log", "query_journal", "list_open_files",
+    "login_history", "list_cron_jobs",
     "query_vuln_intel", "kernel_posture",
 ]

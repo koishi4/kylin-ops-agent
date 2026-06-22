@@ -1756,3 +1756,45 @@ sshd_config…）的指纹锚定为基线（**内容 sha256；无权读退回 si
 configdrift（baseline_pinned/watched/severity）、trifecta（tools/invariant）、guardrail check（allowed/risk/
 ast_findings）、chat（intent/trace 五段/tool_calls）、action dry-run（安全校验段确含 privilege_posture +
 rule_of_two，键与 `TraceDetail` 绑定一一对应）。纯前端改动，后端与全部测试不受影响。
+
+---
+
+### [2026-06-22] P1 能力扩展：+5 只读工具 / +4 受控动作（沿架构不变量增长，不放开自由 shell）
+
+- **做了什么**：
+  - 感知层 17 → **22 个只读 MCP 工具**：`inode_usage`（df -i，补「字节没满却写不进」的 inode 耗尽根因）、
+    `list_failed_units`（systemctl --failed，「哪些服务挂了」）、`firewall_status`（firewalld/nft/iptables
+    只读 list，防火墙暴露面）、`login_history`（last/lastb，登录与暴力破解侦察）、`list_cron_jobs`
+    （systemd timers + cron，周期性异常根因）。均 READONLY、本地无外联。
+  - 处置层 3 → **7 个受控动作**：`restart_service` / `reload_config`（systemctl restart/reload）、
+    `block_ip`（iptables -I INPUT -s IP -j DROP，「发现爆破→封禁」）、`clean_journal`
+    （journalctl --vacuum-size/-time，systemd 原生清盘）。
+  - 配套：`_validate` 加 `valid_vacuum_size/time`；`trifecta.TOOL_CAPS` 给 9 个新名字打能力腿标签；
+    `ActionRequest` 的 Literal 与 `_check_params` 收口 4 个新动作的入参；新增 `tests/test_tools_ops.py`
+    + `tests/test_actions_ext.py`（共 +36 用例）。**全套 2647 passed**。
+
+- **设计决策与理由**：
+  - **扩实用性 = 加参数化受控动作，绝不放开自由 shell**（CLAUDE.md §4.0 不变量）。每个新动作都走同一
+    纪律：动作层语义闸门（unit 关键性 / IP 范围与自锁防护 / vacuum 格式白名单）→ 结构化 argv →
+    `_guarded_finish` 过 executor（防线2 规则 + 防线4 最小权限）→ 强制二次确认 → 五段 trace 落审计。
+    动作**一律不进 MCP 注册表**，LLM 够不到。
+  - **新动作的安全闸门各有侧重**：服务动作拒关键单元（sshd/systemd/网络…）+ 由防线4 要求显式授权
+    （管理 systemd 服务必然提权，未授权在 executor 即拦——这是赛题④「核心动作需授权运行」的可演示证据）；
+    `block_ip` 拒网段/回环/组播/链路本地 + **拒封当前 SSH 来源（读 SSH_CONNECTION 防自锁）**；
+    `clean_journal` size/time 二选一 + 格式白名单，杜绝任意串透传。
+  - **只读工具坚持「本地、无外联」**：否则会给感知路径加一条 egress 腿，破坏 Rule-of-Two
+    结构性不变量（`trifecta` 启动期 fail-closed 会拒绝启动）。
+
+- **踩坑**：
+  1. `list_failed_units` 用了 `run_cmd` 却 `NameError`——system.py 的 `run_cmd` 是在 `service_status`
+     里**函数内局部导入**的，非模块级。改为同样在函数内 `from ._shell import run_cmd`，与既有风格一致。
+  2. 新动作的「放行路径」trace 只有 4 段（缺「感知环境」）——既有动作（kill/clean/truncate）都在
+     handler 里**自行 append 一段感知环境**再交 `_guarded_finish`（它只补推理/校验/结果三段）。
+     给三个新 handler 各补一段感知环境（unit 关键性 / IP 分类 / vacuum 模式），恢复「放行路径恰好五段」。
+  3. 加工具会触发工具供应链 TOFU 基线漂移：旧 `tool_baseline.json`（17 个）会把 5 个新工具判 `TP-NEW`
+     而**隔离**（不进 LLM 上下文）。删除该运行时基线文件（未入库），下次启动自动 TOFU 重锚 22 个。
+     测试用 `tmp_path` 基线，不受影响。
+
+- **解决方法**：见上。能力扩展后，`/guardrail/trifecta` 能力面板与 `/tools` 列表自动纳入新工具/动作
+  （前端 `CapabilityView` 无需改动即可展示 22 工具 + 7 动作的能力腿）；`executeAction` 已是通用入口，
+  4 个新动作经 API 即可触发。**前端专属触发按钮（服务名/IP 输入框）留作可选后续**。
