@@ -33,6 +33,7 @@ LoongArch / 麒麟 V11 说明：resource 是 Linux 标准库，LoongArch 原生�
 from __future__ import annotations
 
 import ctypes
+import logging
 import os
 import shutil
 import signal
@@ -40,6 +41,8 @@ import subprocess
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Callable
+
+logger = logging.getLogger("kylin-ops-agent.sandbox")
 
 # ---------------------------------------------------------------------------
 # 运行时能力削减（P1-3）：prctl 常量 + 要丢弃的高危能力
@@ -91,17 +94,48 @@ class SandboxLimits:
 
 @lru_cache(maxsize=1)
 def _isolation_backend() -> tuple[str, str | None]:
-    """探测可用的隔离后端。返回 (name, path)：
+    """探测可用的隔离后端，并做【功能性自检】——不止探测「装没装」，更验证「能不能用」。返回 (name, path)：
 
-    - ("bwrap", "/usr/bin/bwrap")   有 bubblewrap
-    - ("nsjail", "/usr/bin/nsjail") 有 nsjail
-    - ("rlimit", None)              都没有 → 纯 rlimit 兜底（必然可用）
+    - ("bwrap", "/usr/bin/bwrap")   有 bubblewrap 且自检通过
+    - ("nsjail", "/usr/bin/nsjail") 有 nsjail 且自检通过
+    - ("rlimit", None)              无可用命名空间后端 → 纯 rlimit 兜底（必然可用）
+
+    为何不能只看 `shutil.which`（曾经的 bug，麒麟/LoongArch VM 实测踩到）：bwrap/nsjail 可能
+    「装了却不可用」——典型是内核禁用了 unprivileged user namespace（`kernel.unprivileged_userns_clone=0`
+    或 LoongArch 内核未开），bwrap 会在建命名空间阶段就**非零退出、内层命令根本没跑**，导致每条被
+    包裹的命令静默失败（空 stdout、rc≠0）。只探测存在性会让沙箱「假装在用 bwrap」却条条命令失败，
+    且不会降级。故对每个候选后端用与生产一致的包裹参数真跑一条无害命令，不可用即跳过、最终退回 rlimit。
+    （这正是模块开头铁律「隔离机制按可用性自动降级，绝不硬依赖」的应有之义。）
     """
     for name in ("bwrap", "nsjail"):
         path = shutil.which(name)
-        if path:
+        if not path:
+            continue
+        if _backend_functional(name, path):
+            logger.info("执行沙箱隔离后端：%s（%s），功能性自检通过。", name, path)
             return name, path
+        logger.warning(
+            "检测到 %s（%s）但功能性自检失败（多为内核禁用 unprivileged userns，"
+            "常见于麒麟/LoongArch 虚机）：跳过该后端，回退纯 rlimit 资源限额兜底。", name, path)
+    logger.info("执行沙箱隔离后端：rlimit（无可用的命名空间隔离后端，使用资源限额 + 可选降权兜底）。")
     return "rlimit", None
+
+
+def _backend_functional(name: str, path: str) -> bool:
+    """功能性自检：用候选后端、以与生产一致的包裹参数（含 --unshare-net/--ro-bind 等）真正跑一条
+    `echo <token>`，确认它在本内核/本架构上既能建命名空间、又能把内层命令的 stdout 正常透传出来。
+
+    判定：returncode==0 且预期 token 出现在 stdout 才算可用。任何异常/超时/非零/无预期输出一律判
+    「不可用」→ 降级（best-effort，绝不抛、绝不阻断）。宁可误降级到 rlimit（命令仍能跑、限额仍在），
+    也不要误判可用却条条命令失败。结果随 _isolation_backend 一并被 lru_cache，仅探测一次。
+    """
+    token = "kylin-sandbox-probe-ok"
+    probe = _wrap_with_isolation(["echo", token], name, path)
+    try:
+        r = subprocess.run(probe, capture_output=True, text=True, timeout=5)
+    except Exception:  # noqa: BLE001 探测失败即视为不可用
+        return False
+    return r.returncode == 0 and token in (r.stdout or "")
 
 
 def _wrap_with_isolation(args: list[str], backend: str, path: str | None) -> list[str]:

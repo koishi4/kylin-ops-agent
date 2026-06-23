@@ -1894,3 +1894,38 @@ fd-safe truncate/五段哈希链），公共样式 `_style.puml`。渲染：`pla
 **设计取舍**：默认 `provider=mock`（断网即可演示）、`bind=127.0.0.1`（最安全）、不建 systemd（前台跑更适
 合答辩演示）——这些都用 flag 开。脚本是文档的**可执行落地版**，不替代文档；规则仍是「能用系统包就用系统包、
 编译不过就降级、前端只拷 dist」。`bash -n` + set_env/transform 单元验证均通过。
+
+## 2026-06-23 真机首跑取证：沙箱「装了 bwrap 却不可用」导致 14 个用例红 + 两处脚本毛刺
+
+**背景**：在官方麒麟 V11 + LoongArch 虚机上首次 `deploy_kylin.sh --systemd --provider deepseek` 实跑。
+部署主体成功（服务起、`/health`=ok、`/tools`=22 工具、deepseek 连通、opsagent+systemd 就位），但
+冒烟 `pytest` 报 **14 红**，全集中在 `test_sandbox.py / test_executor.py / test_actions.py`：现象统一为
+「命令 executed=True 但 `stdout` 为空、`ok=False`」，连 `echo guardrail-ok` 都没输出。
+
+**根因（取证，非猜测）**：决定性证据是 `test_command_not_found_structured` 报 `KeyError 'error'` 而非
+预期的 `FileNotFoundError`——说明跑起来的是一个**外层包裹程序**（它非零退出），而不是直接 exec 那条不
+存在的命令。顺藤摸到 `sandbox.py::_isolation_backend()`：它**仅用 `shutil.which` 判断「装没装」bwrap/
+nsjail，从不验证「能不能用」**。麒麟/LoongArch 虚机的内核禁用了 unprivileged user namespace，bwrap
+**装了但建命名空间即非零退出、内层命令根本没跑**→ 每条走沙箱的命令空 stdout、rc≠0。
+- 为何部署看着"成功"：只读 MCP 探针（df/ss/lsof）走 `run_cmd(sandbox=False)`，不经沙箱，故 `/health`
+  `/tools` 正常；**只有受控变更动作**（clean_path→`rm`、kill_process→`kill`，经 executor→沙箱）和沙箱
+  用例才会踩到——也就是说，**评分③ 的受控动作演示会在真机上当场失效**，是必须修的功能缺陷。
+
+**修复（架构对齐，非堆补丁）**：给 `_isolation_backend()` 加**功能性自检** `_backend_functional()`——
+对每个 `which` 命中的后端，用**与生产一致的包裹参数**真跑一条 `echo <token>`，要求 rc==0 且 token 出现在
+stdout 才算可用；否则跳过、最终退回纯 rlimit（必然可用）。这本就是模块开篇铁律「隔离机制按可用性自动
+降级、绝不硬依赖」的应有之义，之前只做到了"按存在性"、漏了"按功能性"。结果随 `lru_cache` 仅探一次。
+- 降级到 rlimit 后：CPU/内存/进程数/文件大小 rlimit 限额仍在、以 root 跑时 setuid 降权仍在，只是少了
+  网络/PID/只读根的命名空间隔离——对受控动作反而**正确**（它们本就需要对宿主真实生效）。
+- 验证：x86（无 bwrap）`_isolation_backend()` 仍返回 `('rlimit', None)`，三个测试文件全绿、无回归；
+  另用 monkeypatch **模拟「装了但坏」的 bwrap**（非零退出+空 stdout），确认被识别→降级→`run_sandboxed`
+  在 rlimit 下正常出 stdout。真机重跑预期 14 红转绿。
+
+**两处脚本毛刺（同次修复）**：① 摘要里 `代码目录 (...)` commit 为空 + 末尾报 `dubious ownership`——因
+step6 把整树 `chown` 给 opsagent 后，脚本（以 vmuser 跑）再调 `git` 被拒。改为**在 chown 前**把 HEAD
+描述缓存进变量、收尾直接用，并 `git config --global --add safe.directory`。② pytest `Permission denied:
+.pytest_cache`——同样因树已属 opsagent；给 pytest 加 `-o cache_dir=/tmp/...` 指到可写处。
+
+**心智小结**：「装了」≠「能用」。任何"按可用性自动降级"的探测都必须**功能性验证**而非存在性验证，否则
+在异构环境（LoongArch/受限内核/容器）上会"假装在用强隔离"却条条失败且不降级——这类静默失效比直接报错
+更危险。真机首跑是把这种"只在某类环境暴露"的假设性 bug 逼出来的唯一办法。
