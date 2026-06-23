@@ -12,5 +12,7 @@ nl-eval-report.json
 agentic-eval-report.json
 benign-fp-report.json
 node_modules/
-dist/
+# frontend/dist 刻意【纳入版本控制】：LoongArch 麒麟 VM 不在本机构建前端（无 Node 工具链），
+# 由 x86 开发机 `npm run build` 产出后随 git 一并下发，部署脚本 step5 直接托管。重建后 `git add
+# frontend/dist` 提交更新即可（产物变更会如实出现在 git status）。详见 docs/deploy-loongarch.md §3。
 .DS_Store
