@@ -48,6 +48,9 @@ def require_operator(authorization: str | None = Header(default=None)) -> None:
 # 把畸形/超大入参挡在业务逻辑之外（早 422，不进护栏/动作层），收敛 DoS 与误用面。
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    # 深度思考开关（前端可切）：on → 编排用 DeepSeek 推理模型，回放展示思维链，更慢；
+    # off（默认）→ 用快速模型，低延迟。详见 orchestrator.chat(deep_thinking=...)。
+    deep_thinking: bool = False
 
 
 class GuardCheckRequest(BaseModel):
@@ -290,13 +293,14 @@ async def guardrail_sandbox_demo(scenario: str = "cpu") -> dict:
 async def chat(req: ChatRequest, request: Request) -> dict:
     """自然语言运维对话，返回最终答复 + 执行链 trace（含 trace_id 供回放）。"""
     orch = request.app.state.orchestrator
-    result = await orch.chat(req.message)
+    result = await orch.chat(req.message, deep_thinking=req.deep_thinking)
     return {
         "trace_id": result.trace_id,
         "answer": result.answer,
         "blocked": result.blocked,
         "intent": result.intent,
         "tainted": result.tainted,
+        "deep_thinking": req.deep_thinking,  # 回显本轮是否启用深度思考
         "trace": [asdict(s) for s in result.trace],
         "tool_calls": result.tool_calls,
     }

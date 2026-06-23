@@ -75,6 +75,7 @@ class RiskAssessment:
     suspected_intent: str = ""  # LLM 推断的真实意图（如「疑似删除数据库」）
     upgraded: bool = False      # AI 是否把规则判定升级了（拿分点的可视化证据）
     reason: str = ""            # 人类可读综合解释
+    ai_thinking: str = ""       # AI 安全研判的思维链（推理模型 reasoning_content；快速模型为空）
 
     @property
     def blocked(self) -> bool:
@@ -95,6 +96,7 @@ class RiskAssessment:
                 "verdict": self.ai_verdict,
                 "suspected_intent": self.suspected_intent,
                 "reasons": self.ai_reasons,
+                "thinking": self.ai_thinking,  # 深度思考时安全研判的思维链（前端渲染思维链卡）
             },
             "merge": "保守合并取更严（规则不可被翻案放行，AI 可升级未覆盖项）",
             "final_verdict": self.final_verdict,
@@ -166,24 +168,34 @@ def _parse(content: str | None) -> dict | None:
 
 
 def _ai_assess(user_text: str, command: str | None, context: str | None,
-               llm: LLMProvider | None) -> dict | None:
-    """独立的低温安全评审 LLM 调用。任何异常都吞掉并返回 None（退回纯规则）。"""
+               llm: LLMProvider | None,
+               model: str | None = None) -> tuple[dict | None, str]:
+    """独立的低温安全评审 LLM 调用。任何异常都吞掉并返回 (None, "")（退回纯规则）。
+
+    model：可选，按请求覆盖模型（随编排「深度思考」开关用快速/推理模型）。
+    返回 (解析出的 JSON 研判 | None, reasoning_content 思维链)。深度思考用推理模型时
+    reasoning_content 非空，供把「安全研判的思考过程」入 trace 回放（快速模型为空字符串）。
+    """
     if llm is None:
-        return None
+        return None, ""
     messages = [
         {"role": "system", "content": _SAFETY_PROMPT},
         {"role": "user", "content": _build_user_prompt(user_text, command, context)},
     ]
     try:
-        resp = llm.chat(messages)  # 不给 tools：安全评审只表态，不调用工具
+        resp = llm.chat(messages, model=model)  # 不给 tools：安全评审只表态，不调用工具
     except Exception:  # noqa: BLE001 模型/网络故障绝不能让护栏崩溃，退回规则即可
-        return None
-    return _parse(resp.get("content") if isinstance(resp, dict) else None)
+        return None, ""
+    if not isinstance(resp, dict):
+        return None, ""
+    reasoning = (resp.get("reasoning_content") or "").strip()
+    return _parse(resp.get("content")), reasoning
 
 
 def assess_risk(user_text: str, *, command: str | None = None,
                 context: str | None = None,
-                llm: LLMProvider | None = None) -> RiskAssessment:
+                llm: LLMProvider | None = None,
+                model: str | None = None) -> RiskAssessment:
     """双层意图研判：规则粗筛 → LLM 风险研判 → 保守合并取更严。
 
     Args:
@@ -191,13 +203,14 @@ def assess_risk(user_text: str, *, command: str | None = None,
         command: 可选，LLM 拟执行的候选命令（动作/命令场景下传入）。
         context: 可选，当前系统上下文摘要（如磁盘/进程态势），帮助 LLM 判断后果。
         llm: 安全评审用的 LLM；传 None（或 mock 场景）则退回纯规则判定。
+        model: 可选，按请求覆盖模型（随编排「深度思考」开关用快速/推理模型）。
 
     Returns:
         RiskAssessment：含规则/AI 两栏裁决与保守合并后的 final_verdict。
     """
     rule_verdict, rule_intent = _rule_baseline(user_text, command)
 
-    ai = _ai_assess(user_text, command, context, llm)
+    ai, ai_thinking = _ai_assess(user_text, command, context, llm, model=model)
     if ai is None:
         # 纯规则回退：AI 未参与，最终就是规则判定。
         return RiskAssessment(
@@ -235,4 +248,5 @@ def assess_risk(user_text: str, *, command: str | None = None,
         rule_intent=rule_intent.value, ai_used=True,
         ai_risk_level=level or "unknown", ai_reasons=reasons,
         suspected_intent=suspected, upgraded=upgraded, reason=reason,
+        ai_thinking=ai_thinking,
     )

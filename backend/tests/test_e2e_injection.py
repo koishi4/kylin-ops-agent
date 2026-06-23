@@ -55,7 +55,7 @@ class ScriptedAdversaryLLM(LLMProvider):
         sys_msg = next((m for m in messages if m.get("role") == "system"), None)
         return tools is None and bool(sys_msg) and sys_msg.get("content") == READER_SYSTEM
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+    def chat(self, messages: list[dict], tools: list[dict] | None = None, model: str | None = None) -> dict:
         self.seen_messages.append(messages)
         if self._is_reader_call(messages, tools):
             # 隔离阅读器：无特权、无工具。即便它读到注入也只能产出数据摘要，发不出 tool_call。

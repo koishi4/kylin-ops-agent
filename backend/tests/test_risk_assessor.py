@@ -23,7 +23,7 @@ class _AssessLLM(LLMProvider):
                         else json.dumps(payload, ensure_ascii=False))
         self.calls = 0
 
-    def chat(self, messages, tools=None):
+    def chat(self, messages, tools=None, model=None):
         self.calls += 1
         return {"role": "assistant", "content": self.payload, "tool_calls": None}
 
@@ -31,7 +31,7 @@ class _AssessLLM(LLMProvider):
 class _BoomLLM(LLMProvider):
     """模拟模型/网络故障：研判调用必抛异常。"""
 
-    def chat(self, messages, tools=None):
+    def chat(self, messages, tools=None, model=None):
         raise RuntimeError("network down")
 
 

@@ -22,7 +22,7 @@ class ScriptedProvider(MockProvider):
         self._script = list(script)
         self.calls = 0
 
-    def chat(self, messages, tools=None):
+    def chat(self, messages, tools=None, model=None):
         self.calls += 1
         if self._script:
             return self._script.pop(0)

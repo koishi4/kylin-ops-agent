@@ -58,7 +58,7 @@ class _StubLLM(LLMProvider):
     def __init__(self, tool_name):
         self._name = tool_name
 
-    def chat(self, messages, tools=None):
+    def chat(self, messages, tools=None, model=None):
         if messages and messages[-1].get("role") == "tool":
             return {"role": "assistant", "content": "已分析。", "tool_calls": None}
         return {"role": "assistant", "content": None, "tool_calls": [

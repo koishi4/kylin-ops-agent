@@ -59,7 +59,7 @@ class SplitLLM(LLMProvider):
         self.reader_seen = []
         self.reader_calls = 0
 
-    def chat(self, messages, tools=None):
+    def chat(self, messages, tools=None, model=None):
         if _is_reader(messages, tools):
             self.reader_calls += 1
             self.reader_seen.append(messages)
@@ -115,7 +115,7 @@ class TestReaderHasNoControlFlow:
         seen_tools = {}
 
         class RecordingLLM(SplitLLM):
-            def chat(self, messages, tools=None):
+            def chat(self, messages, tools=None, model=None):
                 if _is_reader(messages, tools):
                     seen_tools["reader_tools_is_none"] = tools is None
                 return super().chat(messages, tools)

@@ -127,7 +127,7 @@ class _RecordingLLM:
     def __init__(self):
         self.seen_tools = None
 
-    async def achat(self, messages, tools):
+    async def achat(self, messages, tools, model=None):
         self.seen_tools = [t["function"]["name"] for t in tools]
         return {"content": "ok", "tool_calls": []}
 

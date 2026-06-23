@@ -21,7 +21,13 @@ class Settings(BaseSettings):
 
     # DeepSeek 云端（OpenAI 兼容）。base_url 可指向私有化/自托管的 OpenAI 兼容网关。
     deepseek_api_key: str = ""
+    # 默认（快速）模型：非推理、低延迟、tool-calling 稳定，用于编排的高频往返
+    # （意图研判 / 工具选择 / CaMeL 隔离阅读）。前端「深度思考」关闭时全程用它。
     deepseek_model: str = "deepseek-chat"
+    # 深度思考（推理）模型：每次先产 reasoning_content「思维链」再作答，更强但更慢。
+    # 前端「深度思考」开关打开时，编排各 LLM 往返改用它，并把思维链入「推理决策」段回放。
+    # 任一 OpenAI 兼容、返回 reasoning_content 的推理端点都可在此切换。
+    deepseek_think_model: str = "deepseek-reasoner"
     deepseek_base_url: str = "https://api.deepseek.com"
 
     # 审计库（第 3 周接入思维链溯源）

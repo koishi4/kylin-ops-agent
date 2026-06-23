@@ -25,12 +25,18 @@ class LLMProvider(ABC):
     """统一接口：给定对话与可用工具，返回模型决策（含工具调用）。"""
 
     @abstractmethod
-    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+    def chat(self, messages: list[dict], tools: list[dict] | None = None,
+             model: str | None = None) -> dict:
         ...
 
-    async def achat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
-        """同步 SDK 放到线程池执行，避免阻塞 FastAPI 事件循环。"""
-        return await asyncio.to_thread(self.chat, messages, tools)
+    async def achat(self, messages: list[dict], tools: list[dict] | None = None,
+                    model: str | None = None) -> dict:
+        """同步 SDK 放到线程池执行，避免阻塞 FastAPI 事件循环。
+
+        model：可选，按请求覆盖默认模型（用于「深度思考」开关在快速/推理模型间切换）；
+        None 时用 provider 构造时的默认模型。
+        """
+        return await asyncio.to_thread(self.chat, messages, tools, model)
 
 
 class _OpenAICompatProvider(LLMProvider):
@@ -41,13 +47,16 @@ class _OpenAICompatProvider(LLMProvider):
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+    def chat(self, messages: list[dict], tools: list[dict] | None = None,
+             model: str | None = None) -> dict:
         resp = self.client.chat.completions.create(
-            model=self.model,
+            model=model or self.model,  # 按请求覆盖（深度思考切推理模型），否则用默认
             messages=messages,
             tools=tools or None,
             temperature=0.0,
         )
+        # model_dump 会保留 DeepSeek 推理模型返回的非标准 reasoning_content 字段
+        # （SDK BaseModel extra="allow"），供编排层把「思维链」入 trace 回放。
         return resp.choices[0].message.model_dump()
 
 
@@ -84,7 +93,9 @@ class MockProvider(LLMProvider):
         (("内核", "posture", "姿态", "dirty frag", "提权", "模块"), "kernel_posture", {}),
     ]
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+    def chat(self, messages: list[dict], tools: list[dict] | None = None,
+             model: str | None = None) -> dict:
+        # mock 无真实模型，model 参数仅为接口一致而存在（深度思考开关对 mock 无意义）。
         # 若上一条是工具结果，则进入「总结」回合，直接给自然语言答复
         if messages and messages[-1].get("role") == "tool":
             return {"role": "assistant",

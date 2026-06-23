@@ -1,7 +1,10 @@
 import axios from 'axios'
 
-// 经 vite 代理 /api → 后端；生产可改为完整后端地址
-const http = axios.create({ baseURL: '/api', timeout: 60000 })
+// 经 vite 代理 /api → 后端；生产可改为完整后端地址。
+// 超时设 180s：一次对话编排器串行多次调用 LLM（意图研判 + 规划 + CaMeL 隔离阅读），
+// 「深度思考」开启时改用推理模型，每次先产思维链更慢；root 全盘根因扫描也耗时。
+// 60s 太紧会误判超时（前端先于后端放弃），故放宽到 180s 兜底（正常仍秒级返回）。
+const http = axios.create({ baseURL: '/api', timeout: 180000 })
 
 // P0-4 受控动作鉴权：若构建时注入了 VITE_OPERATOR_TOKEN，则给每个请求带上
 // Authorization: Bearer <token>（后端 /action/execute 校验）。未注入则不带，走演示模式。
@@ -23,9 +26,10 @@ export async function listTools() {
   return data.tools
 }
 
-export async function chat(message) {
-  const { data } = await http.post('/chat', { message })
-  return data // { trace_id, answer, blocked, intent, trace, tool_calls }
+// deepThinking：是否启用「深度思考」——后端编排改用 DeepSeek 推理模型，回放展示思维链，更慢。
+export async function chat(message, { deepThinking = false } = {}) {
+  const { data } = await http.post('/chat', { message, deep_thinking: deepThinking })
+  return data // { trace_id, answer, blocked, intent, tainted, deep_thinking, trace, tool_calls }
 }
 
 // 执行链回放：列出历史会话

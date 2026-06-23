@@ -77,9 +77,14 @@ class Orchestrator:
         # 这些可疑工具的元数据绝不进入喂给 LLM 的 tools 列表（投毒的核心风险是只要进上下文就生效）。
         self.quarantined_tools: set[str] = quarantined_tools or set()
 
-    async def chat(self, user_input: str) -> ChatResult:
+    async def chat(self, user_input: str, *, deep_thinking: bool = False) -> ChatResult:
         trace_id = uuid.uuid4().hex
         trace: list[TraceStep] = [TraceStep("接收指令", user_input)]
+        # 深度思考开关：on → 编排各 LLM 往返改用推理模型（每次先产 reasoning_content 思维链，
+        # 更强但更慢），并把思维链入「推理决策」段回放；off → 用快速模型（低延迟、tool-calling 稳）。
+        # 对 mock provider 无意义（model 被忽略，离线确定性桩不依赖模型）。
+        settings = get_settings()
+        model = settings.deepseek_think_model if deep_thinking else settings.deepseek_model
 
         # —— 防线1 意图分类 + 防线3 注入体检（在进 LLM 之前）——
         intent = classify_intent(user_input)
@@ -105,7 +110,7 @@ class Orchestrator:
         if intent.intent is IntentClass.GRAY:
             assessor_llm = None if isinstance(self.llm, MockProvider) else self.llm
             assessment = await asyncio.to_thread(
-                assess_risk, user_input, llm=assessor_llm)
+                assess_risk, user_input, llm=assessor_llm, model=model)
             trace.append(TraceStep("安全校验", assessment.to_trace()))
             if assessment.blocked:
                 answer = (
@@ -133,6 +138,7 @@ class Orchestrator:
         trace.append(TraceStep("感知环境", {
             "available_tools": [t["function"]["name"] for t in tools],
             "intent": intent.intent.value,
+            "deep_thinking": deep_thinking,  # 本轮是否启用深度思考（推理模型）
         }))
 
         messages: list[dict] = [
@@ -145,7 +151,8 @@ class Orchestrator:
         tainted = False    # P3-3 污点追踪：一旦摄入不可信数据即置位，落审计可证「危险动作未在污点下放行」
 
         for _ in range(MAX_ROUNDS):
-            msg = await self.llm.achat(messages, tools)
+            msg = await self.llm.achat(messages, tools, model=model)
+            _push_thinking(trace, msg, "规划器")  # 深度思考时把规划器思维链入「推理决策」段
             calls = msg.get("tool_calls") or []
 
             if not calls:
@@ -246,7 +253,7 @@ class Orchestrator:
                 if should_quarantine(untrusted=untrusted,
                                      injection_detected=san.injection_detected):
                     planner_content = await self._quarantined_read(
-                        name, san.wrapped, trace)
+                        name, san.wrapped, trace, model=model)
                 else:
                     planner_content = san.wrapped
 
@@ -276,7 +283,8 @@ class Orchestrator:
                                   tainted=tainted)
 
     async def _quarantined_read(self, tool_name: str, wrapped: str,
-                                trace: list[TraceStep]) -> str:
+                                trace: list[TraceStep], *,
+                                model: str | None = None) -> str:
         """CaMeL 隔离阅读器：用**无工具**的 LLM 调用把一条不可信工具输出压成摘要。
 
         强制隔离边界的三个要点：
@@ -290,7 +298,8 @@ class Orchestrator:
         reader_msgs = build_reader_messages(READER_SYSTEM, wrapped)
         try:
             # 关键：不传 tools。阅读器无工具 → 结构上无法发起 tool_call。
-            reader_msg = await self.llm.achat(reader_msgs, None)
+            reader_msg = await self.llm.achat(reader_msgs, None, model=model)
+            _push_thinking(trace, reader_msg, "隔离阅读器")  # 阅读器的思维链也入回放
             if reader_msg.get("tool_calls"):
                 # 阅读器越权试图调工具（在无 tools 下不应发生）→ 丢弃产物，安全降级。
                 summary = degrade_summary_on_failure(
@@ -357,6 +366,24 @@ class Orchestrator:
         return ChatResult(answer=answer, trace=trace, tool_calls=tool_calls,
                           trace_id=trace_id, blocked=blocked, intent=intent,
                           tainted=tainted)
+
+
+def _push_thinking(trace: list[TraceStep], msg: dict, by: str) -> None:
+    """若模型返回了 reasoning_content（深度思考开启时 DeepSeek 推理模型的「思维链」），
+    单独作为一段「推理决策」入 trace，供前端回放展示模型真实的思考过程。
+
+    非推理模型 / 关闭深度思考时 reasoning_content 为空 → 本函数 no-op，不污染 trace。
+    by：思维链来源（规划器 / 隔离阅读器），便于回放区分是哪个 LLM 角色在思考。
+    """
+    if not isinstance(msg, dict):
+        return
+    rc = (msg.get("reasoning_content") or "").strip()
+    if rc:
+        trace.append(TraceStep("推理决策", {
+            "thinking": rc,
+            "by": by,
+            "source": "deepseek_reasoning",
+        }))
 
 
 def _tool_error(name: str, reason: str, hint: str) -> dict:

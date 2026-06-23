@@ -17,6 +17,9 @@ const loading = ref(false)
 const messages = ref([])
 const scroller = ref(null)
 const openTrace = ref({})   // index -> 是否展开 trace
+// 深度思考开关：on → 后端编排改用 DeepSeek 推理模型，把模型「思维链」入执行链回放，更慢但更可解释；
+// off（默认）→ 用快速模型，秒级响应。把「是否深度思考」交给用户/评委按场景自选。
+const deepThinking = ref(false)
 
 // 意图 → 语义化样式
 const INTENT = {
@@ -48,11 +51,11 @@ async function send(text) {
   loading.value = true
   await scrollBottom()
   try {
-    const data = await chat(msg)
+    const data = await chat(msg, { deepThinking: deepThinking.value })
     messages.value.push({
       role: 'assistant', answer: data.answer, trace: data.trace || [],
       intent: data.intent, blocked: data.blocked, tainted: data.tainted,
-      trace_id: data.trace_id, tool_calls: data.tool_calls || [],
+      deep_thinking: data.deep_thinking, trace_id: data.trace_id, tool_calls: data.tool_calls || [],
     })
   } catch (e) {
     messages.value.push({ role: 'assistant', answer: '请求失败：' + (e.message || e), trace: [], error: true })
@@ -201,9 +204,12 @@ async function confirmExec() {
       <div v-for="(m, i) in messages" :key="i" :class="['row', m.role]">
         <div v-if="m.role === 'assistant'" class="avatar"><Icon name="guardrail" :size="16" /></div>
         <div class="bubble" :class="{ err: m.error }">
-          <div v-if="m.role === 'assistant' && (m.intent || m.blocked)" class="bubble-tags">
+          <div v-if="m.role === 'assistant' && (m.intent || m.blocked || m.deep_thinking)" class="bubble-tags">
             <span v-if="m.intent" class="ichip" :class="(INTENT[m.intent] || {}).cls">
               {{ (INTENT[m.intent] || {}).text || m.intent }}
+            </span>
+            <span v-if="m.deep_thinking" class="ichip think">
+              <Icon name="judge" :size="11" /> 深度思考
             </span>
             <span v-if="m.blocked" class="ichip bad solid">护栏拦截</span>
             <span v-if="m.tainted" class="ichip warn">☣ 污点输入·已隔离</span>
@@ -232,13 +238,27 @@ async function confirmExec() {
     </div>
 
     <div class="composer">
-      <el-input
-        v-model="input" type="textarea" :rows="2" resize="none"
-        placeholder="用自然语言描述运维需求，回车发送（Shift+回车换行）"
-        @keydown.enter.exact.prevent="send()" />
-      <button class="send-btn" :disabled="loading || !input.trim()" @click="send()">
-        <Icon name="send" :size="18" />
-      </button>
+      <div class="composer-bar">
+        <button class="think-toggle" :class="{ on: deepThinking }"
+                @click="deepThinking = !deepThinking"
+                :title="deepThinking ? '点击关闭：改用快速模型' : '点击开启：用推理模型并展示思维链'">
+          <Icon name="judge" :size="14" />
+          深度思考
+          <span class="tg-state" :class="{ on: deepThinking }">{{ deepThinking ? 'ON' : 'OFF' }}</span>
+        </button>
+        <span class="think-hint">{{ deepThinking
+          ? 'DeepSeek 推理模型 · 执行链回放展示完整思维链，响应更慢'
+          : 'DeepSeek 快速模型 · 低延迟秒级响应' }}</span>
+      </div>
+      <div class="composer-row">
+        <el-input
+          v-model="input" type="textarea" :rows="2" resize="none"
+          placeholder="用自然语言描述运维需求，回车发送（Shift+回车换行）"
+          @keydown.enter.exact.prevent="send()" />
+        <button class="send-btn" :disabled="loading || !input.trim()" @click="send()">
+          <Icon name="send" :size="18" />
+        </button>
+      </div>
     </div>
 
     <!-- 受控动作面板：白名单参数化处置 → dry-run 预览裁决 → 二次确认 → 经护栏执行 → 留痕 -->
@@ -345,6 +365,7 @@ async function confirmExec() {
 .ichip.bad.solid { background: var(--coral); color: #1a0808; }
 .ichip.info { background: var(--cyan-soft); color: var(--cyan); }
 .ichip.tool { background: var(--ink-3); color: var(--text-1); font-family: var(--mono); }
+.ichip.think { background: var(--violet-soft, rgba(167,139,250,.14)); color: var(--violet); }
 
 .trace-toggle { margin-top: 10px; border-top: 1px solid var(--line-soft); padding-top: 8px; }
 .tt-btn { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; color: var(--text-2);
@@ -360,7 +381,19 @@ async function confirmExec() {
 @keyframes blink { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
 
 /* 输入栏 */
-.composer { display: flex; gap: 10px; padding: 14px 24px 18px; border-top: 1px solid var(--line); align-items: flex-end; }
+.composer { display: flex; flex-direction: column; gap: 9px; padding: 12px 24px 18px; border-top: 1px solid var(--line); }
+.composer-bar { display: flex; align-items: center; gap: 10px; }
+.composer-row { display: flex; gap: 10px; align-items: flex-end; }
+.composer-row :deep(.el-textarea) { flex: 1; }
+
+/* 深度思考开关：默认灰、开启紫（与「推理决策」段同色系，呼应思维链） */
+.think-toggle { display: inline-flex; align-items: center; gap: 6px; background: var(--ink-2); border: 1px solid var(--line);
+  color: var(--text-2); border-radius: 999px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; transition: all .15s; font-family: var(--sans); }
+.think-toggle:hover { border-color: var(--violet); color: var(--violet); }
+.think-toggle.on { background: var(--violet-soft, rgba(167,139,250,.14)); border-color: rgba(167,139,250,.5); color: var(--violet); }
+.tg-state { font-family: var(--mono); font-size: 10.5px; font-weight: 700; padding: 0 6px; border-radius: 999px; background: var(--ink-3); color: var(--text-2); }
+.tg-state.on { background: var(--violet); color: #140a26; }
+.think-hint { font-size: 11.5px; color: var(--text-2); }
 .composer :deep(.el-textarea__inner) { background: var(--ink-2); box-shadow: 0 0 0 1px var(--line) inset; border-radius: 12px;
   color: var(--text-0); font-family: var(--sans); padding: 11px 13px; }
 .composer :deep(.el-textarea__inner:focus) { box-shadow: 0 0 0 1px var(--jade) inset; }

@@ -36,6 +36,21 @@ const rot = computed(() =>
   isObj.value && props.detail.rule_of_two && typeof props.detail.rule_of_two === 'object'
     ? props.detail.rule_of_two : null)
 
+// 深度思考思维链（orchestrator._push_thinking 写入「推理决策」段）：
+// 把 DeepSeek 推理模型返回的 reasoning_content 原样展示，是「可追溯思维链」最直接的证据。
+const thinking = computed(() =>
+  isObj.value && props.detail.source === 'deepseek_reasoning'
+    && typeof props.detail.thinking === 'string'
+    ? props.detail : null)
+
+// 安全研判的思维链（risk_assessor 写入「安全校验」段的双层意图研判）：深度思考时
+// 把 AI 安全评审「为何判危险」的推理过程也展示出来，呼应「解决 AI 推理不可控」命题。
+const riskThinking = computed(() => {
+  const aj = isObj.value && props.detail.phase === '双层意图研判'
+    ? props.detail.ai_judgment : null
+  return aj && typeof aj.thinking === 'string' && aj.thinking ? aj.thinking : null
+})
+
 // 沙箱处置（执行结果段）
 const sandbox = computed(() => {
   const o = isObj.value ? props.detail.output : null
@@ -44,12 +59,34 @@ const sandbox = computed(() => {
 })
 const sbKilled = computed(() => !!sandbox.value && !!(sandbox.value.sandbox_killed || sandbox.value.limit_hit))
 
-const enriched = computed(() => !!guard.value || !!sandbox.value || !!posture.value || !!rot.value)
+const enriched = computed(() =>
+  !!guard.value || !!sandbox.value || !!posture.value || !!rot.value
+  || !!thinking.value || !!riskThinking.value)
 function pretty(d) { return typeof d === 'string' ? d : JSON.stringify(d, null, 2) }
 </script>
 
 <template>
   <div class="td-body">
+    <!-- 深度思考思维链：DeepSeek 推理模型的真实思考过程（可追溯思维链最直接证据） -->
+    <div v-if="thinking" class="think-card">
+      <div class="think-h">
+        <Icon name="judge" :size="14" />
+        <span class="think-t">DeepSeek 思维链</span>
+        <span class="think-by">{{ thinking.by }}</span>
+      </div>
+      <div class="think-body">{{ thinking.thinking }}</div>
+    </div>
+
+    <!-- 安全研判思维链：AI 安全评审「为何判危险」的推理过程（深度思考时） -->
+    <div v-if="riskThinking" class="think-card">
+      <div class="think-h">
+        <Icon name="judge" :size="14" />
+        <span class="think-t">DeepSeek 思维链</span>
+        <span class="think-by">安全研判</span>
+      </div>
+      <div class="think-body">{{ riskThinking }}</div>
+    </div>
+
     <GuardVerdict v-if="guard" :guard="guard" />
 
     <!-- 最小权限落地身份 -->
@@ -105,6 +142,18 @@ function pretty(d) { return typeof d === 'string' ? d : JSON.stringify(d, null, 
 
 <style scoped>
 .td-body { display: flex; flex-direction: column; gap: 8px; }
+
+/* 深度思考思维链卡（amber，与「推理决策」段同色系） */
+.think-card { border: 1px solid rgba(243,181,61,.3); border-left: 3px solid var(--amber);
+  border-radius: 8px; background: var(--amber-soft); padding: 9px 11px; }
+.think-h { display: flex; align-items: center; gap: 7px; }
+.think-h :deep(.icon) { color: var(--amber); flex: 0 0 auto; }
+.think-t { font-size: 12.5px; font-weight: 600; color: var(--amber); }
+.think-by { font-size: 10.5px; font-family: var(--mono); color: var(--text-2);
+  background: var(--ink-2); padding: 1px 7px; border-radius: 999px; }
+.think-body { margin-top: 7px; font-size: 12px; line-height: 1.66; color: var(--text-1);
+  white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto;
+  font-family: var(--mono); padding-right: 4px; }
 
 .mini { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--ink-1); border-left-width: 3px; }
 .mini.ok { border-left-color: var(--jade); }

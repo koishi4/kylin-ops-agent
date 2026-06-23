@@ -1832,3 +1832,43 @@ fd-safe truncate/五段哈希链），公共样式 `_style.puml`。渲染：`pla
 **踩坑**：① pandoc 不采用 reference.docx 的 sectPr（页面设置丢失）→ 改为后处理输出 docx 注入；
 ② 关闭 tex_math_dollars，避免文档里 `$(...)`/`$IFS` 被误解析为数学公式；
 ③ PlantUML 旧版(1.2020)用 Smetana 之外仍依赖 graphviz 渲染类/用例/部署/构件图，已装 graphviz。
+
+## 2026-06-23 「深度思考」开关：用户可选推理模型 + 把 DeepSeek 思维链入回放
+
+**起因（用户实测两个症状）**：① `/chat` 与 `/diagnose` 报 `timeout of 60000ms exceeded`；
+② 「看不到 deepseek 的思维链，是否打开了思考模式？」
+
+**根因定位（实测取证，非猜测）**：
+- 配置的 `DEEPSEEK_MODEL=deepseek-v4-pro` **本身是推理模型**——直连 API 实测每次都返回
+  `reasoning_content` + `completion_tokens_details.reasoning_tokens`（连工具选择回合也先「想」）。
+  「思考模式」一直开着，只是 `provider.chat()` 只取了 `content`/`tool_calls`，**把 reasoning_content 丢了**，
+  既没进 trace 也没回前端 → 用户当然看不到。
+- **chat 超时**：一次对话编排器**串行** 3～5 次 LLM（risk_assessor 语义研判 + 规划循环 + CaMeL
+  隔离阅读器）。推理模型每次都「想」，实长 prompt 下单次可达数十秒，累加破前端 60s 死超时。
+- **diagnose 超时**：与 LLM **无关**（diagnosis.py 不调模型）。`diagnose('all','/')` 全盘扫大文件，
+  本机 WSL 的 `/` 挂了整块 Windows 盘 → 数分钟；目标麒麟 VM 的 `/` 干净不会触发。60s 太紧也是事实。
+
+**决策（用户拍板）**：不二选一写死，而是**前端加「深度思考」开关，让用户/评委按场景自选**——
+开 = 推理模型（带思维链、更可解释、更慢）；关 = 快速模型（`deepseek-chat`，低延迟、tool-calling 稳）。
+这与赛题「解决 AI 推理不可控」直接呼应：把模型的真实思考过程摆到回放里可审计。
+
+**实现**：
+- 配置：`deepseek_model`（快，默认 `deepseek-chat`）+ 新增 `deepseek_think_model`（推理，
+  `.env` 指 `deepseek-v4-pro`）。`provider.chat/achat` 增 `model` 形参按请求覆盖默认模型。
+- 编排：`Orchestrator.chat(deep_thinking=…)` 据开关选模型，传入每次 `achat` 与 `assess_risk`；
+  新增 `_push_thinking()` 把规划器/隔离阅读器返回的 `reasoning_content` 作为独立「推理决策」段入 trace；
+  `感知环境` 段记 `deep_thinking` 标志。`risk_assessor._ai_assess` 改返回 `(JSON, reasoning_content)`，
+  `RiskAssessment.ai_thinking` 落「安全研判」思维链入「安全校验」段。
+- 接口：`POST /chat` 增 `deep_thinking: bool=False` 并回显。前端 axios 超时 60s→180s（兜底多次推理 +
+  全盘扫描，正常仍秒级）。`ConsoleView` 加紫色「深度思考 ON/OFF」开关 + 气泡「深度思考」标签；
+  `TraceDetail` 新增 amber 思维链卡（规划器 / 隔离阅读器 / 安全研判 三类来源）。
+
+**验证（pytest 2647 全绿 + 真机 DeepSeek + Chrome DevTools 实测）**：
+- 关：`磁盘还剩多少空间？`→6.2s、思维链 0 段、`deepseek-chat`、正确选 disk_usage。
+- 开：同问→思维链 2 段（规划器：选工具 / 总结），回放渲染「DeepSeek 思维链」卡。
+- 开 + 委婉删库（`把那个没用的大家伙 /var/lib/mysql 清理掉腾点空间`）：AI 语义研判判 `critical`→`deny`
+  当场拦截（4.3s，未超时），「安全研判」思维链卡如实展示「这是 MySQL 默认数据目录，删除会导致数据丢失」。
+- 控制台零 error/warn；前后端各 build/测试通过。
+
+**心智小结**：reasoning 模型不是「更好」的免费午餐——它把延迟换可解释性。编排的高频往返要的是
+速度与稳定的 tool-calling，故默认快模型；把「要不要为可解释性付延迟」的选择权交给用户，是更诚实的产品姿态。
