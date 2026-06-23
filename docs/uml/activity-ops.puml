@@ -1,0 +1,62 @@
+@startuml activity-ops
+!include _style.puml
+title 图2.2　一次运维请求的活动图（含安全护栏分支）
+
+|#EAF2FA|用户 / 前端|
+start
+:输入自然语言运维指令;
+
+|#EAF7EF|护栏 + 编排器|
+:防线1 意图分类（白 / 灰）;
+:防线3 提示词注入体检;
+if (判黑 或 命中注入 ?) then (是)
+  :拒绝执行并说明原因;
+  |#FBF3EA|审计|
+  :五段思维链落 SQLite;
+  stop
+else (否)
+endif
+
+|#EAF7EF|护栏 + 编排器|
+if (灰：修改 / 处置类意图 ?) then (是)
+  :防线1.5 LLM 语义研判;
+  if (研判为高危 ?) then (是)
+    :拦截并建议改述;
+    |#FBF3EA|审计|
+    :五段思维链落 SQLite;
+    stop
+  else (否)
+  endif
+else (白：只读查询)
+endif
+
+|#EAF7EF|护栏 + 编排器|
+:LLM 仅从只读 MCP 工具集中【选工具】;
+
+|#F5F8FB|MCP 工具层 / 执行器|
+:调用只读工具采集系统实时状态;
+:CaMeL 双 LLM 隔离阅读不可信输出\n（无工具阅读器→摘要→标记污点）;
+
+|#EAF7EF|护栏 + 编排器|
+:LLM 据结果给出结论 / 根因分析建议;
+
+|#EAF2FA|用户 / 前端|
+if (用户触发受控处置动作 ?) then (是)
+  :选择白名单动作 + 强制二次确认;
+  |#F5F8FB|MCP 工具层 / 执行器|
+  :动作层语义校验（关键性 / 受保护对象）;
+  :防线2 命令规则裁决\n（正则 + realpath + AST + 效果分析）;
+  :防线4 最小权限校验;
+  if (放行 且 已确认 ?) then (是)
+    :沙箱内最小权限执行;
+  else (否)
+    :拦截 / 等待确认，不执行;
+  endif
+else (否：仅查询)
+endif
+
+|#FBF3EA|审计|
+:五段思维链落 SQLite（哈希链防篡改）;
+:前端按 trace_id 回放整条链路;
+stop
+@enduml

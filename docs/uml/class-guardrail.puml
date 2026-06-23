@@ -1,0 +1,125 @@
+@startuml class-guardrail
+!include _style.puml
+title 图4.1　安全护栏包详细类图（四道防线 + 纵深防御）
+
+package "guardrail" {
+
+  class "classifier · 防线1" as CL <<module>> {
+    +classify_intent(text): IntentResult
+  }
+  enum IntentClass {
+    WHITE
+    GRAY
+    BLACK
+  }
+  class IntentResult <<dataclass>> {
+    +intent: IntentClass
+    +reason: str
+    +matched: list
+  }
+
+  class "risk_assessor · 防线1.5" as RA <<module>> {
+    +assess_risk(text, llm): RiskAssessment
+  }
+  class RiskAssessment <<dataclass>> {
+    +blocked: bool
+    +level: str
+    +reason: str
+  }
+
+  class "engine · 防线2/3 裁决" as EN <<module>> {
+    +check_command(cmd): GuardResult
+    +scan_injection(text): GuardResult
+    -_decide(hits): GuardResult
+  }
+  class GuardResult <<dataclass>> {
+    +allowed: bool
+    +action: Action
+    +risk: RiskLevel
+    +require_confirm: bool
+    +ast_findings: list
+  }
+
+  class "rules" as RU <<module>> {
+    +match_rules(cmd): list<Rule>
+    +hits_critical_path(cmd): list
+    +normalize(cmd): str
+    _REDLINE_RULES（硬编码红线）
+  }
+  class Rule <<dataclass>> {
+    +id: str
+    +pattern: str
+    +risk: RiskLevel
+    +action: Action
+    +category: str
+  }
+  enum RiskLevel {
+    CRITICAL / HIGH
+    MEDIUM / LOW
+  }
+  enum Action {
+    DENY / CONFIRM / ALLOW
+  }
+
+  class "ast_analyzer" as AST <<module>> {
+    +analyze_command_ast(cmd): ASTResult
+    +ast_synthetic_rules(): list<Rule>
+  }
+  class "effect_analyzer" as EF <<module>> {
+    +analyze_effects(cmd): EffectSet
+    +effect_synthetic_rules(): list<Rule>
+  }
+  class EffectSet <<dataclass>> {
+    +writes / deletes: list
+    +egress / reads_sensitive: bool
+  }
+
+  class "privilege · 防线4" as PV <<module>> {
+    +check_privilege(cmd): PrivResult
+    +privilege_posture(): dict
+  }
+
+  class "context_sanitizer · 防线3" as CS <<module>> {
+    +sanitize_tool_result(): SanitizeResult
+    spotlighting / datamarking
+  }
+  class "flow_control · CaMeL" as FC <<module>> {
+    +build_reader_messages()
+    +make_reader_summary()
+    双 LLM 隔离阅读
+  }
+
+  class "trifecta · 能力面" as TR <<module>> {
+    +evaluate_path(tools): TriResult
+    +assert_perception_isolation()
+    Rule of Two
+  }
+  class "tool_scan · 供应链" as TS <<module>> {
+    +scan_with_drift(tools): dict
+    投毒/影子/rug-pull
+  }
+
+  CL --> IntentResult
+  IntentResult --> IntentClass
+  RA --> RiskAssessment
+  EN --> GuardResult
+  EN ..> RU : ① 正则 + realpath
+  EN ..> AST : ② Bash AST 结构
+  EN ..> EF : ③ 副作用效果
+  RU o-- Rule
+  Rule --> RiskLevel
+  Rule --> Action
+  GuardResult --> Action
+  GuardResult --> RiskLevel
+  AST ..> Rule : 合成规则（只升不降）
+  EF ..> Rule : 合成规则（只升不降）
+  EF --> EffectSet
+}
+
+note right of EN
+  保守合并取更严：正则 / 路径兜底 / AST /
+  效果分析的命中并入同一 hits，
+  按最高风险 + 授权/确认统一裁决，
+  只能升级、绝不降级。
+end note
+@enduml

@@ -1,0 +1,48 @@
+@startuml component
+!include _style.puml
+title 图5.2　构件图（模块与接口）
+
+component "前端 SPA\n(Vue3 + Element Plus)" as FE
+
+interface "REST / SSE" as IRest
+component "API 路由\n(FastAPI)" as API
+FE --( IRest
+IRest -- API
+
+component "LLM 编排器\nOrchestrator" as ORC
+component "安全护栏引擎\n(4 道防线)" as GUARD
+component "受控动作层\n(7 白名单动作)" as ACT
+component "执行器\n(统一最小权限出口)" as EXEC
+component "根因分析\nDiagnosis" as DIAG
+component "审计溯源\nAuditStore" as AUD
+
+interface "MCP Tools" as IMcp
+component "MCP Server\n(23 READONLY 工具)" as MCP
+IMcp -- MCP
+
+interface "LLM Provider\n(OpenAI 兼容)" as ILlm
+component "DeepSeek / Mock" as LLM
+ILlm -- LLM
+
+API --> ORC
+API --> ACT
+API --> DIAG
+API --> AUD
+ORC --> GUARD : check_command / scan_injection
+ORC --( IMcp : 选 / 调只读工具
+ORC --( ILlm : 编排推理
+ACT --> EXEC
+EXEC --> GUARD : 命令裁决 + 最小权限
+DIAG --( IMcp
+ORC --> AUD
+ACT --> AUD
+
+database "SQLite" as DB
+AUD --> DB
+
+note right of GUARD
+  护栏被 编排器 与 执行器 双路复用：
+  感知路径做意图/注入体检，
+  变更路径做命令规则 + 最小权限裁决。
+end note
+@enduml

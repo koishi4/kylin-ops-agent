@@ -1,0 +1,65 @@
+@startuml sequence-cleanup
+!include _style.puml
+title 图4.2　顺序图：「帮我清理系统垃圾」全链路闭环
+
+actor "运维管理员" as Admin
+box "B 端" #FBFCFE
+  participant "前端 Vue" as FE
+end box
+box "S 端 FastAPI" #FBFCFE
+  participant "API 路由" as API
+  participant "Orchestrator" as ORC
+  participant "护栏\n(classifier/engine)" as GU
+  participant "MCPClient" as MC
+  participant "Diagnosis" as DG
+  participant "ActionRunner" as AR
+  participant "AuditStore" as AU
+end box
+participant "DeepSeek" as DS
+participant "麒麟 OS" as OS
+
+== 阶段一：感知 + 推理 + 根因分析（只读，不改系统）==
+Admin -> FE : 输入「帮我清理系统垃圾」
+FE -> API : POST /chat
+API -> ORC : chat(message)
+ORC -> GU : 防线1 意图分类 + 防线3 注入体检
+GU --> ORC : GRAY / 无注入
+ORC -> GU : 防线1.5 LLM 语义研判
+GU --> ORC : 放行（非恶意删库）
+ORC -> DS : achat(messages, tools=23 只读)
+DS --> ORC : tool_call: find_large_files
+ORC -> MC : call_tool(find_large_files)
+MC -> OS : 封装 du / lsof 采集
+OS --> MC : 大文件列表（不可信数据）
+MC --> ORC : 结果
+ORC -> ORC : CaMeL 隔离阅读 + 标记污点
+ORC -> DG : diagnose(disk) 判断关键性
+DG --> ORC : /var/log/app.log 8GB → CLEANABLE
+ORC -> DS : 据结果总结
+DS --> ORC : 「发现大日志，可安全清理；DB 日志已识别为关键勿删」
+ORC -> AU : save_trace(五段 + 哈希链)
+ORC --> API : answer + trace_id
+API --> FE : 结论 + 建议
+FE --> Admin : 展示结论 / 待确认动作
+
+== 阶段二：用户二次确认后执行受控动作 ==
+Admin -> FE : 点击「安全清理」并二次确认
+FE -> API : POST /action/execute\n{truncate_log, confirmed=true}
+API -> AU : 审计先于执行（落 pending）
+API -> AR : run_action(truncate_log, confirmed)
+AR -> DG : classify_file(path)
+DG --> AR : CLEANABLE（非关键、非软链）
+AR -> AR : 防线4 最小权限态势评估
+AR -> OS : fd-safe os.ftruncate(0)\n(O_NOFOLLOW 防软链写穿)
+OS --> AR : bytes_after = 0
+AR -> AU : save_trace(五段，覆盖 pending)
+AR --> API : executed=true, trace_id
+API --> FE : 执行结果
+Admin -> FE : 按 trace_id 回放完整思维链
+
+note over AR, OS
+  其余命令型动作（kill_process / clean_path /
+  restart_service / block_ip …）走 executor.execute_argv
+  → 防线2 规则库 + 防线4 最小权限 → 沙箱落地
+end note
+@enduml

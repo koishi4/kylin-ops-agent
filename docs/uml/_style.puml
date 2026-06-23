@@ -1,0 +1,73 @@
+' ============================================================
+'  公共视觉样式（中文字体 + 学术规范配色）—— 各图 !include 复用
+'  字体：Noto Sans CJK SC（黑体类无衬线，适合工程制图）
+'  说明：本文件不含 @startuml/@enduml，仅供各图包含。
+' ============================================================
+skinparam defaultFontName "Noto Sans CJK SC"
+skinparam defaultFontSize 13
+skinparam dpi 140
+skinparam shadowing false
+skinparam RoundCorner 6
+skinparam Padding 2
+skinparam ArrowColor #5B6B7B
+skinparam ArrowThickness 1.0
+skinparam TitleFontSize 17
+skinparam TitleFontColor #1F2D3D
+skinparam TitleFontStyle bold
+
+skinparam ActorBorderColor #2C5F8A
+skinparam ActorBackgroundColor #EAF2FA
+skinparam UsecaseBorderColor #2C7A4B
+skinparam UsecaseBackgroundColor #EAF7EF
+skinparam UsecaseFontSize 12
+
+skinparam RectangleBorderColor #6B7B8C
+skinparam RectangleBackgroundColor #F5F8FB
+skinparam PackageBorderColor #8896A6
+skinparam PackageBackgroundColor #FBFCFE
+skinparam PackageFontStyle bold
+
+skinparam ClassBorderColor #2C5F8A
+skinparam ClassBackgroundColor #F2F7FC
+skinparam ClassArrowColor #5B6B7B
+skinparam ClassAttributeFontSize 11
+skinparam StereotypeCBackgroundColor #D6E4F0
+
+skinparam ComponentBorderColor #2C5F8A
+skinparam ComponentBackgroundColor #F2F7FC
+skinparam InterfaceBorderColor #2C7A4B
+
+skinparam NodeBorderColor #6B7B8C
+skinparam NodeBackgroundColor #F7F9FB
+skinparam ArtifactBorderColor #8896A6
+skinparam ArtifactBackgroundColor #FBFCFE
+skinparam DatabaseBorderColor #8A5A2C
+skinparam DatabaseBackgroundColor #FBF3EA
+skinparam CloudBorderColor #5A6A8A
+skinparam CloudBackgroundColor #F0F2FA
+
+skinparam SequenceBoxBorderColor #C2CEDA
+skinparam SequenceBoxBackgroundColor #FBFCFE
+skinparam SequenceLifeLineBorderColor #9AA8B6
+skinparam SequenceParticipantBorderColor #2C5F8A
+skinparam SequenceParticipantBackgroundColor #F2F7FC
+skinparam SequenceArrowThickness 1.0
+skinparam SequenceGroupBorderColor #2C7A4B
+skinparam SequenceGroupBackgroundColor #EAF7EF
+skinparam SequenceDividerBackgroundColor #EAF2FA
+
+skinparam ActivityBorderColor #2C5F8A
+skinparam ActivityBackgroundColor #F2F7FC
+skinparam ActivityDiamondBorderColor #2C7A4B
+skinparam ActivityDiamondBackgroundColor #EAF7EF
+skinparam ActivityStartColor #2C7A4B
+skinparam ActivityEndColor #B0413E
+skinparam SwimlaneBorderColor #9AA8B6
+skinparam SwimlaneTitleFontStyle bold
+
+skinparam StateBorderColor #2C5F8A
+skinparam StateBackgroundColor #F2F7FC
+skinparam StateFontSize 12
+
+skinparam entityBorderColor #2C5F8A
+skinparam entityBackgroundColor #F2F7FC

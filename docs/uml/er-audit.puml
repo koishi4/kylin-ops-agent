@@ -1,0 +1,37 @@
+@startuml er-audit
+!include _style.puml
+title 图4.4　思维链审计库 E-R 图（SQLite）
+
+entity "sessions（会话）" as S {
+  * trace_id : TEXT <<PK>>
+  --
+  * created_at : REAL
+  * user_input : TEXT
+  answer : TEXT
+  intent : TEXT  <<white/gray/black>>
+  * blocked : INTEGER
+  * tainted : INTEGER
+  llm_provider : TEXT
+  head_hash : TEXT  <<封口哈希>>
+}
+
+entity "steps（思维段）" as P {
+  * id : INTEGER <<PK>>
+  --
+  * trace_id : TEXT <<FK>>
+  * seq : INTEGER  <<段序>>
+  * stage : TEXT  <<五段名>>
+  detail : TEXT  <<JSON·脱敏>>
+  * ts : REAL
+  prev_hash : TEXT
+  step_hash : TEXT  <<HMAC 防篡改>>
+}
+
+S ||--o{ P : "1 : N\n（trace_id 外键）"
+
+note bottom of P
+  stage ∈ { 接收指令, 感知环境, 推理决策, 安全校验, 执行结果 }
+  step_hash = HMAC(key, prev_hash ⊕ 段内容)，逐段链接成哈希链；
+  verify_chain() 可校验完整性，任一段被改即断链 → 可信审计证据。
+end note
+@enduml

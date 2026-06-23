@@ -1,0 +1,35 @@
+@startuml deployment
+!include _style.puml
+title 图5.1　部署图（LoongArch + 麒麟高级服务器版 V11）
+
+node "运维管理员终端" as Client {
+  artifact "浏览器\n(Chrome / firefox)" as Browser
+}
+
+node "麒麟高级服务器版 V11\n（LoongArch 架构）" as Server {
+  artifact "Nginx / 静态资源\nVue3 前端 dist" as Web
+  node "Python 3.11 运行时" as Py {
+    artifact "FastAPI + Uvicorn\n应用服务（S 端）" as App
+    artifact "MCP Server\n23 个 READONLY 工具" as MCP
+    artifact "安全护栏 + 执行器\n（最小权限·沙箱）" as Guard
+  }
+  database "SQLite\n审计库 audit.db" as DB
+  artifact "系统命令 / 内核接口\npsutil·lsof·ss·journalctl" as SysTools
+}
+
+cloud "DeepSeek 开放平台\n（OpenAI 兼容 API）" as DeepSeek
+
+Browser --> Web : HTTPS（页面）
+Browser --> App : HTTP/REST + SSE\n127.0.0.1 / 内网
+App --> MCP : stdio / 进程内调用
+App --> Guard : 命令必经裁决
+App --> DB : 思维链落库
+MCP --> SysTools : 只读采集
+Guard --> SysTools : 放行后最小权限执行
+App ..> DeepSeek : HTTPS（可离线切 mock）
+
+note bottom of Server
+  纯逻辑在 x86 开发完成；麒麟端仅做 LoongArch 适配与最终演示。
+  默认仅监听 127.0.0.1；生产配 operator_token 鉴权受控动作。
+end note
+@enduml

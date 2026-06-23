@@ -1,0 +1,156 @@
+@startuml class-overview
+!include _style.puml
+title 图3.2　系统主设计类图（核心域）
+
+package "llm 大模型抽象" {
+  abstract class LLMProvider {
+    +achat(messages, tools): dict
+  }
+  class "_OpenAICompatProvider" as DeepSeek {
+    -base_url: str
+    -api_key: str
+    +achat(messages, tools): dict
+  }
+  class MockProvider {
+    +achat(messages, tools): dict
+  }
+  LLMProvider <|-- DeepSeek
+  LLMProvider <|-- MockProvider
+}
+
+package "mcp_server 工具层" {
+  class MCPClient {
+    +list_tools(): list
+    +openai_tools(): list
+    +call_tool(name, args): dict
+  }
+  class ToolSpec <<dataclass>> {
+    +fn: Callable
+    +level: str
+  }
+  class "REGISTRY" as REG <<module>> {
+    23 个 READONLY 工具
+  }
+  REG o-- "23" ToolSpec
+}
+
+package "core 编排·执行·诊断·动作" {
+  class Orchestrator {
+    -llm: LLMProvider
+    -mcp: MCPClient
+    -quarantined_tools: set
+    +chat(user_input): ChatResult
+    -_quarantined_read(): str
+    -_finish(): ChatResult
+  }
+  class ChatResult <<dataclass>> {
+    +answer: str
+    +trace: list<TraceStep>
+    +trace_id: str
+    +blocked: bool
+    +intent: str
+    +tainted: bool
+  }
+  class TraceStep <<dataclass>> {
+    +stage: str
+    +detail: Any
+  }
+  class "executor" as EXEC <<module>> {
+    +execute(cmd): dict
+    +execute_argv(argv): dict
+  }
+  class "actions" as ACT <<module>> {
+    +run_action(action, params): dict
+    ACTIONS: 7 个白名单动作
+  }
+  class "diagnosis" as DIAG <<module>> {
+    +diagnose(topic, path): dict
+    +classify_file(path): FileClass
+  }
+  enum FileClass {
+    CLEANABLE
+    CRITICAL
+    UNKNOWN
+  }
+  ChatResult "1" o-- "*" TraceStep
+}
+
+package "guardrail 安全护栏（灵魂）" {
+  class "engine" as EN <<module>> {
+    +check_command(cmd): GuardResult
+    +scan_injection(text): GuardResult
+  }
+  class GuardResult <<dataclass>> {
+    +allowed: bool
+    +action: Action
+    +risk: RiskLevel
+    +require_confirm: bool
+    +reason: str
+  }
+  class Rule <<dataclass>> {
+    +id: str
+    +pattern: str
+    +category: str
+  }
+  enum RiskLevel {
+    CRITICAL
+    HIGH
+    MEDIUM
+    LOW
+  }
+  enum Action {
+    DENY
+    CONFIRM
+    ALLOW
+  }
+  class "classifier" as CL <<module>> {
+    +classify_intent(text): IntentResult
+  }
+  class "risk_assessor" as RA <<module>> {
+    +assess_risk(text, llm): RiskAssessment
+  }
+  class "privilege" as PV <<module>> {
+    +check_privilege(cmd): PrivResult
+  }
+  class "trifecta" as TR <<module>> {
+    +evaluate_path(tools): TriResult
+    +capability_table(): dict
+  }
+  GuardResult --> Action
+  GuardResult --> RiskLevel
+  Rule --> RiskLevel
+  Rule --> Action
+  EN ..> Rule : 匹配
+  EN --> GuardResult
+}
+
+package "audit 思维链审计" {
+  class "store" as AU <<module>> {
+    +save_trace(trace_id, steps): void
+    +get_trace(trace_id): dict
+    +verify_chain(trace_id): dict
+    +export_evidence(trace_id): dict
+  }
+}
+
+Orchestrator --> LLMProvider : 编排
+Orchestrator --> MCPClient : 选/调工具
+Orchestrator ..> CL
+Orchestrator ..> RA
+Orchestrator ..> EN
+Orchestrator ..> TR
+Orchestrator ..> AU
+Orchestrator "1" *-- "1" ChatResult : 产出
+EXEC ..> EN : 命令必经裁决
+EXEC ..> PV : 最小权限
+ACT ..> EXEC
+ACT ..> DIAG : 关键性语义校验
+DIAG --> FileClass
+MCPClient ..> REG
+
+note bottom of ACT
+  受控动作不进 MCP 注册表，
+  LLM 无法当工具调用；只能由用户经
+  /action/execute 显式触发 + 二次确认
+end note
+@enduml

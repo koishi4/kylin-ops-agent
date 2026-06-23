@@ -1,0 +1,58 @@
+@startuml usecase
+!include _style.puml
+title 图2.1　麒麟安全智能运维 Agent 用例图
+
+left to right direction
+
+actor "运维管理员" as Admin
+actor "攻击者" as Attacker #FCEAEA
+actor "DeepSeek 大模型" as LLM
+actor "麒麟操作系统" as OS
+
+rectangle "麒麟安全智能运维 Agent" {
+  usecase "自然语言运维对话" as UC_Chat
+  usecase "查询系统实时状态\n（OS 感知）" as UC_Sense
+  usecase "智能根因分析" as UC_Diag
+  usecase "执行受控处置动作" as UC_Act
+  usecase "思维链审计回放" as UC_Audit
+  usecase "护栏规则热加载" as UC_Rules
+  usecase "MCP 工具供应链扫描" as UC_Scan
+
+  usecase "意图风险过滤" as UC_Intent
+  usecase "提示词注入防御" as UC_Inject
+  usecase "命令护栏二次校验" as UC_Guard
+  usecase "最小权限校验" as UC_Priv
+  usecase "强制二次确认" as UC_Confirm
+  usecase "危险操作拦截" as UC_Block
+}
+
+Admin --> UC_Chat
+Admin --> UC_Sense
+Admin --> UC_Diag
+Admin --> UC_Act
+Admin --> UC_Audit
+Admin --> UC_Rules
+Admin --> UC_Scan
+
+Attacker ..> UC_Inject : 威胁
+Attacker ..> UC_Chat : 诱导越权
+
+UC_Chat ..> UC_Intent : <<include>>
+UC_Chat ..> UC_Inject : <<include>>
+UC_Chat ..> UC_Sense : <<include>>
+UC_Act ..> UC_Confirm : <<include>>
+UC_Act ..> UC_Guard : <<include>>
+UC_Act ..> UC_Priv : <<include>>
+UC_Block ..> UC_Act : <<extend>>
+UC_Block ..> UC_Chat : <<extend>>
+
+UC_Sense --> OS
+UC_Diag --> OS
+UC_Act --> OS
+UC_Chat --> LLM
+
+note bottom of UC_Block
+  危险命令 / 提权 / 注入命中规则时，
+  拦截行为在执行点被触发（扩展用例）
+end note
+@enduml

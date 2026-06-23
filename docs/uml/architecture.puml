@@ -1,0 +1,60 @@
+@startuml architecture
+!include _style.puml
+title 图3.1　系统总体架构图（B/S 分层）
+
+package "表示层（B 端·浏览器，Vue3 + Element Plus）" {
+  rectangle "运维指挥台\nConsoleView" as V1
+  rectangle "审计回放\nAuditView" as V2
+  rectangle "护栏可视化\nGuardrailView" as V3
+  rectangle "根因分析\nDiagnoseView" as V4
+  rectangle "能力面板\nCapabilityView" as V5
+}
+
+package "应用服务层（S 端·FastAPI）" {
+  rectangle "REST / SSE 接口路由\n/chat  /diagnose  /action/execute  /traces ..." as API
+}
+
+package "核心域层（安全护栏为灵魂）" {
+  rectangle "LLM 编排器\nOrchestrator" as ORC
+  rectangle "安全护栏引擎\n4 道防线" as GUARD
+  rectangle "受控动作层\n7 个白名单动作" as ACT
+  rectangle "执行器\n统一最小权限出口" as EXEC
+  rectangle "根因分析\nDiagnosis" as DIAG
+  rectangle "审计溯源\n五段思维链 + 哈希链" as AUD
+}
+
+package "工具层（MCP Server·官方 mcp SDK）" {
+  rectangle "23 个 READONLY 运维感知工具\n进程·网络·磁盘·日志·句柄·系统" as TOOLS
+}
+
+cloud "DeepSeek\n云端大模型" as DS
+node "麒麟操作系统 V11\npsutil·lsof·ss·journalctl" as OSN
+database "SQLite\n审计库" as DB
+
+V1 --> API
+V2 --> API
+V3 --> API
+V4 --> API
+V5 --> API
+note on link
+  HTTP / REST + SSE
+end note
+
+API --> ORC
+API --> ACT
+ORC --> GUARD
+ORC --> TOOLS : 选 / 调用只读工具
+ORC ..> DS : OpenAI 兼容协议
+ORC --> AUD
+ACT --> EXEC
+ACT --> AUD
+EXEC --> GUARD : 命令必经裁决
+DIAG --> TOOLS
+AUD --> DB
+TOOLS --> OSN : 命令 / 系统调用封装
+
+legend bottom
+  感知路径：LLM 只能从只读工具中【选】，无自由执行腿；
+  变更路径：仅 7 个白名单动作，经执行器 + 护栏 + 强制二次确认。两条路径物理隔离。
+endlegend
+@enduml

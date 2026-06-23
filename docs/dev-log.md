@@ -1804,3 +1804,31 @@ rule_of_two，键与 `TraceDetail` 绑定一一对应）。纯前端改动，后
   **五段 trace 推回对话流**（复用 `TraceTimeline`，与对话留痕统一）。设计点：未授权预览 needAuth 动作即被
   防线4 拦下、打开授权开关再预览即放行——把「核心动作需显式授权」演成可交互因果。`vite build` 通过；
   以 route 层驱动校验了 6 个面板场景的 HTTP 契约（拦截/待确认/放行 + guard/privilege 字段齐全）与 UI 状态一一对应。
+
+
+---
+
+## 2026-06-23 赛题文档与 SE 规范 UML 图集
+
+**背景**：完成软件杯初赛文档类提交物 + 合工大软件工程课程报告，要求图表符合软件工程学规范。
+
+**工具链**：PlantUML（文本源 UML，可版本化）+ Graphviz + pandoc + Noto Sans CJK SC 字体。
+安装：`sudo apt install -y default-jre graphviz plantuml pandoc fonts-noto-cjk fonts-wqy-zenhei`。
+
+**UML 图集（docs/uml/，11 张，一图多用）**：用例图、活动图(泳道+护栏分支)、总体架构图、
+主设计类图、护栏包类图、清理垃圾顺序图、抗注入(CaMeL)顺序图、审计库 E-R 图、护栏裁决状态机、
+部署图(LoongArch+麒麟V11)、构件图。全部基于真实代码绘制（23 只读工具/7 受控动作/四防线/
+fd-safe truncate/五段哈希链），公共样式 `_style.puml`。渲染：`plantuml -charset UTF-8 -tpng`。
+
+**文档（Markdown 源 → docs/out/ docx）**：软件杯 1 需求分析、2 功能设计、3 产品说明书、
+4 功能测试报告、5 性能测试报告、8 演示PPT大纲、课程报告。测试/性能数字复用既有自动评测
+（拦截率100%/误杀率0%/注入100%/NL≈95-100%/护栏229μs）。
+
+**转 Word（scripts/build_docx.py）**：pandoc 默认 reference.docx 打补丁成合工大格式——
+正文宋体小四 1.5 倍行距、标题黑体黑色、A4 + 上2.5下2左2.5右2cm；`\\newpage`→docx 分页符；
+图片以 docs/ 为 resource-path 解析内嵌；pandoc 不写 sectPr，故后处理注入页面设置 sectPr。
+校验：XML 全合法、A4/边距/字体/标题样式/图片内嵌一一核对通过。
+
+**踩坑**：① pandoc 不采用 reference.docx 的 sectPr（页面设置丢失）→ 改为后处理输出 docx 注入；
+② 关闭 tex_math_dollars，避免文档里 `$(...)`/`$IFS` 被误解析为数学公式；
+③ PlantUML 旧版(1.2020)用 Smetana 之外仍依赖 graphviz 渲染类/用例/部署/构件图，已装 graphviz。
