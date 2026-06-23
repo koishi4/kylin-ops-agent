@@ -1872,3 +1872,25 @@ fd-safe truncate/五段哈希链），公共样式 `_style.puml`。渲染：`pla
 
 **心智小结**：reasoning 模型不是「更好」的免费午餐——它把延迟换可解释性。编排的高频往返要的是
 速度与稳定的 tool-calling，故默认快模型；把「要不要为可解释性付延迟」的选择权交给用户，是更诚实的产品姿态。
+
+## 2026-06-23 麒麟虚机一键部署脚本：把 deploy-loongarch 预案落成可执行幂等脚本
+
+**起因**：`docs/deploy-loongarch.md` 已把 LoongArch+麒麟 V11 的适配策略写细，但「照着文档逐条敲」
+仍易漏（venv 忘加 `--system-site-packages`、误装 `uvicorn[standard]` 触发 uvloop/watchfiles 编译、
+忘建 opsagent 账户丢需求④）。需要一条命令把「配环境 + 拉代码 + 起服务 + 冒烟」一把梭，且可反复跑。
+
+**实现**：新增 `scripts/deploy_kylin.sh`（八步，幂等，非 root 自动加 sudo）：
+① 探测架构/发行版/包管理器（dnf/yum/apt 自适应，loongarch64 走系统包优先）；
+② 装系统依赖（`python3-psutil`/`python3-pydantic`/`gcc`/`lsof`/`iproute`…，C/Rust 扩展走系统包免编译）；
+③ 从 GitHub clone/更新到 `/opt/kylin-ops-agent`（已存在则 fetch+reset 幂等）；
+④ `python3 -m venv --system-site-packages .venv`，由 `requirements.txt` 动态生成清单——
+   `sed` 把 `uvicorn[standard]→uvicorn`（去编译大头），装完做 psutil/pydantic 等导入性自检；
+⑤ 写 `.env`（`set_env` 就地改键、幂等不留重复行；对外绑定时自动补 `OPERATOR_TOKEN`/`AUDIT_HMAC_KEY`
+   以过失败安全启动守卫）；⑥ 处理前端 `dist`（仓库已带则直接托管，不在 LoongArch 上构建）；
+⑦ `--systemd`：建非登录 `opsagent` 账户 + 安装以其身份运行的 unit（`--loop asyncio --http h11`，
+   坐实需求④最小权限）；可选 `--nginx` 托管 dist 并反代 `/api`；
+⑧ 冒烟：`LLM_PROVIDER=mock pytest -q` + 起服务探 `/health`、`/tools`，打印部署摘要。
+
+**设计取舍**：默认 `provider=mock`（断网即可演示）、`bind=127.0.0.1`（最安全）、不建 systemd（前台跑更适
+合答辩演示）——这些都用 flag 开。脚本是文档的**可执行落地版**，不替代文档；规则仍是「能用系统包就用系统包、
+编译不过就降级、前端只拷 dist」。`bash -n` + set_env/transform 单元验证均通过。
