@@ -16,3 +16,7 @@ node_modules/
 # 由 x86 开发机 `npm run build` 产出后随 git 一并下发，部署脚本 step5 直接托管。重建后 `git add
 # frontend/dist` 提交更新即可（产物变更会如实出现在 git status）。详见 docs/deploy-loongarch.md §3。
 .DS_Store
+# 提交物：源码/安装包 zip 由 git archive 随时重生成，演示视频体积大，均不入库
+提交物/*.zip
+提交物/*.mp4
+提交物/*.mov
