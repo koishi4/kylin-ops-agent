@@ -1,0 +1,30 @@
+@startuml principle-architecture
+!include _style.puml
+title 附图2　双路径隔离 + Rule of Two（架构为什么安全）
+
+rectangle "自然语言指令" as NL #EAF2FA
+rectangle "LLM 编排器\n只能【选工具】，不能拼装/执行" as ORC #F2F7FC
+
+package "感知路径（能力受限）" as PA {
+  rectangle "22 个 READONLY MCP 工具\n能力腿：可读 · 不可写 · 不可外联  →  能力 ≤ 2" as TOOLS #EAF7EF
+}
+
+package "变更路径（物理隔离）" as PB {
+  rectangle "7 个参数化受控动作\ntruncate_log / kill_process / clean_path…" as ACT #FBF3EA
+  rectangle "用户经 /action/execute 显式触发\n+ 强制二次确认 + 过执行器/护栏" as GATE
+}
+
+NL --> ORC
+ORC --> TOOLS : 选其一调用
+ORC ..> ACT : × 够不到\n（不在工具注册表）
+ACT --> GATE
+
+note right of TOOLS
+  全部工具只读、无外联腿 → 满足 Meta「Rule of Two」：
+  注入即使成功，能力上限仍 ≤ 2，无法升级为状态变更。
+end note
+note right of GATE
+  变更入口与 LLM 编排路径物理隔离，
+  第三条腿只存在于「强制二次确认」的动作层。
+end note
+@enduml

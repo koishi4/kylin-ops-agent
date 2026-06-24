@@ -1,0 +1,21 @@
+@startuml principle-camel
+!include _style.puml
+title 附图3　CaMeL 双 LLM 隔离阅读（抗注入原理）
+
+participant "规划器 LLM\n有工具 / 会决策" as P
+participant "只读 MCP 工具" as T
+participant "隔离阅读器 LLM\n不带任何工具" as Q
+
+P -> T : 选只读工具调用
+T --> Q : 返回【不可信】原始输出\n（可能夹带「请执行 rm -rf /」）
+note over Q
+  隔离阅读器无工具腿：
+  即便被注入也无任何动作可执行
+end note
+Q -> Q : 压成摘要 + spotlighting / datamarking 打「不可信」标
+Q --> P : 仅回喂【已降级为数据】的摘要\n（原始字节绝不进规划器）
+note over P
+  规划器只看到「数据」而非「指令」：
+  夹带的命令流不到能动手的环节
+end note
+@enduml

@@ -1,0 +1,31 @@
+@startuml principle-command-verdict
+!include _style.puml
+title 附图1　命令裁决：四法并行 + 保守合并（防线2）
+
+rectangle "候选命令\n（受控动作构造 / 自由形态）" as CMD #EAF2FA
+
+rectangle "① 正则规则库\n字面高危模式\nrm -rf /、mkfs、chmod 777…" as R1
+rectangle "② realpath 路径还原\n相对路径 / 软链接变形\n→ 归一到关键目录再比对" as R2
+rectangle "③ Bash AST 结构分析\n命令替换 $(...)、管道接 shell、\n重定向写关键路径、; && 命令链" as R3
+rectangle "④ 副作用效果分析\n按【实际效果】判：删除/写入/\n外联/读凭据外发——不看字面" as R4
+
+rectangle "保守合并\n风险取最高 · 门控取 DENY/CONFIRM 并集\n【只升不降】" as MERGE #FBF3EA
+rectangle "裁决\n放行 / 二次确认 / 显式授权 / 拒绝" as V #EAF7EF
+
+CMD --> R1
+CMD --> R2
+CMD --> R3
+CMD --> R4
+R1 --> MERGE
+R2 --> MERGE
+R3 --> MERGE
+R4 --> MERGE
+MERGE --> V
+
+note bottom of MERGE
+  四法命中并入同一 hits 列表统一裁决：任一升级则升级，
+  CRITICAL 红线不可被任何一法调低。
+  → 换写法 / base64 / 变量替换能骗过某一法，
+    却骗不过「按效果判定」，故绕不过。
+end note
+@enduml
