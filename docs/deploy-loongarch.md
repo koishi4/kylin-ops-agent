@@ -91,10 +91,13 @@ bash scripts/deploy_kylin.sh --help    # 全部参数
 单跑、前端另行托管。
 
 > **真机实测一处缺陷已修（务必拉最新代码）**：执行沙箱原先仅用 `shutil.which` 判断「装没装」bwrap，
-> 而麒麟/LoongArch 内核**禁用 unprivileged user namespace**——bwrap *装了却不可用*（建命名空间即非零退出、
-> 内层命令没跑），导致每条走沙箱的命令空 stdout，受控动作（clean/kill）演示当场失效、14 个用例红。
-> 已改为**功能性自检**：真跑一条 `echo` 验证后端可用，不可用即自动降级到纯 rlimit（限额仍在、root 下
-> setuid 降权仍在）。详见 dev-log「2026-06-23 真机首跑取证」。教训：**「装了」≠「能用」，自动降级必须功能性验证**。
+> bwrap *装了却不可用*——本 VM 上 bwrap 单跑能建命名空间，但 `--unshare-pid` 需 `fork()`，撞上 executor
+> 落地时 `preexec` 施加的 `RLIMIT_NPROC`（默认 64，运行账户进程数已超 64）→ fork `EAGAIN`、内层命令没跑
+> （真实 stderr：`bwrap: Creating new namespace failed: Resource temporarily unavailable`），导致每条走
+> 沙箱的命令空 stdout，受控动作（clean/kill）演示当场失效、14 个用例红。已改为**生产同款功能性自检**：用
+> 与真实执行一致的包裹参数 **+ 同款 `preexec`（含 RLIMIT_NPROC）** 跑一条 `echo` 验证，不可用即自动降级到
+> 纯 rlimit（限额仍在、root 下 setuid 降权仍在）。详见 dev-log「2026-06-24 沙箱缺陷二诊」。
+> 教训：**自检要在「生产同款条件」下做——只验"裸后端能跑"会漏掉"叠加 preexec 后才暴露"的不可用。**
 
 ## 3. 部署步骤（手工原理参考 / 排障兜底；常规部署用 §3.0 的脚本）
 
@@ -208,7 +211,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now kylin-ops-agent
 - [x] `/tools` 列出 **22** 个 MCP 工具（真机首跑已确认，原文档「15」为旧值）
 - [ ] `python scripts/demo.py --provider mock --auto` 七幕全过、exit 0
 - [ ] `pytest -q` 全套通过（回填通过数与耗时）
-      ⚠️ 真机首跑曾 14 红——因 bwrap「装了却不可用」（内核禁 unprivileged userns），已修为功能性自检自动降级；
+      ⚠️ 真机首跑曾 14 红——bwrap 的 fork（--unshare-pid）撞 preexec 的 RLIMIT_NPROC→EAGAIN，已修为「生产同款自检→自动降级 rlimit」；
       **务必拉最新代码**后重跑，预期全绿。启动日志会有一行「执行沙箱隔离后端：rlimit……」表明降级生效。
 - [ ] 执行沙箱后端选择：启动日志 `执行沙箱隔离后端：<bwrap|nsjail|rlimit>`——LoongArch 麒麟上预期为 `rlimit`
       （命名空间隔离不可用时的兜底，限额/降权仍在）。回填实际值：______
