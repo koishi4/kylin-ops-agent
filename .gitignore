@@ -20,3 +20,5 @@ node_modules/
 提交物/*.zip
 提交物/*.mp4
 提交物/*.mov
+# build_docx.py 生成的合工大样式参考模板（中间产物，可重生成）
+docs/out/_*

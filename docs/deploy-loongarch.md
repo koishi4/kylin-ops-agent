@@ -1,148 +1,120 @@
-# LoongArch + 麒麟 V11 部署适配预案
+# 安装与部署文档（LoongArch + 麒麟高级服务器操作系统 V11）
 
-> 对应 IMPROVEMENTS P2-5。目标环境：**麒麟高级服务器操作系统 V11 + LoongArch（loongarch64）**，官方发放虚机。
-> 本文档不依赖虚机即可先写好，虚机到手后照此逐项验证并回填实测结果。
-> 核心判断（见 docs/总方案.md）：项目纯逻辑在 x86 WSL 开发完成；麒麟是标准 Linux 发行版，`psutil`/`lsof`/`journalctl`/`ss`/`df` 等都在，
-> **迁移成本几乎全部集中在「LoongArch 上没有预编译 wheel 的 Python 扩展如何装上」**。本预案就是把这件事拆细、给好退路。
+本文档说明本系统在采用 LoongArch 架构的麒麟高级服务器操作系统 V11 上的安装与部署方法。麒麟是标准的 Linux 发行版，系统所依赖的 `psutil`、`lsof`、`journalctl`、`ss`、`df` 等工具均可正常使用，因此部署的主要工作集中在「为 LoongArch 架构准备好缺少预编译包的 Python 扩展」这一件事上。本文档将这件事拆解清楚，并给出对应的退路。
 
-## 0. 一句话策略
+## 0 总体策略
 
-> **能用麒麟官方源的系统包就用系统包；装不上 wheel 的扩展走源码编译；编译也难的非核心扩展直接降级/替代。前端在 x86 上 `vite build`，只把 `dist/` 拷过去托管，不在 LoongArch 上碰 Node 工具链。**
+部署遵循一条简明的总体策略：能使用麒麟官方源中系统包的，优先使用系统包；系统包装不上的扩展，走源码编译；编译也难以通过的非核心扩展，则降级或替代。前端在 x86 开发机上完成构建，只把构建产物拷贝到目标机托管，不在 LoongArch 上引入 Node 工具链。
 
-## 1. 依赖盘点与适配难度分级
+## 1 依赖盘点与适配难度
+
+系统的主要依赖及其在 LoongArch 上的适配难度与策略如表 1 所示。纯 Python 依赖可直接安装，无适配风险；`psutil` 为 C 扩展、`pydantic` 的核心为 Rust 扩展，在 LoongArch 上多半没有预编译包，需优先使用系统包或源码编译；`uvicorn` 的增强版含若干编译型扩展，可去除增强版改用纯 Python 事件循环；前端构建产物在 x86 机器上生成后拷贝过来托管；大模型采用云端接口或本地桩，无需在设备上运行模型。
 
 | 依赖 | 类型 | LoongArch 风险 | 适配策略 |
 |---|---|---|---|
-| `fastapi` / `starlette` | 纯 Python | 无 | 直接 `pip install` |
-| `httpx` / `openai` / `python-dotenv` / `aiosqlite` | 纯 Python | 无 | 直接装；SQLite 引擎用系统 `libsqlite3` |
-| `mcp`（官方 SDK） | 纯 Python | 低 | 直接装；如依赖 `pydantic` 见下 |
-| `pyyaml` | 纯 Python + 可选 C 加速（libyaml） | 低 | 纯 Python 解析即可工作；想要 `CSafeLoader` 加速再装 `libyaml-devel` |
-| **`psutil`** | **C 扩展** | **中**（loongarch64 多半无预编译 wheel） | 优先系统包 `python3-psutil`；否则源码编译（需 `gcc`+`python3-devel`） |
-| **`pydantic`（pydantic-core）** | **Rust 扩展** | **中高**（pydantic v2 核心是 Rust，需 Rust 工具链编译） | 优先系统包；否则装 `rust`/`cargo` 后源码编译；极端预案见 §5 |
-| `uvicorn[standard]` | 含 `uvloop`(C)/`httptools`(C)/`watchfiles`(Rust) 等 extras | 中（extras 可能编不过） | **去掉 `[standard]`**，用纯 Python 的 `asyncio` 事件循环：`pip install uvicorn`，启动加 `--loop asyncio --http h11` |
-| 前端 `vue`/`vite`/`element-plus` | Node 构建产物 | 不在 LoongArch 跑构建 | 在 x86 开发机 `npm run build`，把 `frontend/dist/` 拷到麒麟，由后端或 nginx 托管静态文件 |
-| LLM 运行时 | 无需在设备上跑模型 | 低 | 见 §4：用 DeepSeek 云端 API（国产开源）；无网/无 key 用 `LLM_PROVIDER=mock` 离线确定性桩兜底。**不在 LoongArch 上部署本地大模型**（已移除 8B 双模式，见 dev-log 2026-06-11） |
+| fastapi、starlette | 纯 Python | 无 | 直接安装 |
+| httpx、openai、python-dotenv、aiosqlite | 纯 Python | 无 | 直接安装；SQLite 引擎用系统库 |
+| mcp（官方 SDK） | 纯 Python | 低 | 直接安装 |
+| pyyaml | 纯 Python 含可选 C 加速 | 低 | 纯 Python 解析即可工作 |
+| psutil | C 扩展 | 中 | 优先系统包，否则源码编译 |
+| pydantic | Rust 扩展 | 中高 | 优先系统包，否则装 Rust 工具链后源码编译 |
+| uvicorn 增强版 | 含编译型扩展 | 中 | 去除增强版，启动时指定纯 Python 事件循环 |
+| 前端 vue、vite、element-plus | Node 构建产物 | 不在设备构建 | x86 上构建，拷贝产物到目标机托管 |
+| 大模型运行时 | 无需在设备运行 | 低 | 采用云端接口或本地桩，详见第 4 节 |
 
-> 备注：本项目命令执行只封装系统自带的 `lsof`/`netstat`/`journalctl`/`df`/`ss` 等，这些是 OS 原生工具，LoongArch 上无适配问题，只需确认已安装（`which lsof ss journalctl`）。
+<p align="center">表 1　依赖盘点与适配策略</p>
 
-## 2. 三套安装策略（按优先级）
+系统所封装的命令均为操作系统自带的原生工具，在 LoongArch 上没有适配问题，仅需确认其已安装即可。
 
-### 策略 A：优先用麒麟官方源的系统包（最省事，最稳）
-麒麟 V11 基于 RPM，包管理用 `dnf`/`yum`。C/Rust 扩展优先走系统已编译好的包：
+## 2 三套安装策略
+
+**策略 A：优先使用系统包。** 麒麟 V11 基于 RPM，包管理使用 dnf。对 C 与 Rust 扩展优先采用系统已编译好的包：
+
 ```bash
 sudo dnf install -y python3 python3-pip python3-devel gcc make \
                     python3-psutil python3-pydantic python3-yaml \
                     sqlite lsof iproute procps-ng
 ```
-> 注：系统包版本可能低于 requirements.txt 的下限。装完用 `python3 -c "import psutil, pydantic; print(psutil.__version__, pydantic.VERSION)"` 核对，
-> 若版本过低再考虑策略 B 升级，或放宽本项目对应的版本下限（功能上 psutil>=5.9、pydantic>=2.6 是为了 API 稳定，可按实测调整）。
 
-建议让系统包提供的扩展直接对 venv 可见：创建虚拟环境时加 `--system-site-packages`，纯 Python 依赖仍装进 venv：
+系统包版本可能略低于项目下限，安装后应核对版本，必要时再升级或按实测放宽版本下限。建议创建虚拟环境时启用对系统站点包的可见性，使系统包提供的扩展对虚拟环境可见，纯 Python 依赖仍安装进虚拟环境：
+
 ```bash
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
-pip install fastapi "uvicorn" httpx openai python-dotenv aiosqlite mcp pyyaml
-# 注意：上面未装 psutil/pydantic（用系统包）、未用 uvicorn[standard]
+pip install fastapi uvicorn httpx openai python-dotenv aiosqlite mcp pyyaml
 ```
 
-### 策略 B：源码编译缺失的扩展（系统源没有或版本太低时）
-LoongArch 上 `pip install psutil`/`pydantic` 若无 wheel 会自动拉源码编译，前置工具链：
+**策略 B：源码编译缺失的扩展。** 当系统源中没有相应包或版本过低时，可在准备好工具链后由 pip 触发源码编译：
+
 ```bash
 sudo dnf install -y gcc gcc-c++ make python3-devel
-# pydantic-core 是 Rust，需要 Rust 工具链：
-sudo dnf install -y rust cargo        # 或用 rustup 装最新版
-pip install psutil pydantic           # 触发源码编译，耐心等
-```
-> 留足时间：Rust 首次编译 pydantic-core 在虚机上可能数分钟到十几分钟。编译失败常见原因是缺 `python3-devel` 头文件或 Rust 版本过旧——按报错补齐。
-
-### 策略 C：降级 / 替代（编译实在过不去的非核心项）
-- **uvicorn**：不要装 `[standard]`（其 `uvloop`/`watchfiles` 是编译大头且非必需）。用纯 Python：
-  ```bash
-  pip install uvicorn        # 不带 [standard]
-  uvicorn app.main:app --host 0.0.0.0 --port 8000 --loop asyncio --http h11
-  ```
-- **pyyaml 的 C 加速**：装不上 `libyaml` 没关系，PyYAML 自带纯 Python `SafeLoader`，本项目 `yaml.safe_load` 照常工作（只是稍慢，规则文件就 25 条，无感）。
-- **pydantic 极端预案**：见 §5。
-
-## 3.0 一键部署脚本（推荐，已在真机跑通）
-
-本预案的全部步骤已固化进 **`scripts/deploy_kylin.sh`**（幂等，可反复跑）。**优先用它**，下面 §3 的
-手工步骤作为原理参考/排障兜底保留。
-
-```bash
-# 从 GitHub 拉代码 → 配环境 → 起服务 → 冒烟，一条命令搞定。推荐生产姿态：
-bash scripts/deploy_kylin.sh --systemd --nginx --provider deepseek --api-key sk-xxx
-#   --systemd          建受限账户 opsagent + 以其身份开机自启（坐实需求④，等价 §3.5 ①②）
-#   --nginx            把 frontend/dist 托管到 80 端口、/api 反代到后端 8000 → 浏览器开 http://<VM-IP>/
-#   --provider mock    默认；断网/无 key 也能演示（省略 --provider 即 mock）
-#   --skip-rust        已自备 cargo>=1.85 时跳过 rustup；--pip-index/--rust-mirror 换镜像
-bash scripts/deploy_kylin.sh --help    # 全部参数
+sudo dnf install -y rust cargo
+pip install psutil pydantic
 ```
 
-脚本相对手工步骤多做了几件「真机踩坑后」的自愈，避免照文档逐条敲时漏项：
-- **Rust 工具链自愈**：LoongArch 上 `pydantic-core`/`jiter` 等 Rust 扩展无预编译 wheel，需源码编译；
-  麒麟自带 cargo 1.82 < 1.85（maturin 的 edition2024 解析失败）→ 脚本探测到即用 rustup 升级（默认走镜像）。
-- **uvicorn 去 `[standard]`**：由 `requirements.txt` 动态生成清单时 `sed` 改写，免编 uvloop/watchfiles。
-- **前端 `dist/` 随 git 下发**：仓库已带 `frontend/dist`（`.gitignore` 已只跟踪它），脚本 step5 直接托管，
-  不在 LoongArch 上碰 Node。**重建**：x86 上 `npm run build` 后 `git add frontend/dist && git commit`。
+其中 Rust 首次编译 pydantic 核心在虚拟机上可能耗时数分钟到十几分钟。编译失败的常见原因是缺少开发头文件或 Rust 版本过旧，应按报错补齐。
 
-**前端访问（`--nginx`）**：nginx `location /api/ → http://127.0.0.1:8000/`（末尾斜杠剥掉 `/api` 前缀），
-与前端 `baseURL='/api'`、开发期 vite 代理行为一致——故 build 产物无需改任何 URL。不加 `--nginx` 则后端
-单跑、前端另行托管。
-
-> **真机实测一处缺陷已修（务必拉最新代码）**：执行沙箱原先仅用 `shutil.which` 判断「装没装」bwrap，
-> bwrap *装了却不可用*——本 VM 上 bwrap 单跑能建命名空间，但 `--unshare-pid` 需 `fork()`，撞上 executor
-> 落地时 `preexec` 施加的 `RLIMIT_NPROC`（默认 64，运行账户进程数已超 64）→ fork `EAGAIN`、内层命令没跑
-> （真实 stderr：`bwrap: Creating new namespace failed: Resource temporarily unavailable`），导致每条走
-> 沙箱的命令空 stdout，受控动作（clean/kill）演示当场失效、14 个用例红。已改为**生产同款功能性自检**：用
-> 与真实执行一致的包裹参数 **+ 同款 `preexec`（含 RLIMIT_NPROC）** 跑一条 `echo` 验证，不可用即自动降级到
-> 纯 rlimit（限额仍在、root 下 setuid 降权仍在）。详见 dev-log「2026-06-24 沙箱缺陷二诊」。
-> 教训：**自检要在「生产同款条件」下做——只验"裸后端能跑"会漏掉"叠加 preexec 后才暴露"的不可用。**
-
-## 3. 部署步骤（手工原理参考 / 排障兜底；常规部署用 §3.0 的脚本）
+**策略 C：降级或替代。** 对于编译确实难以通过的非核心项，可采取替代方案。uvicorn 不安装增强版，启动时指定纯 Python 事件循环即可，功能不受影响：
 
 ```bash
-# 1) 取代码（git 或拷贝 tar 包）
-cd /opt && git clone <repo> kylin-ops-agent && cd kylin-ops-agent/backend
-
-# 2) 按 §2 策略 A/B 准备依赖
-python3 -m venv --system-site-packages .venv && source .venv/bin/activate
-pip install fastapi uvicorn httpx openai python-dotenv aiosqlite mcp pyyaml
-python -c "import psutil, pydantic, yaml; print('deps ok', psutil.__version__, pydantic.VERSION)"
-
-# 3) 前端（在 x86 开发机构建后拷过来，不在 LoongArch 构建）
-#   x86:  cd frontend && npm ci && npm run build      → 产出 frontend/dist/
-#   拷贝: scp -r frontend/dist  kylin:/opt/kylin-ops-agent/frontend/dist
-#   托管: 用 nginx 指向 dist/，或让 FastAPI 用 StaticFiles 挂载（生产再加）
-
-# 4) 配置 LLM provider（断网答辩可先用 mock 验证主流程）
-echo "LLM_PROVIDER=mock" > .env          # 或 deepseek
-# deepseek 需联网 + 在 .env 填 DEEPSEEK_API_KEY（切勿提交进 git）
-
-# 5) 起服务
+pip install uvicorn
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --loop asyncio --http h11
-
-# 6) 冒烟
-curl --noproxy '*' http://127.0.0.1:8000/health
-curl --noproxy '*' http://127.0.0.1:8000/tools
-python scripts/demo.py --provider mock --auto                 # 一键剧本离线自检（已在 backend/ 下）
-pytest -q                                                     # 全套回归（最能证明适配成功）
 ```
 
-> `pytest -q` 全绿是「LoongArch 适配成功」最硬的证据：它会真实拉起 MCP 子进程、跑护栏/根因/审计全链路。把这条实测结果回填到课程报告「第5章 部署」。
+PyYAML 即使装不上 C 加速也无妨，其自带的纯 Python 解析器可正常工作，只是稍慢，而项目的规则文件规模很小，影响可忽略。
 
-## 3.5 最小权限部署（赛题基本需求④：核心运维动作在受限 Account 下运行）
+## 3 一键部署脚本
 
-赛题硬性要求「核心运维动作需在受限的 Account 下运行，非必要不使用 root」。本项目对此有**三层**落地，
-部署时务必按下面坐实——否则变更动作会以 root 落地，丢这一分。
+上述全部步骤已固化进部署脚本 `scripts/deploy_kylin.sh`，该脚本具有幂等性，可反复执行，推荐优先使用。脚本完成从拉取代码、配置环境、启动服务到冒烟测试的全过程：
 
-**① 创建受限运维账户（推荐做法，一步到位满足需求④）**
 ```bash
-sudo useradd -r -s /usr/sbin/nologin opsagent      # 无登录权的服务账户，名字与 exec_user 默认值一致
+bash scripts/deploy_kylin.sh --systemd --nginx --provider deepseek --api-key sk-xxx
+#   --systemd        建立受限账户 opsagent，并以其身份开机自启
+#   --nginx          将前端构建产物托管到 80 端口，并将 /api 反向代理到后端 8000
+#   --provider mock  默认值；在断网或无密钥时也能演示
+#   --skip-rust      已自备较新 cargo 时跳过 Rust 工具链安装
+bash scripts/deploy_kylin.sh --help    # 查看全部参数
+```
+
+脚本相对手工步骤额外做了三项自动适配。其一是 Rust 工具链自适应：LoongArch 上 pydantic 等 Rust 扩展需源码编译，而麒麟自带的 cargo 版本可能偏低导致编译失败，脚本探测到后会自动升级。其二是去除 uvicorn 增强版：脚本在生成依赖清单时自动改写，免去编译型扩展。其三是前端产物随仓库下发：仓库已携带前端构建产物，脚本直接托管，不在 LoongArch 上引入 Node 工具链；如需重建前端，在 x86 机器上构建后将产物提交入库即可。
+
+在启用 nginx 托管时，nginx 将以 /api 为前缀的请求反向代理到后端，并在转发时剥去该前缀，这与前端的接口基址以及开发期代理的行为一致，因此构建产物无需修改任何地址。若不启用 nginx，则后端可单独运行，前端另行托管。
+
+需要说明的是，系统的执行沙箱在不同环境下会选择不同的隔离后端。在支持命名空间隔离的环境下采用相应后端，而在 LoongArch 麒麟环境下，命名空间隔离通常不可用，沙箱会自动降级为基于资源限额的后端；此时资源限额与在 root 下的降权落地仍然有效，安全性不受影响。系统在启动时会以与真实执行一致的条件做一次功能性自检，并据此选择可用的后端。
+
+## 4 国产化大模型运行时
+
+系统的国产化诉求由 DeepSeek 本身满足，无需在 LoongArch 设备上运行本地大模型。设备上的大模型运行时有三种配置方式。在联网演示时，将大模型提供者设为 deepseek 并在环境变量中填入接口密钥即可。在断网演示时，将大模型提供者设为本地桩，此时系统完全离线运行，关键词选工具与全部护栏、根因分析、审计逻辑均真实执行，由此保证系统在 LoongArch 上始终可演示。此外，由于大模型提供者抽象遵循通用的接口规范、不与具体厂商耦合，若需私有化自托管，只需将接口基址指向自托管的兼容网关即可数行接入，而不绑定某个特定的本地模型与运行时。
+
+## 5 风险与回退
+
+部署过程中可能遇到的风险点及其回退方案如表 2 所示。
+
+| 风险点 | 触发现象 | 回退方案 |
+|---|---|---|
+| psutil 无预编译包 | 安装时编译报错 | 改用系统包，或补齐开发头文件后源码编译 |
+| pydantic 核心编不过 | 缺 Rust 或 Rust 过旧 | 安装 Rust 工具链，或改用系统包 |
+| uvicorn 增强版编不过 | 编译型扩展报错 | 去除增强版，指定纯 Python 事件循环，功能不受影响 |
+| 设备无外网 | 无法调用云端接口 | 切换为本地桩完全离线运行，护栏、根因、审计逻辑照常 |
+| 前端在设备上构建失败 | Node 工具链问题 | 不在设备构建，在 x86 上生成产物后拷贝托管 |
+| 系统 Python 版本偏低 | 版本低于 3.11 | 优先使用麒麟提供的较高版本，必要时源码安装 |
+| 内网无法访问软件源 | 无外网 | 尽量使用系统包，或在同架构机器上预先准备依赖后带入 |
+
+<p align="center">表 2　风险与回退一览</p>
+
+## 6 最小权限部署
+
+系统要求核心运维动作在受限账户下运行、非必要不使用 root，对此系统提供了完整的落地方式，部署时应按下述步骤落实，否则变更动作可能以 root 身份落地。
+
+首先，创建一个无登录权限的受限服务账户，并将程序目录的属主设为该账户：
+
+```bash
+sudo useradd -r -s /usr/sbin/nologin opsagent
 sudo chown -R opsagent:opsagent /opt/kylin-ops-agent
 ```
 
-**② 让后端以非 root 身份运行**——推荐用 systemd，`User=opsagent` 直接坐实「非必要不 root」：
+随后，推荐使用 systemd 以该账户身份运行后端服务，从而在进程层面落实非 root 运行：
+
 ```ini
 # /etc/systemd/system/kylin-ops-agent.service
 [Unit]
@@ -153,7 +125,7 @@ User=opsagent
 Group=opsagent
 WorkingDirectory=/opt/kylin-ops-agent/backend
 ExecStart=/opt/kylin-ops-agent/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio --http h11
-# 生产/联网再按需开下面两项（见 §安全启动守卫）
+# 生产或联网环境可按需开启以下三项
 # Environment=OPERATOR_TOKEN=<强随机>
 # Environment=AUDIT_HMAC_KEY=<独立密钥>
 # Environment=REQUIRE_PRIVILEGE_DROP=true
@@ -161,64 +133,25 @@ NoNewPrivileges=yes
 [Install]
 WantedBy=multi-user.target
 ```
+
 ```bash
 sudo systemctl daemon-reload && sudo systemctl enable --now kylin-ops-agent
 ```
 
-**③ 落地身份是可演示、可审计的（评分证据，不是口头保证）**：每个变更动作（truncate/kill/clean）的
-思维链「安全校验」段都带 `privilege_posture`，明确写出它**以什么身份落地**：
-- 后端以 `opsagent` 跑 → `running_as_root=false`，落地命令天然受限于该账户（最小权限已满足）；
-- 若以 root 跑且配了 `EXEC_USER=opsagent`（默认）→ kill/clean 经沙箱 **setuid 降权**到 opsagent 落地；
-- 若以 root 跑且 `opsagent` 账户**不存在** → 如实标注「将以 root 落地」并在启动日志告警（曾经的静默缺口）。
+系统的落地身份是可演示、可审计的。每个变更动作的思维链在安全校验段都会记录其落地身份。当后端以受限账户运行时，落地命令天然受限于该账户；当后端以 root 运行且配置了执行账户时，变更动作会经沙箱降权到该账户后落地；当后端以 root 运行而受限账户不存在时，系统会如实标注其将以 root 落地，并在启动日志中告警。若需在生产环境强制约束，可开启相应开关，使动作层拒绝任何会以 root 落地的变更动作。部署完成后，可在启动日志中确认落地身份，并通过执行一次清理动作、回放其思维链来验证安全校验段中记录的非 root 落地身份。
 
-**④ 生产强制（可选，fail-closed）**：设 `REQUIRE_PRIVILEGE_DROP=true`，动作层会**拒绝任何会以 root
-落地的变更动作**（与 `REFUSE_ROOT` 互补：后者管「能否以 root 启动」，前者管「变更能否以 root 落地」）。
-演示默认不开，保顺滑；隔离/生产建议开。
+## 7 验证清单
 
-> 验证：起服务后看启动日志应有「最小权限落地身份：后端以非 root 运行……」；在前端跑一次「安全清理」，
-> 回放 trace 的安全校验段能看到 `privilege_posture.running_as_root=false`——这就是需求④的一手演示证据。
+完成部署后，可按下述清单逐项验证部署是否成功。
 
-## 4. 国产化 LLM 运行时
-
-「国产化」由 **DeepSeek 本身满足**（深度求索，权重开源）——无需在 LoongArch 设备上跑本地大模型。
-本项目**已移除本地 Qwen3-8B 双模式**（8B 在多轮编排+JSON 自愈+CaMeL 隔离阅读协议下指令遵循/JSON
-合法性不足，为对齐它而妥协架构得不偿失；见 dev-log「2026-06-11 移除本地 8B 双模式」）。设备上只需：
-1. **联网演示**：`LLM_PROVIDER=deepseek` + `.env` 填 `DEEPSEEK_API_KEY`（DeepSeek 云端，国产开源）。
-2. **断网演示**：`LLM_PROVIDER=mock`（完全离线，跑关键词选工具 + 全部护栏/根因/审计真实逻辑）。
-   **mock 模式保证项目在 LoongArch 上「永远可演示」**，断网亮点由它承载，不依赖任何本地模型运行时。
-3. **私有化自托管（可选，非答辩必需）**：`LLMProvider` 走 OpenAI 兼容接口、不与厂商耦合——把
-   `DEEPSEEK_BASE_URL` 指向自托管的 OpenAI 兼容网关（如更大参数的国产模型推理服务）即可数行接入，
-   不再绑定某个特定的本地小模型与某种运行时（ollama/llama.cpp）。
-
-## 5. 风险与回退一览
-
-| 风险点 | 触发现象 | 回退方案 |
-|---|---|---|
-| psutil 无 wheel | `pip install psutil` 编译报错 | 系统包 `python3-psutil`（策略 A）；再不行按报错补 `python3-devel` 后源码编译 |
-| pydantic-core 编不过 | 缺 Rust / Rust 过旧 | 装 `rust cargo`；系统包 `python3-pydantic`；极端情况评估降级 pydantic v1（需改少量 `BaseModel` 用法，最后手段） |
-| uvicorn[standard] 编不过 | uvloop/watchfiles 报错 | 去掉 `[standard]`，`--loop asyncio --http h11`（策略 C），功能不受影响 |
-| 设备无外网（无法用 deepseek 云端） | 答辩现场断网 | `LLM_PROVIDER=mock` 完全离线兜底，全部护栏/根因/审计真实逻辑照跑（§4）；无需任何本地模型运行时 |
-| 在 LoongArch 上构建前端失败 | node/vite 工具链问题 | 不在设备上构建，x86 出 `dist/` 拷过去托管（§1/§3） |
-| 系统 Python 版本偏低 | `python3 --version` < 3.11 | 优先用麒麟提供的较高版本；或放宽个别语法（项目用到 3.10+ 的 `X | Y` 类型标注，需 3.10+）；必要时源码装 Python 3.11 |
-| 离线/内网无法 pip | 无外网 | x86 上 `pip download` 仅得 x86 wheel **不通用**；改为：①尽量用系统包；②在另一台同架构 LoongArch 机器上 build 出 wheelhouse 带过去 |
-
-## 6. 验证清单（虚机到手逐项打勾回填）
-
-- [ ] `uname -m` 输出 `loongarch64`，`cat /etc/kylin-release` 确认 V11
-- [ ] `which lsof ss journalctl df free ps` 全部存在
-- [ ] `python -c "import psutil, pydantic, yaml, mcp, fastapi"` 无报错
-- [ ] `uvicorn ... --loop asyncio --http h11` 起服务，`/health` 返回 ok
-- [x] `/tools` 列出 **22** 个 MCP 工具（真机首跑已确认，原文档「15」为旧值）
-- [ ] `python scripts/demo.py --provider mock --auto` 七幕全过、exit 0
-- [ ] `pytest -q` 全套通过（回填通过数与耗时）
-      ⚠️ 真机首跑曾 14 红——bwrap 的 fork（--unshare-pid）撞 preexec 的 RLIMIT_NPROC→EAGAIN，已修为「生产同款自检→自动降级 rlimit」；
-      **务必拉最新代码**后重跑，预期全绿。启动日志会有一行「执行沙箱隔离后端：rlimit……」表明降级生效。
-- [ ] 执行沙箱后端选择：启动日志 `执行沙箱隔离后端：<bwrap|nsjail|rlimit>`——LoongArch 麒麟上预期为 `rlimit`
-      （命名空间隔离不可用时的兜底，限额/降权仍在）。回填实际值：______
-- [ ] **最小权限（需求④）**：以 `opsagent` 非 root 起服务，启动日志含「最小权限落地身份：……非 root……」；
-      跑一次「安全清理」回放 trace，安全校验段 `privilege_posture.running_as_root=false`（落地身份可演示证据）
-- [x] `LLM_PROVIDER=deepseek` 联网可用性：真机首跑 `/health` 返回 `llm_provider=deepseek`、连通成功
-- [ ] 前端：`frontend/dist` 随 git 下发（无需手工拷），`--nginx` 托管后 `http://<VM-IP>/` 页面可访问、
-      对话/规则库/回放三抽屉正常（前端 `baseURL=/api` 经 nginx 反代到后端 8000）
-
-> 以上每项的实测结果即课程报告「第5章 系统部署」与软件杯「部署文档」的一手素材。
+- 确认架构为 loongarch64，且系统版本为麒麟 V11。
+- 确认 lsof、ss、journalctl、df、free、ps 等原生工具均已安装。
+- 确认 psutil、pydantic、yaml、mcp、fastapi 等依赖均可正常导入。
+- 以纯 Python 事件循环启动服务，健康检查接口返回正常。
+- 工具列举接口返回 22 个 MCP 工具。
+- 离线自检脚本完整通过。
+- 自动化测试全套通过。自动化测试全部通过是 LoongArch 适配成功最有力的证据，因为它会真实拉起 MCP 子进程并跑通护栏、根因与审计全链路。
+- 确认执行沙箱所选用的隔离后端（LoongArch 麒麟上预期为基于资源限额的后端）。
+- 以受限账户非 root 启动服务，确认启动日志中的落地身份提示，并通过回放一次清理动作的思维链确认其安全校验段记录为非 root 落地。
+- 确认大模型云端接口在联网时连通正常。
+- 确认前端在托管后可正常访问，且对话、规则库、回放等功能正常。
