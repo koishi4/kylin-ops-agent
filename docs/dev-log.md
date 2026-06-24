@@ -1937,3 +1937,41 @@ step2 的 `fetch/reset` 也会撞——且这次是**致命退出**（git 经 `$
 **心智小结**：「装了」≠「能用」。任何"按可用性自动降级"的探测都必须**功能性验证**而非存在性验证，否则
 在异构环境（LoongArch/受限内核/容器）上会"假装在用强隔离"却条条失败且不降级——这类静默失效比直接报错
 更危险。真机首跑是把这种"只在某类环境暴露"的假设性 bug 逼出来的唯一办法。
+
+## 2026-06-24 沙箱缺陷二诊：真因是 bwrap fork 撞 RLIMIT_NPROC，自检必须复刻生产 preexec
+
+**背景**：上一条（6-23）的「功能性自检」修完后真机重跑，**14 红一个没少、签名完全一样**。说明那版修复
+**零效果**——我又误诊了一次。这次拿地面真相（VM 上六行诊断）才定死真因。
+
+**二诊取证**（VM 实跑）：
+- `_isolation_backend()` 仍返回 `bwrap`——即我的自检**通过了**、没降级（与「KeyError 'error' 说明 wrapper 仍在跑」吻合）。
+- `bwrap` 单跑 echo：`rc=0` ✓；`bwrap + ulimit -v 256M`：`rc=0` ✓（**内存限额不是元凶**，推翻了我一度的猜测）。
+- 真实 `run_sandboxed(['echo','hi'])` 的 stderr 一锤定音：
+  **`bwrap: Creating new namespace failed: Resource temporarily unavailable`（EAGAIN）**。
+
+**真因**：`bwrap --unshare-pid` 必须 `fork()` 去建 PID 命名空间；而 executor 落地时套的 `preexec_fn` 里有
+`RLIMIT_NPROC`（默认 64，本意是挡 fork 炸弹）。运行账户 `vmuser` 当前进程数**远超 64**，于是 bwrap 的
+fork 直接 `EAGAIN`、命名空间没建成、内层命令没跑 → 空 stdout、rc≠0。**关键**：第一版自检用「裸 bwrap 跑
+echo」（**不带 preexec**），所以 D（裸 bwrap 可用）通过、G（带 preexec 的真实执行）失败——自检与生产条件
+不一致，等于没测到点子上。
+
+**修复**：把 `_backend_functional` 改成**完全复刻 `run_sandboxed`**——同款包裹参数 + 同款 `preexec_fn`
+（含 `RLIMIT_NPROC` 等限额与可选降权）+ 同款 `Popen` 标志。这样「bwrap 的 fork 撞 NPROC」这种**只在叠加
+preexec 后才暴露**的不可用，会在自检阶段就被如实复现 → 判不可用 → 降级 rlimit（命令仍跑、限额仍在、root 下
+setuid 降权仍在，与 x86 同路径）。降级后 `echo/rm/kill` 都不 fork、不受 NPROC 影响，全部恢复。
+
+**验证**：x86 全套 `2647 passed`、原三红文件 `54 passed` 无回归；本地用「**必须 fork 才出 token 的假 bwrap**
++ `NPROC=1`」**忠实复现** VM 的 fork-EAGAIN（日志可见 `Cannot fork`）：自检判不可用→降级 rlimit；把 NPROC
+放足→保留 bwrap。即探针能正确区分「fork 撞限额的 bwrap」与「真可用的 bwrap」。
+
+**两个心智小结**：
+1. **自检必须在「生产同款条件」下做**。只验"裸后端能不能跑"不够——真实执行叠加的 preexec（rlimit/降权/
+   能力削减）本身可能就是压垮后端的那根稻草。探针与生产**任一条件不一致**，就可能"测着是绿的、跑起来全红"。
+2. **没拿到地面真相前别改第二次**。6-23 我凭日志推断「userns 被禁」、改了个看似合理的自检——结果机制根本
+   不是 userns 而是 NPROC，白修一轮。第二次先让真机吐六行诊断（含真实 stderr），才一击命中。日志推断能定位
+   "哪层坏了"，但"为什么坏"往往要回到目标环境实测。
+
+> 顺带认识到 bwrap 对**变更类受控动作**本就不合适（`--ro-bind / /` 让 `rm` 写不动、`--unshare-pid` 让
+> `kill` 打到错的命名空间、`--unshare-net` 让 `iptables` 失效）——本项目沙箱只服务 executor 的变更命令
+> （只读 MCP 探针 `sandbox=False` 不走它），故在这些环境降级到 rlimit 不仅是兜底、反而更对。bwrap 仅在它
+> 既可用、命令又不需对宿主真实生效时才有意义；现有「生产同款自检 + 自动降级」已把这条边界守住。

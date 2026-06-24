@@ -100,42 +100,69 @@ def _isolation_backend() -> tuple[str, str | None]:
     - ("nsjail", "/usr/bin/nsjail") 有 nsjail 且自检通过
     - ("rlimit", None)              无可用命名空间后端 → 纯 rlimit 兜底（必然可用）
 
-    为何不能只看 `shutil.which`（曾经的 bug，麒麟/LoongArch VM 实测踩到）：bwrap/nsjail 可能
-    「装了却不可用」——典型是内核禁用了 unprivileged user namespace（`kernel.unprivileged_userns_clone=0`
-    或 LoongArch 内核未开），bwrap 会在建命名空间阶段就**非零退出、内层命令根本没跑**，导致每条被
-    包裹的命令静默失败（空 stdout、rc≠0）。只探测存在性会让沙箱「假装在用 bwrap」却条条命令失败，
-    且不会降级。故对每个候选后端用与生产一致的包裹参数真跑一条无害命令，不可用即跳过、最终退回 rlimit。
-    （这正是模块开头铁律「隔离机制按可用性自动降级，绝不硬依赖」的应有之义。）
+    为何不能只看 `shutil.which`，且**自检必须在生产同款条件下做**（两次麒麟/LoongArch VM 实测逼出来的）：
+    bwrap/nsjail 可能「装了却不可用」，且**不可用有两种、第二种只在叠加我们的 preexec 后才暴露**——
+      ① 内核禁用 unprivileged user namespace → bwrap 建命名空间即非零退出；
+      ② 命名空间本身能建，但 bwrap 为 `--unshare-pid` 必须 `fork()`，而我们的 preexec 施加了
+         `RLIMIT_NPROC`（默认 64）——当运行账户已有的进程数 ≥ 该限额时，bwrap 的 fork 直接
+         `EAGAIN`（"Creating new namespace failed: Resource temporarily unavailable"），内层命令没跑。
+    两种都导致被包裹命令静默失败（空 stdout、rc≠0）。第一版自检只用「裸 bwrap 跑 echo」（无 preexec），
+    踩中 ② 时**探针通过、真实执行却失败**（D 可用、G 失败的根因）。故自检必须**完全复刻生产**：同样的
+    包裹参数 + 同样的 `preexec_fn`（rlimit/降权/能力削减）+ 同样的 Popen 标志。任一不可用即降级到 rlimit
+    （命令仍能跑、限额仍在、以 root 跑时 setuid 降权仍在）。这正是模块铁律「按可用性自动降级，绝不硬依赖」。
     """
     for name in ("bwrap", "nsjail"):
         path = shutil.which(name)
         if not path:
             continue
-        if _backend_functional(name, path):
-            logger.info("执行沙箱隔离后端：%s（%s），功能性自检通过。", name, path)
+        ok, why = _backend_functional(name, path)
+        if ok:
+            logger.info("执行沙箱隔离后端：%s（%s），生产同款条件自检通过。", name, path)
             return name, path
         logger.warning(
-            "检测到 %s（%s）但功能性自检失败（多为内核禁用 unprivileged userns，"
-            "常见于麒麟/LoongArch 虚机）：跳过该后端，回退纯 rlimit 资源限额兜底。", name, path)
+            "检测到 %s（%s）但生产同款自检失败（%s）：跳过该后端，回退纯 rlimit 资源限额兜底"
+            "（常见于麒麟/LoongArch：内核禁 userns，或 bwrap 的 fork 撞 RLIMIT_NPROC）。",
+            name, path, why)
     logger.info("执行沙箱隔离后端：rlimit（无可用的命名空间隔离后端，使用资源限额 + 可选降权兜底）。")
     return "rlimit", None
 
 
-def _backend_functional(name: str, path: str) -> bool:
-    """功能性自检：用候选后端、以与生产一致的包裹参数（含 --unshare-net/--ro-bind 等）真正跑一条
-    `echo <token>`，确认它在本内核/本架构上既能建命名空间、又能把内层命令的 stdout 正常透传出来。
+def _backend_functional(name: str, path: str) -> tuple[bool, str]:
+    """功能性自检：**完全复刻 run_sandboxed 的执行条件**跑一条 `echo <token>`——同款包裹参数、同款
+    `preexec_fn`（含 RLIMIT_NPROC 等限额与可选降权）、同款 Popen 标志，确认该后端在本内核/本架构上、
+    且在我们施加的资源限额之下，仍能建命名空间并把内层 stdout 正常透传出来。
 
-    判定：returncode==0 且预期 token 出现在 stdout 才算可用。任何异常/超时/非零/无预期输出一律判
-    「不可用」→ 降级（best-effort，绝不抛、绝不阻断）。宁可误降级到 rlimit（命令仍能跑、限额仍在），
-    也不要误判可用却条条命令失败。结果随 _isolation_backend 一并被 lru_cache，仅探测一次。
+    返回 (ok, why)：ok=True 表示可用；否则 why 是简短失败原因（写进降级告警，便于排障）。判定要求
+    rc==0 且 token 出现在 stdout。任何异常/超时/非零/无预期输出一律判「不可用」→ 降级（best-effort，
+    绝不抛、绝不阻断）。宁可误降级到 rlimit（命令仍能跑），也不要误判可用却条条命令失败。仅探测一次（被
+    上层 lru_cache）。
     """
     token = "kylin-sandbox-probe-ok"
-    probe = _wrap_with_isolation(["echo", token], name, path)
+    probe_args = _wrap_with_isolation(["echo", token], name, path)
+    # 用与生产一致的限额/降权构造 preexec：这是把「② bwrap fork 撞 RLIMIT_NPROC」这类只在叠加 preexec
+    # 后才暴露的不可用，在自检阶段就如实复现出来的关键。limits 取自全局 Settings（与真实执行同源）。
     try:
-        r = subprocess.run(probe, capture_output=True, text=True, timeout=5)
-    except Exception:  # noqa: BLE001 探测失败即视为不可用
-        return False
-    return r.returncode == 0 and token in (r.stdout or "")
+        from app.config import get_settings
+        limits = SandboxLimits.from_settings(get_settings())
+    except Exception:
+        limits = SandboxLimits()
+    drop_to = _resolve_drop_target(limits.exec_user)
+    try:
+        preexec = _build_preexec(limits, drop_to)
+    except Exception:
+        preexec = None
+    try:
+        proc = subprocess.Popen(
+            probe_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, shell=False, close_fds=True,
+            start_new_session=True, preexec_fn=preexec)
+        out, err = proc.communicate(timeout=5)
+    except Exception as e:  # noqa: BLE001 探测启动/执行失败即视为不可用
+        return False, f"{e.__class__.__name__}: {e}"
+    if proc.returncode == 0 and token in (out or ""):
+        return True, ""
+    why = (err or "").strip().splitlines()
+    return False, (why[-1] if why else f"rc={proc.returncode}、stdout 无预期 token")
 
 
 def _wrap_with_isolation(args: list[str], backend: str, path: str | None) -> list[str]:
