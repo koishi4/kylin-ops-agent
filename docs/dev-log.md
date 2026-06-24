@@ -1926,6 +1926,14 @@ step6 把整树 `chown` 给 opsagent 后，脚本（以 vmuser 跑）再调 `git
 描述缓存进变量、收尾直接用，并 `git config --global --add safe.directory`。② pytest `Permission denied:
 .pytest_cache`——同样因树已属 opsagent；给 pytest 加 `-o cache_dir=/tmp/...` 指到可写处。
 
+**追修（dubious ownership 的「致命版」）**：上面 ① 只挡住了「收尾摘要」那次 git，没料到**重跑**时
+step2 的 `fetch/reset` 也会撞——且这次是**致命退出**（git 经 `$SUDO` 以 root 跑，但按 `SUDO_UID=vmuser`
+比对属主，opsagent≠vmuser→拒），直接卡死在拉代码、连修复都拉不下来（死锁）。根因是「全局 config 的
+`safe.directory` 依赖 git 实际读哪个 HOME，经 sudo 时不可靠」。改为**每条 git 内联 `-c safe.directory=<dir>`**
+（与 HOME/属主/是否 sudo 全解耦，最稳）+ root/当前用户全局配置双保险。死锁需在 VM 上手工破一次：
+`sudo chown -R "$(id -un)":"$(id -gn)" /opt/kylin-ops-agent` 后重跑即可（属主=SUDO_UID→git 放行→拉到内联修复）。
+教训：**「目录属主会被流程换掉」的脚本里，所有 git 都该内联 safe.directory，别赌全局 config 在 sudo 下读对了文件。**
+
 **心智小结**：「装了」≠「能用」。任何"按可用性自动降级"的探测都必须**功能性验证**而非存在性验证，否则
 在异构环境（LoongArch/受限内核/容器）上会"假装在用强隔离"却条条失败且不降级——这类静默失效比直接报错
 更危险。真机首跑是把这种"只在某类环境暴露"的假设性 bug 逼出来的唯一办法。

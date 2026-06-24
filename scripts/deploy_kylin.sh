@@ -216,24 +216,31 @@ fi
 log "[2/8] 拉取代码：$REPO_URL ($BRANCH) → $INSTALL_DIR"
 PARENT_DIR="$(dirname "$INSTALL_DIR")"
 $SUDO mkdir -p "$PARENT_DIR"
+# git 2.35.2+ 的「dubious ownership」闸门：仓库目录属主 ≠ 操作者 时直接拒绝所有操作。本脚本上一次
+# --systemd 跑会把整树 chown 给 opsagent，于是【重跑】时 step2 的 git（经 $SUDO 以 root 跑、但 git 会
+# 按 SUDO_UID=vmuser 比对属主）就会因「属主 opsagent ≠ vmuser」致命退出（真机实测踩到）。
+# 兜底要稳：① 每条 git 一律【内联】-c safe.directory，与 HOME/属主/是否 sudo 全解耦，最可靠；
+#          ② 另把例外写进 root 与当前用户的全局配置，双保险。注意 $GSAFE 不加引号是要让它按空白
+#             拆成「-c」「safe.directory=…」两个独立 argv（INSTALL_DIR 默认无空格）。
+GSAFE="-c safe.directory=$INSTALL_DIR"
+git config --global --add safe.directory "$INSTALL_DIR" 2>/dev/null || true
+[ -n "$SUDO" ] && $SUDO git config --global --add safe.directory "$INSTALL_DIR" 2>/dev/null || true
 if [ -d "$INSTALL_DIR/.git" ]; then
   log "已存在仓库，执行更新（fetch + reset 到 origin/$BRANCH）"
-  $SUDO git -C "$INSTALL_DIR" remote set-url origin "$REPO_URL"
-  $SUDO git -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH"
-  $SUDO git -C "$INSTALL_DIR" checkout -B "$BRANCH" "origin/$BRANCH"
-  $SUDO git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
+  $SUDO git $GSAFE -C "$INSTALL_DIR" remote set-url origin "$REPO_URL"
+  $SUDO git $GSAFE -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH"
+  $SUDO git $GSAFE -C "$INSTALL_DIR" checkout -B "$BRANCH" "origin/$BRANCH"
+  $SUDO git $GSAFE -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
 else
   [ -e "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ] \
     && die "$INSTALL_DIR 已存在且非 git 仓库且非空，请清理或换 --dir。"
   $SUDO git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
 fi
 [ -n "$SUDO" ] && $SUDO chown -R "$(id -u):$(id -g)" "$INSTALL_DIR" || true
-# git 2.35.2+ 对「目录属主≠当前用户」的仓库会拒绝操作（dubious ownership）。step6 会把整树 chown
-# 给 opsagent，之后本脚本（以 vmuser 跑）再调 git 就会报错——故标记为可信目录，并【此刻】把 HEAD
-# 描述缓存进变量，收尾摘要直接用它，不在 chown 之后再调 git（曾导致摘要里 commit 显示为空）。
-git config --global --add safe.directory "$INSTALL_DIR" 2>/dev/null || true
-GIT_HEAD="$(git -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')"
-GIT_SUBJECT="$(git -C "$INSTALL_DIR" log -1 --pretty=%s 2>/dev/null | cut -c1-50)"
+# 此刻（step6 chown 给 opsagent 之前）把 HEAD 描述缓存进变量，收尾摘要直接用它，避免 chown 后再调
+# git 又撞 dubious ownership / 显示空 commit。git 调用仍内联 $GSAFE，属主刚被换也不受影响。
+GIT_HEAD="$(git $GSAFE -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')"
+GIT_SUBJECT="$(git $GSAFE -C "$INSTALL_DIR" log -1 --pretty=%s 2>/dev/null | cut -c1-50)"
 ok "代码就位：$GIT_HEAD $GIT_SUBJECT"
 
 BACKEND="$INSTALL_DIR/backend"
