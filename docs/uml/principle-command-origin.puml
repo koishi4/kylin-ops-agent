@@ -1,0 +1,38 @@
+@startuml principle-command-origin
+!include _style.puml
+title 附图5　最终落到系统上的命令从哪来
+
+rectangle "自然语言指令" as NL #EAF2FA
+rectangle "LLM 编排器\n只【选工具】并给参数，从不输出命令字符串" as LLM #F2F7FC
+rectangle "用户（前端）\n显式触发受控动作 + 二次确认" as USER #EAF2FA
+
+package "① 感知路径（只读，不经执行器）" as PA {
+  rectangle "只读 MCP 工具实现\n探针命令写死在代码：df / ss / lsof…\n或直接用 psutil；LLM 只选工具 + 受校验参数" as TOOL #EAF7EF
+}
+
+package "② 变更路径（唯一真实写操作路径）" as PB {
+  rectangle "动作处理器 core/actions.py\n固定模板 + 校验后的参数 → 结构化 argv" as ACT #FBF3EA
+}
+
+package "③ 自由命令字符串（生产不接 LLM）" as PC {
+  rectangle "execute(cmd: str)\n仅兼容旧调用 / 测试\n护栏在原始串上裁决（纵深兜底）" as FREE
+}
+
+rectangle "执行器 executor\nexecute_argv：护栏在【将要执行的 argv】上裁决\n所审即所执——审什么就执行什么" as EXE #F5F8FB
+rectangle "系统（麒麟 OS）" as OS #FBF3EA
+
+NL --> LLM
+LLM --> TOOL : 选工具 + 参数
+TOOL --> OS : 只读采集，直接返回数据
+USER --> ACT : 动作名 + 参数
+ACT --> EXE : 结构化 argv
+FREE --> EXE : 原始命令串
+EXE --> OS : 护栏放行才落地
+
+note bottom of EXE
+  关键：命令从不由 LLM 凭空生成——
+  感知是写死的只读探针，变更是「模板 + 受校验参数」拼出的 argv。
+  执行器对 argv 裁决，shlex.join/split 恒等 →
+  不存在「审的串」与「真正执行的命令」因再解析而分叉。
+end note
+@enduml
