@@ -64,7 +64,39 @@ pip install psutil pydantic           # 触发源码编译，耐心等
 - **pyyaml 的 C 加速**：装不上 `libyaml` 没关系，PyYAML 自带纯 Python `SafeLoader`，本项目 `yaml.safe_load` 照常工作（只是稍慢，规则文件就 25 条，无感）。
 - **pydantic 极端预案**：见 §5。
 
-## 3. 部署步骤（虚机到手后照做）
+## 3.0 一键部署脚本（推荐，已在真机跑通）
+
+本预案的全部步骤已固化进 **`scripts/deploy_kylin.sh`**（幂等，可反复跑）。**优先用它**，下面 §3 的
+手工步骤作为原理参考/排障兜底保留。
+
+```bash
+# 从 GitHub 拉代码 → 配环境 → 起服务 → 冒烟，一条命令搞定。推荐生产姿态：
+bash scripts/deploy_kylin.sh --systemd --nginx --provider deepseek --api-key sk-xxx
+#   --systemd          建受限账户 opsagent + 以其身份开机自启（坐实需求④，等价 §3.5 ①②）
+#   --nginx            把 frontend/dist 托管到 80 端口、/api 反代到后端 8000 → 浏览器开 http://<VM-IP>/
+#   --provider mock    默认；断网/无 key 也能演示（省略 --provider 即 mock）
+#   --skip-rust        已自备 cargo>=1.85 时跳过 rustup；--pip-index/--rust-mirror 换镜像
+bash scripts/deploy_kylin.sh --help    # 全部参数
+```
+
+脚本相对手工步骤多做了几件「真机踩坑后」的自愈，避免照文档逐条敲时漏项：
+- **Rust 工具链自愈**：LoongArch 上 `pydantic-core`/`jiter` 等 Rust 扩展无预编译 wheel，需源码编译；
+  麒麟自带 cargo 1.82 < 1.85（maturin 的 edition2024 解析失败）→ 脚本探测到即用 rustup 升级（默认走镜像）。
+- **uvicorn 去 `[standard]`**：由 `requirements.txt` 动态生成清单时 `sed` 改写，免编 uvloop/watchfiles。
+- **前端 `dist/` 随 git 下发**：仓库已带 `frontend/dist`（`.gitignore` 已只跟踪它），脚本 step5 直接托管，
+  不在 LoongArch 上碰 Node。**重建**：x86 上 `npm run build` 后 `git add frontend/dist && git commit`。
+
+**前端访问（`--nginx`）**：nginx `location /api/ → http://127.0.0.1:8000/`（末尾斜杠剥掉 `/api` 前缀），
+与前端 `baseURL='/api'`、开发期 vite 代理行为一致——故 build 产物无需改任何 URL。不加 `--nginx` 则后端
+单跑、前端另行托管。
+
+> **真机实测一处缺陷已修（务必拉最新代码）**：执行沙箱原先仅用 `shutil.which` 判断「装没装」bwrap，
+> 而麒麟/LoongArch 内核**禁用 unprivileged user namespace**——bwrap *装了却不可用*（建命名空间即非零退出、
+> 内层命令没跑），导致每条走沙箱的命令空 stdout，受控动作（clean/kill）演示当场失效、14 个用例红。
+> 已改为**功能性自检**：真跑一条 `echo` 验证后端可用，不可用即自动降级到纯 rlimit（限额仍在、root 下
+> setuid 降权仍在）。详见 dev-log「2026-06-23 真机首跑取证」。教训：**「装了」≠「能用」，自动降级必须功能性验证**。
+
+## 3. 部署步骤（手工原理参考 / 排障兜底；常规部署用 §3.0 的脚本）
 
 ```bash
 # 1) 取代码（git 或拷贝 tar 包）
@@ -173,12 +205,17 @@ sudo systemctl daemon-reload && sudo systemctl enable --now kylin-ops-agent
 - [ ] `which lsof ss journalctl df free ps` 全部存在
 - [ ] `python -c "import psutil, pydantic, yaml, mcp, fastapi"` 无报错
 - [ ] `uvicorn ... --loop asyncio --http h11` 起服务，`/health` 返回 ok
-- [ ] `/tools` 列出 15 个 MCP 工具
+- [x] `/tools` 列出 **22** 个 MCP 工具（真机首跑已确认，原文档「15」为旧值）
 - [ ] `python scripts/demo.py --provider mock --auto` 七幕全过、exit 0
 - [ ] `pytest -q` 全套通过（回填通过数与耗时）
+      ⚠️ 真机首跑曾 14 红——因 bwrap「装了却不可用」（内核禁 unprivileged userns），已修为功能性自检自动降级；
+      **务必拉最新代码**后重跑，预期全绿。启动日志会有一行「执行沙箱隔离后端：rlimit……」表明降级生效。
+- [ ] 执行沙箱后端选择：启动日志 `执行沙箱隔离后端：<bwrap|nsjail|rlimit>`——LoongArch 麒麟上预期为 `rlimit`
+      （命名空间隔离不可用时的兜底，限额/降权仍在）。回填实际值：______
 - [ ] **最小权限（需求④）**：以 `opsagent` 非 root 起服务，启动日志含「最小权限落地身份：……非 root……」；
       跑一次「安全清理」回放 trace，安全校验段 `privilege_posture.running_as_root=false`（落地身份可演示证据）
-- [ ] `LLM_PROVIDER=deepseek` 联网可用性结论（设备能否访问 api.deepseek.com）：______
-- [ ] 前端 `dist/` 托管后页面可访问、对话/规则库/回放三抽屉正常
+- [x] `LLM_PROVIDER=deepseek` 联网可用性：真机首跑 `/health` 返回 `llm_provider=deepseek`、连通成功
+- [ ] 前端：`frontend/dist` 随 git 下发（无需手工拷），`--nginx` 托管后 `http://<VM-IP>/` 页面可访问、
+      对话/规则库/回放三抽屉正常（前端 `baseURL=/api` 经 nginx 反代到后端 8000）
 
 > 以上每项的实测结果即课程报告「第5章 系统部署」与软件杯「部署文档」的一手素材。

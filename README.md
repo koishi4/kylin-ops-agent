@@ -49,6 +49,22 @@ LLM_PROVIDER=mock python -m pytest -q   # Python 3.11 + 非 root 下全绿（默
 bash scripts/ci_check.sh
 ```
 
+### 麒麟虚机一键部署（LoongArch + 麒麟 V11）
+从 GitHub 拉代码 → 配环境 → 起服务 → 冒烟，一条命令搞定（幂等，可反复跑）。脚本是
+`docs/deploy-loongarch.md` 预案的可执行落地版：系统包优先免编译、`uvicorn` 去 `[standard]`、
+前端不在 LoongArch 构建（用仓库已带的 `frontend/dist`）。
+```bash
+# 推荐生产姿态：opsagent 非 root + systemd 自启 + nginx 托管前端并反代 /api + 联网 DeepSeek
+bash scripts/deploy_kylin.sh --systemd --nginx --provider deepseek --api-key sk-xxx
+#   --systemd          建受限账户 opsagent + 以其身份开机自启（坐实需求④最小权限）
+#   --nginx            把 frontend/dist 托管到 80 端口，/api 反代到后端 8000；浏览器开 http://<VM-IP>/
+#   --provider mock    默认；断网/无 key 也能演示（省略 --provider 即用 mock）
+bash scripts/deploy_kylin.sh --help    # 全部参数
+```
+> 前端 `dist/` 已随 git 下发（LoongArch 无 Node 工具链不在本机构建）。**重建前端**：在 x86 开发机
+> `cd frontend && npm run build`，再 `git add frontend/dist && git commit`（产物带内容哈希、会如实进 diff）。
+> 不加 `--nginx` 时后端仍可单跑，前端另行托管（或开发期 `npm run dev` 用 vite 代理）。
+
 ### 受控动作鉴权（P0-4）
 `/action/execute` 是唯一会改系统状态的端点。本机演示默认不强制鉴权（后端只监听 127.0.0.1）；
 生产/联网演示请在 `backend/.env` 设 `OPERATOR_TOKEN`，并在 `frontend/.env` 设同值的 `VITE_OPERATOR_TOKEN`。
