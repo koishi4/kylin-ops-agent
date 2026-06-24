@@ -315,7 +315,18 @@ if [ "$LLM_PROVIDER" = "deepseek" ]; then
   else warn "provider=deepseek 但未给 --api-key：请手工在 $BACKEND/.env 填 DEEPSEEK_API_KEY。"; fi
 fi
 case "$BIND_HOST" in
-  127.0.0.1|localhost|::1) : ;;
+  127.0.0.1|localhost|::1)
+    # 回环=演示模式：受控动作鉴权应「留空=不强制」（require_operator 见 token 为空即放行）。
+    # .env.example 出厂是占位串 please-change-me（非空）——它会让 /action/execute【强制】鉴权，而随 git
+    # 下发的前端 dist 是用【空】VITE_OPERATOR_TOKEN 构建的、不带 token → 受控动作必 401、演示当场失效。
+    # 故回环部署把占位串清空，回到设计本意的「本机可信控制台演示模式」。要鉴权请显式 --bind 非回环，
+    # 或手工设 OPERATOR_TOKEN 并用同值 VITE_OPERATOR_TOKEN 重新构建前端。
+    if grep -qE '^OPERATOR_TOKEN=please-change-me$' .env; then
+      set_env OPERATOR_TOKEN ""
+      warn "回环演示模式：已清空占位 OPERATOR_TOKEN（受控动作不强制鉴权）。注意：--nginx 会把 /api 暴露到"
+      warn "本机 80 端口，同网段可达——演示环境可接受；生产请配 token 并用同值重建前端 dist。"
+    fi
+    ;;
   *)
     if grep -qE '^OPERATOR_TOKEN=(please-change-me)?$' .env; then
       TOK="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
