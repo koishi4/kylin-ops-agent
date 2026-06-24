@@ -17,7 +17,7 @@ component "根因分析\nDiagnosis" as DIAG
 component "审计溯源\nAuditStore" as AUD
 
 interface "MCP Tools" as IMcp
-component "MCP Server\n(23 READONLY 工具)" as MCP
+component "MCP Server\n(22 READONLY 工具)" as MCP
 IMcp -- MCP
 
 interface "LLM Provider\n(OpenAI 兼容)" as ILlm

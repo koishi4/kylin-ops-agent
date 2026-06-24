@@ -29,9 +29,9 @@ package "mcp_server 工具层" {
     +level: str
   }
   class "REGISTRY" as REG <<module>> {
-    23 个 READONLY 工具
+    22 个 READONLY 工具
   }
-  REG o-- "23" ToolSpec
+  REG o-- "22" ToolSpec
 }
 
 package "core 编排·执行·诊断·动作" {

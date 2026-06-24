@@ -10,7 +10,7 @@ node "麒麟高级服务器版 V11\n（LoongArch 架构）" as Server {
   artifact "Nginx / 静态资源\nVue3 前端 dist" as Web
   node "Python 3.11 运行时" as Py {
     artifact "FastAPI + Uvicorn\n应用服务（S 端）" as App
-    artifact "MCP Server\n23 个 READONLY 工具" as MCP
+    artifact "MCP Server\n22 个 READONLY 工具" as MCP
     artifact "安全护栏 + 执行器\n（最小权限·沙箱）" as Guard
   }
   database "SQLite\n审计库 audit.db" as DB
