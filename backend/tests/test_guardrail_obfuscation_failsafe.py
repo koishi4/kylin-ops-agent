@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import pytest
-
 from app.guardrail.ast_analyzer import analyze_command_ast
 from app.guardrail.effect_analyzer import analyze_effects
 from app.guardrail.engine import check_command

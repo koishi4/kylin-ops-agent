@@ -8,9 +8,7 @@
 from __future__ import annotations
 
 import pytest
-
 from app.core import actions
-
 
 # --------------------------- restart_service / reload_config ---------------------------
 

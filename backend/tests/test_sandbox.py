@@ -14,7 +14,6 @@ import os
 import subprocess
 
 import pytest
-
 from app.core import sandbox as sb
 from app.core.executor import execute
 from app.core.sandbox import SandboxLimits, run_sandboxed
@@ -169,6 +168,7 @@ class TestSandboxDemoEndpoint:
 
     def _call(self, scenario):
         import asyncio
+
         from app.api import routes
         return asyncio.run(routes.guardrail_sandbox_demo(scenario=scenario))
 

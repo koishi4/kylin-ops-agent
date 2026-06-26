@@ -161,7 +161,7 @@ def _parse_rule(d: object) -> Rule:
     try:
         re.compile(pattern)
     except re.error as e:
-        raise ValueError(f"正则编译失败：{e}")
+        raise ValueError(f"正则编译失败：{e}") from e
 
     return Rule(str(d["id"]).strip(), pattern, RiskLevel(risk_raw), Action(action_raw),
                 str(d["description"]).strip(), str(d["category"]).strip())
@@ -275,7 +275,7 @@ def rules_fingerprint() -> str:
     import hashlib
     h = hashlib.sha256()
     for r in RULES:
-        h.update(f"{r.id}|{r.pattern}|{r.risk.value}|{r.action.value}\x1f".encode("utf-8"))
+        h.update(f"{r.id}|{r.pattern}|{r.risk.value}|{r.action.value}\x1f".encode())
     return h.hexdigest()
 
 

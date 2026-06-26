@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import pytest
-
 from app.guardrail.engine import check_command, scan_injection
 from app.guardrail.rules import RiskLevel
 

@@ -19,7 +19,7 @@ def _read_cron_lines(path: str) -> list[str]:
     """读单个 cron 配置文件，返回去掉注释/空行后的有效任务行；不可读时返回空。"""
     out: list[str] = []
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
                 s = line.strip()
                 if s and not s.startswith("#"):

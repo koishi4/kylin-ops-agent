@@ -19,7 +19,6 @@ from .rules import (
     Rule,
     hits_critical_path,
     match_rules,
-    normalize,
 )
 
 

@@ -17,7 +17,6 @@ base64/小语种/GCG 对抗后缀绕开，对真攻击是摆设，对正常用�
 from __future__ import annotations
 
 import pytest
-
 from app.guardrail.classifier import IntentClass, classify_intent
 
 # 动作意图（搞提权 / 装后门）——不再判黑：架构 + 防线2 + 防线1.5 才是边界，不靠话术匹配。

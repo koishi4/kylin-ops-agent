@@ -10,7 +10,6 @@ P1-4 的价值是「录制前不会临场崩」+「每个评分子项都真演�
 from __future__ import annotations
 
 import pytest
-
 from app.audit import store
 from app.core.diagnosis import correlate_io_signals
 from app.guardrail.engine import check_command

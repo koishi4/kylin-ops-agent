@@ -1,8 +1,12 @@
-# 代码注释规范（软件工程学规范化）
+# 代码规范（软件工程学规范化）
 
-> 本项目的注释/文档字符串实践，从「靠自觉」升级为「文档化、可执行、可进 CI」的强制标准。
-> 强制由 [ruff](https://docs.astral.sh/ruff/) 的 pydocstyle（`D`）规则族落地，配置在 `backend/pyproject.toml`。
-> 配套见 CLAUDE.md §6「代码注释充分」——注释质量直接计入文档评分，故把它当工程约束来管。
+> 本项目的注释与代码质量实践，从「靠自觉」升级为「文档化、可执行、可进 CI」的强制标准。
+> 强制由 [ruff](https://docs.astral.sh/ruff/) 落地，配置在 `backend/pyproject.toml`，启用两类规则：
+> - **docstring 规范**（pydocstyle `D`）——注释质量直接计入文档评分；
+> - **正确性 / 整洁度**（pyflakes `F`、isort `I`、bugbear `B`、pyupgrade `UP`）——
+>   捕获死代码、未定义名、未链异常、过时写法等真实工程缺陷。
+>
+> 配套见 CLAUDE.md §6「代码注释充分且合规」。`backend/app/` 生产代码须 `ruff check app` 零违规。
 
 ## 1. 一句话标准
 
@@ -34,16 +38,33 @@ def find_large_files(path: str = "/", top_n: int = 10) -> dict:
 | `D413` | 末段后须空行 | 英文段落习惯，对中文非必要（google 约定亦忽略） |
 | `D105` | 魔术方法须 docstring | `__repr__`/`__enter__`/`__aexit__` 等签名与协议即语义 |
 | `D107` | `__init__` 须 docstring | 类级 docstring 已说明职责，避免重复样板 |
+| `E501` | 行宽 ≤ 88 | 注释为中文长句，行宽规则只会逼着切断中文散文，噪声远大于价值（理由同 `D415`） |
+| `UP042` | `(str, Enum)`→`StrEnum` | `StrEnum` 改变 `str()` 语义（影响序列化/比较），属**行为变更**非整洁化，不强加 |
 
 保留的是对中文同样成立的**结构性/完整性**规则：缺 docstring（`D100`–`D104`）、
 摘要与正文之间需空行（`D205`）、闭合引号换行（`D209`）、`Args:` 段完整且参数不漏（`D417`）、
 含反斜杠须用裸字符串（`D301`）等。
 
+## 2.5 不止 docstring：捕获真实缺陷的代码质量规则
+
+除 `D` 外，另启用四族会捕获**真实工程缺陷**（而非风格偏好）的规则，故无中文水土不服问题、
+对生产代码 `app/` 与测试/脚本**一视同仁**强制：
+
+| 规则族 | 作用 | 例 |
+|---|---|---|
+| `F` pyflakes | 死代码 / 未定义名 | 删除未使用 import（`F401`）、未定义变量 |
+| `I` isort | 导入排序一致 | 标准库 / 三方 / 本地分组并字典序（`I001`，可自动修） |
+| `B` bugbear | 易错模式 | 异常须 `raise ... from`（`B904`），避免吞掉原始 traceback |
+| `UP` pyupgrade | py311 现代化 | `typing.Callable`→`collections.abc`（`UP035`）、去冗余 `.encode("utf-8")` |
+
+这四族多数可 `--fix` 自动修复，且不改变语义；个别有行为风险的（如 `UP042`）已显式禁用见上表。
+
 ## 3. 强制范围
 
-- **生产代码 `backend/app/`**：完整 Google 风格，`ruff check app` 必须**零违规**。
-- **测试 `tests/` 与脚本 `scripts/`**：强制「有模块/包 docstring」（交代用途），但其 docstring 是
-  自由式说明，不强制 Google 段落格式，函数/类亦不强制 docstring（命名即说明）。
+- **生产代码 `backend/app/`**：完整 Google 风格 + 全部 `F/I/B/UP`，`ruff check app` 必须**零违规**。
+- **测试 `tests/` 与脚本 `scripts/`**：**docstring 规范放宽**——强制「有模块/包 docstring」（交代用途），
+  但不强制 Google 段落格式、函数/类亦不强制 docstring（命名即说明，见 `per-file-ignores`）；
+  但 `F/I/B/UP`（死代码/导入序/未链异常/现代化）**同样强制**——这些是缺陷不是风格，测试也不该带。
 
 ## 4. 怎么跑
 

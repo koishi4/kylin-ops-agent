@@ -18,10 +18,10 @@ from __future__ import annotations
 import json
 
 from app.core.actions import ACTIONS
+from app.core.orchestrator import Orchestrator
 from app.guardrail.trifecta import caps_for, evaluate_path
 from app.llm.provider import LLMProvider
 from app.mcp_server.tools import REGISTRY
-from app.core.orchestrator import Orchestrator
 
 
 # --------------------------------------------------------------------------- #

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pytest
-
 from app.core import diagnosis
 from app.core.diagnosis import FileClass, classify_file
 

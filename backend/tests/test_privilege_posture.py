@@ -11,7 +11,6 @@ from __future__ import annotations
 import pwd
 
 import pytest
-
 from app.guardrail import privilege
 from app.guardrail.privilege import privilege_posture
 

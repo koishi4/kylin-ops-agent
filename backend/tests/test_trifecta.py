@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from app.core.actions import ACTIONS
 from app.guardrail.trifecta import (
-    Capability,
     TOOL_CAPS,
+    Capability,
     capability_table,
     caps_for,
     evaluate_path,

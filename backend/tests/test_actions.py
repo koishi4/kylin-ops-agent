@@ -12,10 +12,7 @@ from __future__ import annotations
 import os
 import subprocess
 
-import pytest
-
 from app.core import actions
-
 
 # ----------------------------- truncate_log -----------------------------
 

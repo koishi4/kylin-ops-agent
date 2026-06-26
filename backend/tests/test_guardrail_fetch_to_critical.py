@@ -22,14 +22,12 @@ wget -P /etc/systemd/system 等），**不是**任何外部语料/held-out 题�
 from __future__ import annotations
 
 import pytest
-
 from app.guardrail.effect_analyzer import analyze_effects
 from app.guardrail.engine import check_command
 from app.guardrail.rules import Action, RiskLevel
 
 # 回归底座（只读复用红队全集，确保叠加新规则后结论不变）
 from tests.test_guardrail_redteam import DANGEROUS, SAFE
-
 
 # ============ 1. 下载落盘到系统关键路径 → CRITICAL/DENY（授权/确认也不可覆盖） ============
 

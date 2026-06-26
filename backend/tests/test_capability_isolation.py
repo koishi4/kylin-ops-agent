@@ -7,9 +7,7 @@
 from __future__ import annotations
 
 import pytest
-
 from app.core.actions import ACTIONS
-from app.guardrail import trifecta
 from app.guardrail.trifecta import (
     TOOL_CAPS,
     ToolCaps,

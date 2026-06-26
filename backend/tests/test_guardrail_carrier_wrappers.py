@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import pytest
-
 from app.guardrail.effect_analyzer import analyze_effects
 from app.guardrail.engine import check_command
 

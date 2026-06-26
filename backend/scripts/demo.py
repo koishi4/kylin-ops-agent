@@ -39,9 +39,10 @@ import sys
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 # 允许 `python scripts/demo.py` 直接运行（把 backend/ 加进 import 路径）
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -57,7 +58,9 @@ from app.guardrail.context_sanitizer import sanitize_tool_result  # noqa: E402
 from app.guardrail.engine import check_command  # noqa: E402
 from app.guardrail.risk_assessor import assess_risk  # noqa: E402
 from app.llm.provider import (  # noqa: E402
-    DeepSeekProvider, LLMProvider, MockProvider,
+    DeepSeekProvider,
+    LLMProvider,
+    MockProvider,
 )
 from app.mcp_server.client import MCPClient  # noqa: E402
 
@@ -177,7 +180,7 @@ def _pause(ctx: Ctx) -> None:
     try:
         input(ctx.s.dim("\n  ⏎ 按回车进入下一幕…"))
     except (EOFError, KeyboardInterrupt):
-        raise KeyboardInterrupt
+        raise KeyboardInterrupt from None
 
 
 # ---------------------------------------------------------------------------

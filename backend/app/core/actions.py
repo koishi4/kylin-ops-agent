@@ -25,13 +25,18 @@ import ipaddress
 import os
 import shlex
 import stat
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from app.config import get_settings
 from app.core import executor
 from app.core.diagnosis import FileClass, classify_file
 from app.guardrail.privilege import privilege_posture
-from app.mcp_server.tools._validate import valid_unit, valid_vacuum_size, valid_vacuum_time
+from app.mcp_server.tools._validate import (
+    valid_unit,
+    valid_vacuum_size,
+    valid_vacuum_time,
+)
 from app.mcp_server.tools.process import process_detail
 
 # 白名单动作名。扩展实用性的正确方向：往此表加【参数化受控动作】（每个都过语义闸门 + 二次确认 +
@@ -464,7 +469,9 @@ def _rule_of_two_detail(action: str, *, confirmed: bool) -> dict:
     返回 detail 字典（**并入**动作层既有的「安全校验」段，不另起一段——保动作链恰好五段的不变量），
     让思维链在状态变更点也能看见 Rule of Two 结论，而非只在感知路径。
     """
-    from app.guardrail.trifecta import evaluate_path  # 延迟导入，避免 actions↔trifecta 循环依赖
+    from app.guardrail.trifecta import (
+        evaluate_path,  # 延迟导入，避免 actions↔trifecta 循环依赖
+    )
 
     tri = evaluate_path([action], human_in_loop=confirmed)
     return {

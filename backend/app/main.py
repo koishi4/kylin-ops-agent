@@ -16,7 +16,11 @@ from app.api.routes import router
 from app.audit import store
 from app.config import get_settings
 from app.core.orchestrator import Orchestrator
-from app.guardrail.privilege import is_running_as_root, least_privilege_check, privilege_posture
+from app.guardrail.privilege import (
+    is_running_as_root,
+    least_privilege_check,
+    privilege_posture,
+)
 from app.guardrail.tool_scan import scan_with_drift
 from app.guardrail.trifecta import assert_perception_isolation
 from app.llm.provider import get_llm

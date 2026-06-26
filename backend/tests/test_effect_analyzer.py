@@ -14,14 +14,12 @@
 from __future__ import annotations
 
 import pytest
-
 from app.guardrail.effect_analyzer import analyze_effects
 from app.guardrail.engine import check_command
 from app.guardrail.rules import match_rules
 
 # 复用红队语料作回归底座（只读，不改 test_guardrail_redteam.py）
 from tests.test_guardrail_redteam import DANGEROUS, SAFE
-
 
 # ============ 1. 真阳性：据「写/删关键路径」效果抓到，命令被拦 ============
 

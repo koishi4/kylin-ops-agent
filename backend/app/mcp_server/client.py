@@ -49,7 +49,7 @@ class MCPClient:
 
     # 支持 async with，确保 connect/use/close 在同一 task 内完成
     # （anyio 的 cancel scope 要求进入与退出在同一 task；FastAPI lifespan 天然满足）
-    async def __aenter__(self) -> "MCPClient":
+    async def __aenter__(self) -> MCPClient:
         await self.connect()
         return self
 

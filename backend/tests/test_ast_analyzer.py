@@ -13,11 +13,10 @@
 from __future__ import annotations
 
 import pytest
-
 from app.core.executor import execute
 from app.guardrail.ast_analyzer import analyze_command_ast
 from app.guardrail.engine import check_command
-from app.guardrail.rules import Action, RiskLevel, match_rules
+from app.guardrail.rules import RiskLevel, match_rules
 
 
 def _structures(cmd: str) -> set[str]:

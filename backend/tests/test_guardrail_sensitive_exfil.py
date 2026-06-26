@@ -18,14 +18,12 @@
 from __future__ import annotations
 
 import pytest
-
 from app.guardrail.effect_analyzer import analyze_effects
 from app.guardrail.engine import check_command
 from app.guardrail.rules import Action, RiskLevel, match_rules
 
 # 回归底座（只读复用红队全集，确保叠加新能力标签后结论不变）
 from tests.test_guardrail_redteam import DANGEROUS, SAFE
-
 
 # ============ 1. 读敏感凭据（单腿）→ CONFIRM（不放行，需二次确认） ============
 

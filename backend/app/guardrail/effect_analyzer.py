@@ -42,7 +42,11 @@ import bashlex
 # ${IFS}/$IFS 还原成空格，`cat${IFS}/etc/shadow` 会被 bashlex 当成**单个词**（动词≠cat），导致
 # reads_sensitive/writes/deletes 等效果标签全部漏判（评审「一.1」实测盲区：rules 层已还原 IFS、
 # effect 层却没有，IFS 混淆的敏感读/写从两层之间溜走）。
-from .rules import CRITICAL_PATHS, _IFS_BYPASS_RE, _is_under_critical  # noqa: F401 (CRITICAL_PATHS 经 _is_under_critical 间接使用)
+from .rules import (  # noqa: F401 (CRITICAL_PATHS 经 _is_under_critical 间接使用)
+    _IFS_BYPASS_RE,
+    CRITICAL_PATHS,
+    _is_under_critical,
+)
 
 # 调用某命令时应跳过的前缀词（与 ast_analyzer._SKIP_WORDS 同口径，取「真正被执行的命令」）。
 _SKIP_WORDS = {"sudo", "env", "command", "nice", "nohup", "time", "exec", "doas"}

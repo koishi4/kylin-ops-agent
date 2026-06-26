@@ -21,9 +21,9 @@
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Iterable
 
 from app.core.actions import ACTIONS
 from app.mcp_server.tools import REGISTRY

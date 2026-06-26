@@ -34,9 +34,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .context_sanitizer import (
-    DATA_MARKER,
-    SanitizeResult,
     _BOUNDARY_NOTICE,
+    DATA_MARKER,
     _neutralize,
     _safe_attr,
 )

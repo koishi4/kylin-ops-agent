@@ -9,13 +9,11 @@
 from __future__ import annotations
 
 import pytest
-
 from app.core import actions
 from app.core.diagnosis import FileClass, classify_file
 from app.core.pathutil import is_path_within, path_under_any_root
 from app.guardrail.privilege import is_running_as_root, least_privilege_check
 from app.mcp_server.tools.log import tail_log
-
 
 # ----------------------------- ③ 软链绕过：classify_file -----------------------------
 

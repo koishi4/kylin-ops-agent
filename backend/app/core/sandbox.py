@@ -38,9 +38,9 @@ import os
 import shutil
 import signal
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Callable
 
 logger = logging.getLogger("kylin-ops-agent.sandbox")
 
@@ -76,7 +76,7 @@ class SandboxLimits:
     exec_user: str = ""           # 以 root 运行时降权到的非特权账户；空则不降权
 
     @classmethod
-    def from_settings(cls, st) -> "SandboxLimits":
+    def from_settings(cls, st) -> SandboxLimits:
         """从全局 Settings 构造（集中配置，避免 os.getenv 散落）。"""
         return cls(
             cpu_seconds=st.sandbox_cpu_seconds,

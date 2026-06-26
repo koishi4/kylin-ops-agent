@@ -8,12 +8,11 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
 from app.api import routes
 from app.audit import store
 from app.config import Settings
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture

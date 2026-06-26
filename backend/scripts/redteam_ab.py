@@ -26,7 +26,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.guardrail.engine import check_command, scan_injection  # noqa: E402
 from tests.test_guardrail_redteam import DANGEROUS, INJECTIONS, SAFE  # noqa: E402
 
-
 # ----------------------------- 可开关护栏中间层 -----------------------------
 
 def _cmd_blocked_on(cmd: str) -> bool:

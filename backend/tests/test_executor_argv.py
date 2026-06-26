@@ -14,10 +14,8 @@ from __future__ import annotations
 import shlex
 
 import pytest
-
 from app.core import sandbox as sb
 from app.core.executor import execute, execute_argv
-
 
 # ============ 1. 危险 argv 被护栏拦死，等价于字符串入口 ============
 

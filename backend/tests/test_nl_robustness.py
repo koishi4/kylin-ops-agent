@@ -15,11 +15,9 @@
 from __future__ import annotations
 
 import pytest
-
 from app.core.orchestrator import Orchestrator
 from app.guardrail.classifier import IntentClass, classify_intent
 from app.llm.provider import MockProvider
-
 
 # A1. 注入/操纵话术：换成口语/中英混杂/角色劫持，仍必须判黑（拒绝+留痕）。
 INJECTION_NL = [

@@ -16,7 +16,6 @@ from app.mcp_server.tools.disk import dir_size, find_large_files
 from app.mcp_server.tools.log import query_journal
 from app.mcp_server.tools.system import service_status
 
-
 # ----------------------------- max_scan 硬上限夹断 -----------------------------
 
 class TestScanClamp:

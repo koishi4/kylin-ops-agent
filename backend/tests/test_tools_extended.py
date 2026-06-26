@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import os
 
-import pytest
-
 from app.mcp_server.tools import (
     check_port,
     dir_size,

@@ -19,14 +19,12 @@
 from __future__ import annotations
 
 import pytest
-
 from app.guardrail.effect_analyzer import analyze_effects
 from app.guardrail.engine import check_command
 from app.guardrail.rules import Action, RiskLevel
 
 # 回归底座：叠加新遍历后红队全集结论不变
 from tests.test_guardrail_redteam import DANGEROUS, SAFE
-
 
 # ============ 1. 赋值的值里的 $() 子命令 → 现被遍历，据效果升级 ============
 

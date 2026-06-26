@@ -46,6 +46,7 @@ import pytest
 
 # 只读 import 护栏判定与红队种子；本文件绝不修改它们所在的模块。
 from app.guardrail.engine import check_command, scan_injection
+
 from tests.test_guardrail_redteam import DANGEROUS, INJECTIONS
 
 # ---------------------------------------------------------------------------

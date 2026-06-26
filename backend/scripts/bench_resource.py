@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import os
 import sqlite3
-import statistics
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -23,7 +22,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import psutil  # noqa: E402
-
 from app.guardrail.engine import check_command  # noqa: E402
 from tests.test_guardrail_redteam import DANGEROUS, SAFE  # noqa: E402
 

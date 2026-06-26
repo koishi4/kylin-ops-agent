@@ -13,7 +13,6 @@ from __future__ import annotations
 import textwrap
 
 import pytest
-
 from app.guardrail import rules
 from app.guardrail.engine import check_command
 

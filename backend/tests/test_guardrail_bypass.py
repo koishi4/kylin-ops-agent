@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import pytest
-
 from app.guardrail.engine import check_command
 from app.guardrail.rules import Action, RiskLevel
 

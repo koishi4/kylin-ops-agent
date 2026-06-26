@@ -26,7 +26,7 @@ from app.llm.provider import LLMProvider
 
 from .classifier import IntentClass, classify_intent
 from .engine import check_command
-from .rules import Action, RiskLevel
+from .rules import Action
 
 
 class Verdict:

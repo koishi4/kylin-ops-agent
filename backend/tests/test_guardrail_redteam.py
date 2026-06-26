@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import pytest
-
 from app.guardrail.classifier import IntentClass, classify_intent
 from app.guardrail.engine import check_command, scan_injection
 from app.guardrail.privilege import check_privilege

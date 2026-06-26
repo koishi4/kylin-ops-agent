@@ -1,24 +1,28 @@
 # 麒麟安全智能运维 Agent —— 后端工程配置
 #
-# 本文件当前只承载一件事：把「代码注释/文档字符串」的既有良好实践
-# 固化成「文档化、可执行、可进 CI」的强制标准（见 docs/code-comment-style.md）。
-# 刻意只启用 pydocstyle（D）规则族，不引入 E/F/I 等与「注释规范」无关的
-# 代码风格检查，以免一次提交里混入大面积无关改动（范围控制本身也是工程纪律）。
+# 把「代码质量」的既有良好实践固化成「文档化、可执行、可进 CI」的强制标准
+# （见 docs/code-comment-style.md）。覆盖两类：
+#   1) docstring 规范（pydocstyle D）——注释质量直接计入文档评分；
+#   2) 正确性/整洁度（pyflakes F、isort I、bugbear B、pyupgrade UP）——
+#      捕获死代码/未定义名/未链异常/过时写法等真实工程缺陷。
+# 刻意不启用 pycodestyle 的 E/W（尤其 E501 行宽）：本库注释为中文长句，
+# 行宽规则只会逼着切断中文散文，噪声远大于价值（理由同 D415，见 code-comment-style.md）。
 #
 # 用法：
 #   cd backend && source .venv/bin/activate
-#   ruff check app            # 检查应用代码注释合规
+#   ruff check app            # 生产代码：必须 All checks passed
 #   ruff check app tests      # 含测试（测试函数豁免，详见 per-file-ignores）
 
 [tool.ruff]
 target-version = "py311"
-# 注释规范的强制对象是生产代码 app/；测试与脚本按 per-file-ignores 放宽。
+# 强制对象是生产代码 app/；测试与脚本按 per-file-ignores 放宽。
 src = ["app"]
 extend-exclude = [".venv", "build", "dist"]
 
 [tool.ruff.lint]
-# 仅 pydocstyle：本配置专注 docstring 规范，不做格式化/导入排序等无关检查。
-select = ["D"]
+# D=docstring 规范；F=pyflakes（死代码/未定义名）；I=导入排序；
+# B=bugbear（易错模式，如未链异常）；UP=pyupgrade（py311 现代化写法）。
+select = ["D", "F", "I", "B", "UP"]
 ignore = [
     "D105", # 魔术方法（__repr__/__enter__/__aexit__…）不强制 docstring：签名与协议即语义
     "D107", # __init__ 不单独要求 docstring：类级 docstring 已说明职责，避免重复样板
@@ -26,6 +30,8 @@ ignore = [
     "D415", # 首行须以 .?! 结尾：中文用 。！？，强加 ASCII 句号反而破坏文本
     "D403", # 首词须首字母大写：中文无大小写，规则无意义
     "D413", # 末段后须空行：英文段落习惯，对中文非必要（google 约定亦忽略）
+    # —— 以下为「行为有别于纯整洁」的规则，刻意禁用以免引入语义变化 ——
+    "UP042", # (str, Enum) → StrEnum：StrEnum 改变 str() 语义（影响序列化/比较），属行为变更非整洁化
 ]
 
 [tool.ruff.lint.pydocstyle]

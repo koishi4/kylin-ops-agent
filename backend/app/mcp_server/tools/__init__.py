@@ -9,11 +9,11 @@ level 取值见 mcp-tool-builder skill：READONLY / MUTATING / PRIVILEGED。
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from .auth import login_history
-from .disk import disk_usage, dir_size, find_large_files, inode_usage
+from .disk import dir_size, disk_usage, find_large_files, inode_usage
 from .handle import list_open_files
 from .log import query_journal, tail_log
 from .memory import memory_info

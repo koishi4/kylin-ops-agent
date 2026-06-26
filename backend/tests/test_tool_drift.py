@@ -23,7 +23,6 @@ from app.guardrail.tool_scan import (
     tool_fingerprint,
 )
 
-
 # ============ 1. 指纹性质 ============
 
 class TestFingerprint:

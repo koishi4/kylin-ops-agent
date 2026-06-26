@@ -80,7 +80,7 @@ class ActionRequest(BaseModel):
     dry_run: bool = True        # 默认只校验不执行
 
     @model_validator(mode="after")
-    def _check_params(self) -> "ActionRequest":
+    def _check_params(self) -> ActionRequest:
         """按动作校验 params 形状（独立 schema 的轻量落地）：缺必填项即 422。
 
         细粒度语义校验（关键性/受保护进程/信号白名单/单元关键性/IP 范围/vacuum 格式）仍在

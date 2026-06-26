@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import pytest
-
 from app.guardrail.privilege import check_privilege, requires_privilege
 
 # 命令位调用用户/口令管理 → 必须仍判「需提权」（未授权应拦）

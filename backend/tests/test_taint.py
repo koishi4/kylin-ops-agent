@@ -13,7 +13,6 @@ from app.core.orchestrator import Orchestrator
 from app.guardrail.trifecta import TOOL_CAPS, caps_for
 from app.llm.provider import LLMProvider
 
-
 # ----------------------------- 审计 store 持久化 -----------------------------
 
 class TestStoreTainted:
