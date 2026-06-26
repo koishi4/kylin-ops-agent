@@ -1,4 +1,5 @@
 """日志相关 MCP 工具。对应评分①「OS 感知」，也是评分④根因分析的关键数据源。
+
 journalctl 是 systemd 日志查询；tail_log 读普通日志文件尾部。
 """
 from __future__ import annotations

@@ -1,5 +1,4 @@
-"""护栏防线2 再增强：命令「副作用集」(EffectSet) 静态分析 —— 把护栏从
-「匹配已知坏串」推进到「匹配实际效果」。
+"""护栏防线2 再增强：命令「副作用集」(EffectSet) 静态分析 —— 把护栏从「匹配已知坏串」推进到「匹配实际效果」。
 
 为什么需要它（评委必问的根治方向）：
   rules.py 的高危规则是**黑名单字符串匹配**，本质不可能枚举完整——`nc -e` 能换 `socat EXEC`，
@@ -170,6 +169,7 @@ class EffectSet:
         return bool(self.reads_sensitive) and (self.egress or self.net_send)
 
     def to_dict(self) -> dict:
+        """序列化副作用集为 dict，供审计与前端「副作用分析」展示。"""
         return {
             "writes": list(self.writes),
             "deletes": list(self.deletes),

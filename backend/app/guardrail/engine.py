@@ -25,6 +25,8 @@ from .rules import (
 
 @dataclass
 class GuardResult:
+    """护栏对一条命令的最终裁决：是否放行、命中规则、风险等级、是否需二次确认、AST 发现。"""
+
     allowed: bool
     action: Action
     matched_rules: list[str] = field(default_factory=list)
@@ -35,6 +37,7 @@ class GuardResult:
     ast_findings: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
+        """序列化为 dict，供审计落库与前端思维链回放。"""
         return {
             "allowed": self.allowed,
             "action": self.action.value,

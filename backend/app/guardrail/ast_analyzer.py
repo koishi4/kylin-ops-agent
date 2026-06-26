@@ -1,5 +1,4 @@
-"""护栏防线2 增强：Bash 语法树（AST）结构分析 —— 正面回答评委必问的
-「你的正则能被变形绕过吗」。
+"""护栏防线2 增强：Bash 语法树（AST）结构分析 —— 正面回答评委必问的「你的正则能被变形绕过吗」。
 
 正则规则库（rules.py）快、确定、可解释，但本质是「字符串模式匹配」，对**语法结构**层面的
 变形天然吃力：把危险命令藏进命令替换 `$(...)`、用管道喂给 shell `... | sh`、把第二条命令
@@ -69,6 +68,7 @@ class AstFinding:
     reason: str          # 人类可读原因
 
     def to_dict(self) -> dict:
+        """序列化为 dict，供 engine 合并与前端「AST 结构分析」栏展示。"""
         return {
             "structure": self.structure,
             "risk": self.risk.value,
@@ -92,11 +92,13 @@ class AstFindings:
 
     @property
     def max_risk(self) -> RiskLevel:
+        """所有 AST 发现中的最高风险等级（无发现时为 LOW）。"""
         if not self.findings:
             return RiskLevel.LOW
         return max((f.risk for f in self.findings), key=lambda r: r.order)
 
     def to_dict(self) -> dict:
+        """序列化整次 AST 分析为 dict（含 has_shell_structure / max_risk 派生字段）。"""
         return {
             "parse_ok": self.parse_ok,
             "parse_error": self.parse_error,
@@ -191,8 +193,9 @@ _AWK_SHELLOUT_RE = re.compile(r"system\s*\(|\bgetline\b|\|\s*\"")
 
 
 def _check_interpreter_inline(node, out: list[AstFinding]) -> None:
-    """命令首词是解释器且携带内联代码 → 结构性高危，按解释器**能力分级**裁决（评审整改：精准化，
-    消除「把 awk/perl 文本一行流一律判 CRITICAL」的实测误杀，benign held-out 实证）：
+    """命令首词是解释器且携带内联代码 → 结构性高危，按解释器能力分级裁决。
+
+    （评审整改：精准化，消除「把 awk/perl 文本一行流一律判 CRITICAL」的实测误杀，benign held-out 实证。）
 
     - 真 shell（sh/bash/…）/ eval 内联：就地执行任意 shell 命令 → CRITICAL/DENY（不可降，硬拦）。
     - 通用解释器（python/perl/ruby/…）-e/-c 内联：能力强但海量良性一行流亦如此 → HIGH/DENY

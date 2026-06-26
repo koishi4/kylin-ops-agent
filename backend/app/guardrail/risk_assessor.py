@@ -40,6 +40,7 @@ class Verdict:
 
     @classmethod
     def order(cls, v: str) -> int:
+        """裁决档位的严格度序号（allow<confirm<deny），未知值按 confirm 保守处理。"""
         return cls._ORDER.get(v, 1)
 
     @classmethod
@@ -79,10 +80,12 @@ class RiskAssessment:
 
     @property
     def blocked(self) -> bool:
+        """最终裁决是否为拒绝。"""
         return self.final_verdict == Verdict.DENY
 
     @property
     def require_confirm(self) -> bool:
+        """最终裁决是否为「需二次确认」。"""
         return self.final_verdict == Verdict.CONFIRM
 
     def to_trace(self) -> dict:

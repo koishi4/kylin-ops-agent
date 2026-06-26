@@ -53,12 +53,16 @@ MAX_TOOL_RETRIES = 2  # P2-2 工具调用自愈：累计失败超过此数即停
 
 @dataclass
 class TraceStep:
+    """思维链的一段：阶段名（五段之一）+ 该段明细。"""
+
     stage: str          # 接收指令 / 感知环境 / 推理决策 / 安全校验 / 执行结果
     detail: Any
 
 
 @dataclass
 class ChatResult:
+    """一轮对话的完整结果：自然语言答复 + 五段思维链 + 工具调用 + 护栏/意图/污点元信息。"""
+
     answer: str
     trace: list[TraceStep] = field(default_factory=list)
     tool_calls: list[dict] = field(default_factory=list)  # 本轮实际调用的工具与参数
@@ -69,6 +73,8 @@ class ChatResult:
 
 
 class Orchestrator:
+    """LLM 编排器：串起意图预检、工具选用、CaMeL 隔离阅读、护栏裁决与五段思维链留痕。"""
+
     def __init__(self, llm: LLMProvider, mcp: MCPClient,
                  quarantined_tools: set[str] | None = None) -> None:
         self.llm = llm
@@ -78,6 +84,14 @@ class Orchestrator:
         self.quarantined_tools: set[str] = quarantined_tools or set()
 
     async def chat(self, user_input: str, *, deep_thinking: bool = False) -> ChatResult:
+        """处理一句自然语言运维指令：意图预检→选工具→隔离阅读→护栏→答复，全程留痕五段思维链。
+
+        Args:
+            user_input: 用户的自然语言指令。
+            deep_thinking: 开启后各 LLM 往返改用 DeepSeek 推理模型并把思维链入 trace（更强更慢）。
+        Returns:
+            ChatResult：含答复、五段 trace、工具调用、trace_id 与护栏/意图/污点标志。
+        """
         trace_id = uuid.uuid4().hex
         trace: list[TraceStep] = [TraceStep("接收指令", user_input)]
         # 深度思考开关：on → 编排各 LLM 往返改用推理模型（每次先产 reasoning_content 思维链，
@@ -369,11 +383,10 @@ class Orchestrator:
 
 
 def _push_thinking(trace: list[TraceStep], msg: dict, by: str) -> None:
-    """若模型返回了 reasoning_content（深度思考开启时 DeepSeek 推理模型的「思维链」），
-    单独作为一段「推理决策」入 trace，供前端回放展示模型真实的思考过程。
+    """把模型的 reasoning_content（深度思考时 DeepSeek 推理模型的思维链）单独作为一段「推理决策」入 trace。
 
-    非推理模型 / 关闭深度思考时 reasoning_content 为空 → 本函数 no-op，不污染 trace。
-    by：思维链来源（规划器 / 隔离阅读器），便于回放区分是哪个 LLM 角色在思考。
+    供前端回放展示模型真实的思考过程。非推理模型 / 关闭深度思考时 reasoning_content 为空 → 本函数
+    no-op，不污染 trace。by：思维链来源（规划器 / 隔离阅读器），便于回放区分是哪个 LLM 角色在思考。
     """
     if not isinstance(msg, dict):
         return
@@ -388,7 +401,9 @@ def _push_thinking(trace: list[TraceStep], msg: dict, by: str) -> None:
 
 def _tool_error(name: str, reason: str, hint: str) -> dict:
     """P2-2：构造结构化工具错误，回喂给 LLM 以驱动自愈重试。
-    带 tool_error=True 让模型明确「这是错误、需换策略」，而非把错误文本当数据转述。"""
+
+    带 tool_error=True 让模型明确「这是错误、需换策略」，而非把错误文本当数据转述。
+    """
     return {"tool_error": True, "tool": name, "reason": reason, "hint": hint}
 
 

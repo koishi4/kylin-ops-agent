@@ -27,6 +27,7 @@ logger = logging.getLogger("kylin-ops-agent")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """应用生命周期：启动时跑失败安全/最小权限闸门、扫描并隔离工具、建 MCP 连接，退出时清理。"""
     settings = get_settings()
 
     # 失败安全启动守卫（P0-D，DEMO/PROD 分界）：非回环绑定（联网/生产）下若 operator_token 为空

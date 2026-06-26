@@ -1,0 +1,40 @@
+# 麒麟安全智能运维 Agent —— 后端工程配置
+#
+# 本文件当前只承载一件事：把「代码注释/文档字符串」的既有良好实践
+# 固化成「文档化、可执行、可进 CI」的强制标准（见 docs/code-comment-style.md）。
+# 刻意只启用 pydocstyle（D）规则族，不引入 E/F/I 等与「注释规范」无关的
+# 代码风格检查，以免一次提交里混入大面积无关改动（范围控制本身也是工程纪律）。
+#
+# 用法：
+#   cd backend && source .venv/bin/activate
+#   ruff check app            # 检查应用代码注释合规
+#   ruff check app tests      # 含测试（测试函数豁免，详见 per-file-ignores）
+
+[tool.ruff]
+target-version = "py311"
+# 注释规范的强制对象是生产代码 app/；测试与脚本按 per-file-ignores 放宽。
+src = ["app"]
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+# 仅 pydocstyle：本配置专注 docstring 规范，不做格式化/导入排序等无关检查。
+select = ["D"]
+ignore = [
+    "D105", # 魔术方法（__repr__/__enter__/__aexit__…）不强制 docstring：签名与协议即语义
+    "D107", # __init__ 不单独要求 docstring：类级 docstring 已说明职责，避免重复样板
+    # —— 以下为「英文正字法」规则，对本库的中文 docstring 不成立，刻意禁用 ——
+    "D415", # 首行须以 .?! 结尾：中文用 。！？，强加 ASCII 句号反而破坏文本
+    "D403", # 首词须首字母大写：中文无大小写，规则无意义
+    "D413", # 末段后须空行：英文段落习惯，对中文非必要（google 约定亦忽略）
+]
+
+[tool.ruff.lint.pydocstyle]
+# 统一 Google 风格（Args:/Returns:/Raises:）——与代码库现有 100% docstring 一致。
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# 测试 / 脚本不是对外 API 面：强制「有模块/包 docstring」（D100/D104）以交代用途，
+# 但其 docstring 是自由式说明，不强制 Google 段落格式（D205/D209）与函数级 docstring。
+# 严格的 Google 风格只压在生产代码 app/ 上。
+"tests/**" = ["D101", "D102", "D103", "D106", "D205", "D209", "D301"]
+"scripts/**" = ["D101", "D102", "D103", "D205", "D209", "D301"]

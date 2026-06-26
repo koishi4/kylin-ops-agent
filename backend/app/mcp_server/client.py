@@ -41,6 +41,7 @@ class MCPClient:
         await self._session.initialize()
 
     async def aclose(self) -> None:
+        """关闭 MCP 会话与子进程，释放 AsyncExitStack 持有的资源。"""
         if self._stack is not None:
             await self._stack.aclose()
             self._stack = None
@@ -57,6 +58,7 @@ class MCPClient:
 
     @property
     def session(self) -> ClientSession:
+        """当前 MCP 会话；未连接时抛 RuntimeError 提示先 connect()。"""
         if self._session is None:
             raise RuntimeError("MCPClient 未连接，请先调用 connect()")
         return self._session

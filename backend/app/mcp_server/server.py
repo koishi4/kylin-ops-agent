@@ -21,7 +21,7 @@ for _name, _spec in REGISTRY.items():
 
 
 def main() -> None:
-    # stdio 传输：后端以子进程方式拉起本 server 并通过标准输入输出通信
+    """以 stdio 传输启动 MCP Server（后端以子进程方式拉起并经标准输入输出通信）。"""
     mcp.run(transport="stdio")
 
 

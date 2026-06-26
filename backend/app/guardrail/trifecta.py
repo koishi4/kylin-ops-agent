@@ -53,6 +53,7 @@ class ToolCaps:
     state_change: bool = False
 
     def legs(self) -> set[Capability]:
+        """返回该工具/动作实际具备的能力腿集合（致命三要素计数用）。"""
         s: set[Capability] = set()
         if self.untrusted:
             s.add(Capability.UNTRUSTED)
@@ -63,6 +64,7 @@ class ToolCaps:
         return s
 
     def to_dict(self) -> dict:
+        """序列化为 dict（含能力腿计数），供前端「致命三要素」面板渲染。"""
         return {"untrusted": self.untrusted, "sensitive": self.sensitive,
                 "state_change": self.state_change, "leg_count": len(self.legs())}
 
@@ -178,6 +180,7 @@ class TrifectaResult:
     reason: str = ""
 
     def to_dict(self) -> dict:
+        """序列化整次 Rule-of-Two 评估为 dict，供审计与前端风险面板渲染。"""
         return {
             "tools": self.tools,
             "legs": self.legs,

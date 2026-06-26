@@ -67,31 +67,39 @@ _OVERLONG = 600
 
 @dataclass
 class Finding:
+    """工具供应链扫描的单条发现：问题代码、严重度、说明。"""
+
     code: str        # TP-INJECT / TP-HIDDEN-TAG / TP-DIRECTIVE / TP-SENSITIVE-FILE / TP-EXFIL / TP-SHADOW / TP-INVISIBLE / TP-OVERLONG
     severity: str    # high / medium / low
     detail: str
 
     def to_dict(self) -> dict:
+        """序列化为 dict。"""
         return {"code": self.code, "severity": self.severity, "detail": self.detail}
 
 
 @dataclass
 class ToolScanResult:
+    """单个工具的扫描结论：工具名、发现列表、内容指纹（rug-pull 漂移检测用）。"""
+
     name: str
     findings: list[Finding] = field(default_factory=list)
     fingerprint: str = ""   # name+description+schema 的内容指纹（P2：rug-pull 漂移检测用）
 
     @property
     def suspicious(self) -> bool:
+        """是否存在任何发现（即该工具可疑）。"""
         return bool(self.findings)
 
     @property
     def max_severity(self) -> str:
+        """所有发现中的最高严重度（无发现时为 "none"）。"""
         order = {"high": 3, "medium": 2, "low": 1}
         return max((f.severity for f in self.findings),
                    key=lambda s: order.get(s, 0), default="none")
 
     def to_dict(self) -> dict:
+        """序列化为 dict（含 suspicious / max_severity 派生字段），供审计与前端展示。"""
         return {"name": self.name, "suspicious": self.suspicious,
                 "max_severity": self.max_severity,
                 "fingerprint": self.fingerprint,

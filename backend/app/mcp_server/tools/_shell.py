@@ -1,4 +1,5 @@
 """外部命令统一封装。底线：shell=False + 参数列表，绝不字符串拼接 + shell=True。
+
 所有需要调用 lsof/ss/journalctl/df 的工具都必须经过 run_cmd，禁止裸 subprocess。
 """
 from __future__ import annotations

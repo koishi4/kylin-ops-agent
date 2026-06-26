@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 
 class RiskLevel(Enum):
+    """命令风险等级：critical（硬拒）/ high（需授权）/ medium（二次确认）/ low（记录放行）。"""
+
     CRITICAL = "critical"   # 直接拒绝，不可覆盖
     HIGH = "high"           # 拦截，需显式授权
     MEDIUM = "medium"       # 二次确认
@@ -43,10 +45,13 @@ class RiskLevel(Enum):
 
     @property
     def order(self) -> int:
+        """风险等级的可比序号（low<medium<high<critical），用于取更严的保守合并。"""
         return {"low": 0, "medium": 1, "high": 2, "critical": 3}[self.value]
 
 
 class Action(Enum):
+    """命中规则后的处置动作：deny（拦截）/ confirm（二次确认）/ allow（放行）。"""
+
     DENY = "deny"
     CONFIRM = "confirm"
     ALLOW = "allow"
@@ -54,6 +59,8 @@ class Action(Enum):
 
 @dataclass(frozen=True)
 class Rule:
+    """一条高危命令规则：唯一 id、匹配正则、风险等级、命中动作、人类可读说明。"""
+
     id: str
     pattern: str
     risk: RiskLevel
@@ -203,7 +210,9 @@ def _read_yaml_rules(path: Path) -> tuple[list[Rule], list[str], list[str]]:
 
 def _merge_redlines(rules: list[Rule]) -> list[Rule]:
     """安全不变量 1：红线规则用硬编码版本强制覆盖 YAML 同 id 项，并补回被删的红线。
-    保持 YAML 给出的顺序，仅替换/追加，使配置层无法把核心红线调松或删除。"""
+
+    保持 YAML 给出的顺序，仅替换/追加，使配置层无法把核心红线调松或删除。
+    """
     redline = {r.id: r for r in _REDLINE_RULES}
     out: list[Rule] = []
     seen: set[str] = set()
@@ -218,8 +227,10 @@ def _merge_redlines(rules: list[Rule]) -> list[Rule]:
 
 def load_rules(path: Path = RULES_YAML_PATH) -> tuple[list[Rule], list[str], list[str]]:
     """加载并校验规则。
+
     成功 → (合并红线后的规则, critical_paths, [])；
-    失败 → (红线兜底集, 兜底关键路径, errors)。本函数不改全局状态，便于测试与预检。"""
+    失败 → (红线兜底集, 兜底关键路径, errors)。本函数不改全局状态，便于测试与预检。
+    """
     rules, cps, errors = _read_yaml_rules(path)
     if errors:
         return list(_REDLINE_RULES), list(_FALLBACK_CRITICAL_PATHS), errors
@@ -345,17 +356,17 @@ def _find_is_destructive(tokens: list[str]) -> bool:
 
 
 def _find_search_roots(rest: list[str]) -> list[str]:
-    """find 的「搜索根」= 表达式之前的前导路径操作数，这才是销毁作用的范围。
+    r"""find 的「搜索根」= 表达式之前的前导路径操作数，这才是销毁作用的范围。
 
     修复实测误杀（评审整改 · benign held-out）：旧实现 `_plain_path_operands(rest)` 会把 find
-    **表达式里**的路径也当删除目标——尤其 `-exec /bin/rm {} \\;` 的**被执行程序路径** `/bin/rm`、
+    **表达式里**的路径也当删除目标——尤其 `-exec /bin/rm {} \;` 的**被执行程序路径** `/bin/rm`、
     `-exec /usr/bin/unzip …` 的 `/usr/bin/unzip` 会被 realpath 落到 /usr、/bin 关键区而误判 PATH-001，
-    可 `find . -exec /bin/rm {} \\;`（删的是 cwd）被当成删 /bin。实际上 find 只在**搜索根**下作用，
+    可 `find . -exec /bin/rm {} \;`（删的是 cwd）被当成删 /bin。实际上 find 只在**搜索根**下作用，
     -exec 后的命令路径是「拿来跑的程序」而非「要删的文件」。故只取第一个表达式 token（`-name`/`-exec`/
     `(` 等以 `-` 起头或括号/`!`）之前的前导操作数为搜索根。
 
     `find / -nouser -exec rm {} +` → 搜索根 `/` → 仍判关键（正确拦）；
-    `find . -exec /bin/rm {} \\;` / `find /var/tmp/x -execdir /bin/rm …` → 搜索根 `.` / `/var/tmp/x`
+    `find . -exec /bin/rm {} \;` / `find /var/tmp/x -execdir /bin/rm …` → 搜索根 `.` / `/var/tmp/x`
     → 不再被 -exec 的程序路径带偏（消除误杀）。
     """
     roots: list[str] = []
@@ -374,8 +385,10 @@ _ASSIGN_RE = re.compile(r"\w+=.*")
 
 
 def _strip_cmd_wrappers(tokens: list[str]) -> list[str]:
-    """跳过前置命令包装器（env/sudo/nice/nohup/time/…）及其旗标与 env 风格 VAR=val 赋值，
-    返回「真正被执行的命令」起点。这样 `env rm -rf /` 的销毁动词不再被 `env` 挡住。"""
+    """跳过前置命令包装器（env/sudo/nice/nohup/time/…）及其旗标与 env 风格 VAR=val 赋值，返回真正被执行命令的起点。
+
+    这样 `env rm -rf /` 的销毁动词不再被 `env` 挡住。
+    """
     i, n = 0, len(tokens)
     while i < n:
         tok = tokens[i]
@@ -411,10 +424,10 @@ def _destruction_operands(tokens: list[str]) -> list[str]:
 
 
 def hits_critical_path(cmd: str) -> list[str]:
-    """正则之外的第二重判断：对**不可逆数据销毁动词**提取路径操作数并 realpath 规范化，
+    """正则之外的第二重判断：对不可逆数据销毁动词提取路径操作数并 realpath 规范化后比对关键路径。
+
     捕获 `rm -rf /etc/../etc`、`truncate -s 0 /etc/passwd`、`find / -delete`、相对路径、
     软链接绕过等正则难覆盖的变形。动词集与取舍见 _DESTRUCTIVE_PATH_VERBS 注释。
-
     返回命中的关键路径列表（规范化后落在 CRITICAL_PATHS 内的路径）。
     """
     t = normalize(cmd)

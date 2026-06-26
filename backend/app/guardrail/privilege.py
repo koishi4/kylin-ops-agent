@@ -37,12 +37,15 @@ _PRIV_PATTERNS = [
 
 @dataclass
 class PrivilegeResult:
+    """最小权限裁决结论：是否需提权、是否放行、原因、命中的提权特征。"""
+
     needs_privilege: bool
     allowed: bool
     reason: str
     matched: list[str]  # 命中的提权特征说明
 
     def to_dict(self) -> dict:
+        """序列化为 dict，供审计与前端展示。"""
         return {
             "needs_privilege": self.needs_privilege,
             "allowed": self.allowed,
@@ -91,8 +94,9 @@ def is_running_as_root() -> bool:
 
 
 def privilege_posture(exec_user: str = "", *, drops_privilege: bool = True) -> dict:
-    """当前执行身份的最小权限态势 —— 让「变更动作以什么权限落地」成为可演示、可审计的一等公民
-    （评审整改：赛题需求④「核心运维动作需在受限 Account 下运行」此前只靠配置、无 per-action 证据）。
+    """当前执行身份的最小权限态势：让「变更动作以什么权限落地」成为可演示、可审计的一等公民。
+
+    （评审整改：赛题需求④「核心运维动作需在受限 Account 下运行」此前只靠配置、无 per-action 证据。）
 
     判定（纯函数，不读全局配置——exec_user 由调用方传入，便于测试）：
     - 非 root 运行 → 落地命令天然受限于该账户，最小权限已满足（elevated_landing=False）。

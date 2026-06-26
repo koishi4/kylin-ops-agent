@@ -27,6 +27,8 @@ from .vuln_intel import query_vuln_intel
 
 @dataclass(frozen=True)
 class ToolSpec:
+    """工具注册规格：底层纯函数 + 能力级别（READONLY / MUTATING / PRIVILEGED）。"""
+
     fn: Callable[..., dict]
     level: str  # READONLY / MUTATING / PRIVILEGED
 

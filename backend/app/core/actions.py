@@ -453,9 +453,9 @@ def _recv(action: str, params: dict, confirmed: bool, authorized: bool, dry_run:
 
 
 def _rule_of_two_detail(action: str, *, confirmed: bool) -> dict:
-    """致命三要素 / Rule of Two 在【真实状态变更点】的能力面评估（评审整改：把能力模型用到
-    真正会改系统的动作层，而非只在只读编排路径上展示一串恒 ≤2 腿的数字）。
+    """致命三要素 / Rule of Two 在【真实状态变更点】的能力面评估。
 
+    （评审整改：把能力模型用到真正会改系统的动作层，而非只在只读编排路径上展示一串恒 ≤2 腿的数字。）
     受控动作具备『改状态』(C) + 『访问敏感/私有数据』(B) 两条能力腿，但**不接触不可信内容**(A=False)——
     故最多触及 2/3 腿，天然满足 Rule of Two；human_in_loop=confirmed 让 C 腿始终处于人工二次确认之下。
     第三条腿(A)只存于感知层只读工具、与 C 腿永不同路（该隔离已由 trifecta.assert_perception_isolation

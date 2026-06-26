@@ -1,4 +1,5 @@
 """网络相关 MCP 工具。对应评分①「OS 感知」。
+
 优先用 psutil，无权限时回退 ss 命令，始终返回结构化结果，绝不抛异常给 Agent。
 """
 from __future__ import annotations

@@ -47,6 +47,8 @@ def require_operator(authorization: str | None = Header(default=None)) -> None:
 # P1：请求模型加边界约束（min/max_length、Literal 动作名、按动作校验 params），
 # 把畸形/超大入参挡在业务逻辑之外（早 422，不进护栏/动作层），收敛 DoS 与误用面。
 class ChatRequest(BaseModel):
+    """/chat 请求体：自然语言消息 + 深度思考开关。"""
+
     message: str = Field(min_length=1, max_length=4000)
     # 深度思考开关（前端可切）：on → 编排用 DeepSeek 推理模型，回放展示思维链，更慢；
     # off（默认）→ 用快速模型，低延迟。详见 orchestrator.chat(deep_thinking=...)。
@@ -54,12 +56,16 @@ class ChatRequest(BaseModel):
 
 
 class GuardCheckRequest(BaseModel):
+    """/guardrail/check 请求体：待裁决命令 + 授权/确认标志（只读预览，不执行）。"""
+
     command: str = Field(min_length=1, max_length=4000)
     authorized: bool = False
     confirmed: bool = False
 
 
 class ActionRequest(BaseModel):
+    """/action/execute 请求体：白名单动作名 + 参数 + 确认/授权/dry_run 标志。"""
+
     # Literal 收敛到白名单动作：未知动作名在入口即 422，不进 run_action。
     # 扩展实用性 = 往此白名单加参数化受控动作（每个都过语义闸门 + 二次确认 + executor 护栏），
     # 绝不放开自由 shell——见 core/actions.ACTIONS 与 CLAUDE.md §4.0。
@@ -76,8 +82,10 @@ class ActionRequest(BaseModel):
     @model_validator(mode="after")
     def _check_params(self) -> "ActionRequest":
         """按动作校验 params 形状（独立 schema 的轻量落地）：缺必填项即 422。
+
         细粒度语义校验（关键性/受保护进程/信号白名单/单元关键性/IP 范围/vacuum 格式）仍在
-        actions.py，比 schema 更全。"""
+        actions.py，比 schema 更全。
+        """
         if self.action in ("truncate_log", "clean_path"):
             p = self.params.get("path")
             if not isinstance(p, str) or not p:
@@ -188,10 +196,10 @@ async def guardrail_rules_reload() -> dict:
 
 @router.get("/guardrail/tool-scan")
 async def guardrail_tool_scan(request: Request) -> dict:
-    """MCP 工具供应链扫描 + 处置（P3-4 + P0-C + P2 rug-pull）：静态检测工具元数据里的
-    投毒/影子/隐形载荷，并对比已锚定基线检测 schema 漂移（rug-pull / 运行期新增工具），
-    标注每个工具的处置档位（已隔离 isolated / 需人工复核 review / 已放行 cleared）。
+    """MCP 工具供应链扫描 + 处置（P3-4 + P0-C + P2 rug-pull）。
 
+    静态检测工具元数据里的投毒/影子/隐形载荷，并对比已锚定基线检测 schema 漂移（rug-pull /
+    运行期新增工具），标注每个工具的处置档位（已隔离 isolated / 需人工复核 review / 已放行 cleared）。
     本地分析 name/description/schema，绝不上传文件或凭据（致敬 mcp-scan）。
     覆盖 2025 年 MCP 新攻击面：工具投毒（藏指令）、工具影子（跨工具篡改）、隐形 Unicode、
     rug-pull（获信任后悄改 description/schema）。返回的 isolated 名单即「fail-closed 不进 LLM
@@ -329,8 +337,7 @@ async def trace_verify(trace_id: str) -> dict:
 
 @router.get("/traces/{trace_id}/evidence", dependencies=[Depends(require_operator)])
 async def trace_evidence(trace_id: str) -> dict:
-    """导出一条 trace 的自封口审计证据包（P2）：完整五段 + verify 结果 + 导出时的护栏规则指纹
-    + 工具 schema 基线指纹 + HMAC 封口（seal）。
+    """导出一条 trace 的自封口审计证据包（P2）：完整五段 + verify + 规则/schema 指纹 + HMAC 封口（seal）。
 
     用途：把可追溯性从「本系统内回放」升级为「可离线核验的取证材料」。证据包用同一 HMAC 密钥封口，
     任何导出后的改动都会令 seal 失配（verify_evidence 检出）——与库内哈希链双重防篡改。

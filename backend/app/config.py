@@ -1,4 +1,5 @@
 """全局配置：用 pydantic-settings 从环境变量 / .env 读取。
+
 集中管理 LLM 切换、审计库、执行账户等，避免在各处散落 os.getenv。
 """
 from __future__ import annotations
@@ -14,6 +15,8 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
 class Settings(BaseSettings):
+    """全局运行配置项：从环境变量 / .env 注入，经 get_settings() 缓存为单例读取。"""
+
     # 大模型切换：deepseek（云端，国产开源，开发/演示默认）/ mock（离线确定性桩，CI/测试）。
     # DeepSeek 本身即国产且权重开源，「国产化」无需另挂本地小模型即满足；如需私有化自托管，
     # 任一 OpenAI 兼容端点改 deepseek_base_url 即可复用 DeepSeekProvider（见 llm/provider.py）。

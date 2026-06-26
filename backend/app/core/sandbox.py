@@ -128,9 +128,10 @@ def _isolation_backend() -> tuple[str, str | None]:
 
 
 def _backend_functional(name: str, path: str) -> tuple[bool, str]:
-    """功能性自检：**完全复刻 run_sandboxed 的执行条件**跑一条 `echo <token>`——同款包裹参数、同款
-    `preexec_fn`（含 RLIMIT_NPROC 等限额与可选降权）、同款 Popen 标志，确认该后端在本内核/本架构上、
-    且在我们施加的资源限额之下，仍能建命名空间并把内层 stdout 正常透传出来。
+    """功能性自检：完全复刻 run_sandboxed 的执行条件跑一条 `echo <token>`，确认沙箱在本内核/本架构下真能用。
+
+    同款包裹参数、同款 `preexec_fn`（含 RLIMIT_NPROC 等限额与可选降权）、同款 Popen 标志，确认该后端在
+    本内核/本架构上、且在我们施加的资源限额之下，仍能建命名空间并把内层 stdout 正常透传出来。
 
     返回 (ok, why)：ok=True 表示可用；否则 why 是简短失败原因（写进降级告警，便于排障）。判定要求
     rc==0 且 token 出现在 stdout。任何异常/超时/非零/无预期输出一律判「不可用」→ 降级（best-effort，

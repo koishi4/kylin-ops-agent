@@ -1,4 +1,5 @@
 """LLM 抽象层：deepseek（云端，国产开源）/ mock（离线测试）两模式，通过 LLM_PROVIDER 切换。
+
 开发与演示用 deepseek，CI / 无网 / 测试用 mock。
 
 国产化定位：DeepSeek 本身即国产（深度求索）且权重开源，「国产化」一项无需另挂本地小模型即满足。
@@ -27,6 +28,7 @@ class LLMProvider(ABC):
     @abstractmethod
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              model: str | None = None) -> dict:
+        """同步发起一轮对话：给定消息与可用工具，返回模型决策（OpenAI message 结构，含 tool_calls）。"""
         ...
 
     async def achat(self, messages: list[dict], tools: list[dict] | None = None,
@@ -40,8 +42,10 @@ class LLMProvider(ABC):
 
 
 class _OpenAICompatProvider(LLMProvider):
-    """DeepSeek 及任何 OpenAI 兼容端点（含私有化自托管的国产大模型）共用此实现，
-    逻辑相同，差异仅在 base_url/key/model——新增一个端点只需子类化并填这三项。"""
+    """DeepSeek 及任何 OpenAI 兼容端点（含私有化自托管的国产大模型）共用此实现。
+
+    逻辑相同，差异仅在 base_url/key/model——新增一个端点只需子类化并填这三项。
+    """
 
     def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
         self.client = OpenAI(api_key=api_key, base_url=base_url)
@@ -95,6 +99,7 @@ class MockProvider(LLMProvider):
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              model: str | None = None) -> dict:
+        """关键词规则模拟选工具：上一条是工具结果则进总结回合，否则按命中关键词产出 tool_call。"""
         # mock 无真实模型，model 参数仅为接口一致而存在（深度思考开关对 mock 无意义）。
         # 若上一条是工具结果，则进入「总结」回合，直接给自然语言答复
         if messages and messages[-1].get("role") == "tool":
@@ -126,6 +131,7 @@ class MockProvider(LLMProvider):
 
 
 def get_llm() -> LLMProvider:
+    """按配置 LLM_PROVIDER 返回 provider 实例：mock 走离线桩，否则走云端 DeepSeek。"""
     provider = get_settings().llm_provider.lower()
     if provider == "mock":
         return MockProvider()

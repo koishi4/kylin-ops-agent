@@ -91,6 +91,10 @@ def _execute(
     Args:
         guard_str: 供护栏（规则库 + AST + 最小权限）裁决的命令字符串。
         argv: 结构化执行对象；为 None 时（字符串入口）在护栏放行后由 guard_str shlex.split 得到。
+        authorized: 是否对 HIGH 风险/提权显式授权（防线4）。
+        confirmed: 用户是否已二次确认（CONFIRM 类）。
+        dry_run: 仅做护栏校验、不真正执行（演示/测试用）。
+        timeout: 执行超时秒数。
     """
     guard: GuardResult = check_command(guard_str, authorized=authorized, confirmed=confirmed)
 

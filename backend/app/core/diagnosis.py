@@ -520,6 +520,7 @@ def correlate_memory_signals(sig: dict) -> dict:
         sig: 信号字典（缺失键视为未观测，不参与加权）：
             mem_percent / mem_warn / available_mb / swap_percent /
             top{pid,name,rss_mb,rss_grew_bytes,interval_s} / swap_thrashing(bool)
+
     Returns:
         含 root_cause / confidence / evidence / chain / findings / suggestions 的报告。绝不处置。
     """

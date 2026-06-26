@@ -30,6 +30,8 @@ from .rules import match_rules, normalize
 
 
 class IntentClass(Enum):
+    """意图分类档位（路由层，非安全承重）：白=只读快路 / 灰=进研判+护栏 / 黑=注入话术留痕。"""
+
     WHITE = "white"   # 只读查询，走快路
     GRAY = "gray"     # 修改类 / 意图不明的保守缺省，叠加 防线1.5 研判 + 命令级护栏
     BLACK = "black"   # 仅注入/操纵话术：拒绝并留痕（非安全承重，见模块注释）
@@ -37,11 +39,14 @@ class IntentClass(Enum):
 
 @dataclass
 class IntentResult:
+    """意图分类结论：档位、判定理由、命中的关键词/规则。"""
+
     intent: IntentClass
     reason: str
     matched: list[str]  # 命中的关键词/规则，便于审计与解释
 
     def to_dict(self) -> dict:
+        """序列化为 dict，供审计与前端展示。"""
         return {"intent": self.intent.value, "reason": self.reason, "matched": self.matched}
 
 
