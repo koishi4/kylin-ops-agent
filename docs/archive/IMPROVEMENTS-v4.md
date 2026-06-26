@@ -1,5 +1,7 @@
 # IMPROVEMENTS-v4.md — 护栏绕过修复 + GPT Pro 审查整合（交给 Claude Code）
 
+> 🗄️ **已归档（历史规划文档）**：本文 P-任务均已执行落地。代码/测试按「P 编号」援引本文作设计依据故保留，请勿据此再施工。
+
 > 先读 CLAUDE.md、docs/dev-log.md、docs/theory-alignment.md。优先级 **P0-A → P0-B → P0-C → P0-D → P1**。
 > 纪律：所有可变命令唯一经 core/executor.py；保守合并取更严；只演示「被拦」不演示「破坏」；mock/无依赖也要能跑；评测/演示脚本不纳入 pytest。每完成一项：`pytest -q` 全绿 → 更新 docs/dev-log.md（设计取舍即报告素材）→ 勾本文件。
 > 状态标注：✅已核实存在 / ◑已部分硬化仍有残留 / 来自 GPT Pro 第二轮 review。

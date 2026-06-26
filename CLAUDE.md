@@ -50,7 +50,8 @@
                        ┌─ 感知/查询：LLM 只能从 READONLY MCP 工具里【选工具】，不能拼装、不能自由执行；
 自然语言 ─→ 编排器 ─┤   不可信工具输出经 CaMeL 双 LLM 隔离（无工具的「隔离阅读器」压成不可信摘要，
                        │   原始字节绝不进规划器）+ spotlighting 后才回喂；污点真正 gate（违则 fail-safe）
-                       └─ 变更/处置：只有 truncate_log / kill_process / clean_path 三个
+                       └─ 变更/处置：只有 truncate_log / kill_process / clean_path /
+                           restart_service / reload_config / block_ip / clean_journal 七个
                            【白名单参数化动作】，且只能由用户经 /action/execute 显式触发、
                            强制二次确认；LLM 无法把它们当工具调用（不在 MCP 注册表里）
 ```
@@ -63,11 +64,12 @@
 → 因此「即使 LLM 被诱导也炸不了系统」靠的是**这条架构**，命令规则引擎是它之上的**纵深防御**
 （万一未来有人把自由命令接进 executor，规则仍兜底）。讲故事/写报告时，把架构讲成主角，规则讲成配角。
 
-> **澄清「只有 3 个动作 = 只读面板」的误读（见 dev-log「2026-06-11 二.1」）**：`truncate_log /
-> kill_process / clean_path` 是**当前实现的动作集，不是架构天花板**。Action-Selector 范式（CaMeL）
-> 正是给 agent **安全变更能力**的业界推荐解法——要扩实用性（`restart_service` / `reload_config` /
-> `block_ip` …），就**往白名单加参数化动作**：每个都「定参数 schema + 强制二次确认 + 走 executor 过
-> 防线2 + 审计留痕」，能力随之增长而**不**给 LLM 自由 shell。错误做法才是为"实用"把自由命令交给模型。
+> **澄清「只有几个动作 = 只读面板」的误读（见 dev-log「2026-06-11 二.1」）**：当前白名单已含
+> `truncate_log / kill_process / clean_path / restart_service / reload_config / block_ip /
+> clean_journal` 七个动作，且**这只是当前动作集，不是架构天花板**。Action-Selector 范式（CaMeL）
+> 正是给 agent **安全变更能力**的业界推荐解法——要继续扩实用性（如 `rollback_config` / `quota_set` …），
+> 就**往白名单加参数化动作**：每个都「定参数 schema + 强制二次确认 + 走 executor 过防线2 + 审计留痕」，
+> 能力随之增长而**不**给 LLM 自由 shell。错误做法才是为"实用"把自由命令交给模型。
 > 即：实用性的扩展方向是**加受控动作**，绝不是**放开任意执行**——这条不变量不卖。
 
 ### 4.1 命令规则引擎（防线2，纵深防御层）

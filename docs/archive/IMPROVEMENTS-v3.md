@@ -1,5 +1,7 @@
 # IMPROVEMENTS-v3.md — 整合 GPT Pro 代码审查 + 内核漏洞防御创新
 
+> 🗄️ **已归档（历史规划文档）**：本文 P-任务均已执行落地。代码/测试按「P 编号」援引本文作设计依据故保留，请勿据此再施工。
+
 > 给 Claude Code 的话：先读 CLAUDE.md、docs/dev-log.md、docs/theory-alignment.md 了解现状，再按本文件推进。
 > 优先级：**P0 必修（提交可信度命门）→ P1 创新核心（内核漏洞遏制）+ P1 得分动作 → 实机证明 → P2**。
 > 纪律：所有可变命令唯一经 core/executor.py；保守合并取更严；只演示「被拦」不演示「破坏」；mock/无依赖也要能跑；评测/演示脚本不纳入 pytest。每完成一项：`pytest -q` 全绿 → 更新 docs/dev-log.md（写设计取舍）→ 勾本文件。
