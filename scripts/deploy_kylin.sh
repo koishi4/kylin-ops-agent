@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 麒麟虚机一键部署脚本（软件杯 A2：麒麟安全智能运维 Agent）—— 改进版 v2
+# 麒麟虚机一键部署脚本（软件杯 A2：麒麟安全智能运维 Agent）—— 改进版 v3
 # -----------------------------------------------------------------------------
 # 目标环境：麒麟高级服务器操作系统 V11 + LoongArch（loongarch64），官方发放虚机。
 #   也兼容其它 RPM(dnf/yum) / Debian(apt) 发行版与 x86_64（自动探测，便于本机预演）。
@@ -12,21 +12,25 @@
 #      解决 VM 出网慢）自动升级到 stable。
 #   ② 不再 dnf 安装 python3-pydantic：麒麟系统包是 pydantic 1.10.9(v1)，与项目所需 v2
 #      不兼容，且在 --system-site-packages 下会污染 venv、挡住 pip 装 2.x。改为只复用系统
-#      的 psutil/pyyaml，pydantic 一律在 venv 内用 --ignore-installed 强制装 v2。
+#      的 psutil/pyyaml，pydantic 一律在 venv 内装 v2（先探测，已是 v2 则跳过）。
 #   ③ 放弃 --only-binary 探测：loongarch 上 pydantic-core 2.x 确认无 wheel，直接备好编译
 #      环境后源码编译；编出的 wheel 会进 pip 缓存，重跑秒装。
 #   ④ pip / rustup 默认走国内镜像（可 --pip-index / --rust-mirror 覆盖，或 --skip-rust 跳过）。
 #
-# 一条命令完成：① 装系统依赖 → ②(新)Rust 工具链自愈 → ③ 拉代码 → ④ 建 venv 装 Python 依赖
-#              → ⑤ 写 .env → ⑥ 前端 dist → ⑦（可选）opsagent + systemd → ⑧ 冒烟自检。
-# 脚本【幂等】，可反复运行。
+# === v3 修复（真机实测）===
+#   ⑤ pip 镜像【加官方 PyPI 兜底】：清华源对 loongarch 索引不全，pydantic 等会返回
+#      “from versions: none / No matching distribution”。用 --extra-index-url 让镜像缺失的
+#      包自动回落官方源，既保留镜像加速、又不丢包。（可 --no-pip-fallback 关闭）
+#   ⑥ pydantic 安装改为【先探测后装、不用 --ignore-installed】：>=2.6 约束本就让系统 1.x 不
+#      满足、必装 v2 进 venv；--ignore-installed 反而每次强制重装、loongarch 上重复重编 pydantic-core，
+#      既慢又易在网络抖动时报错。已是 v2 直接跳过，幂等重跑不再空跑编译。
 #
 # 用法：
 #   bash scripts/deploy_kylin.sh                      # 默认：拉到 /opt、mock 离线、不建服务
 #   bash scripts/deploy_kylin.sh --systemd            # 额外建 opsagent + systemd 开机自启（推荐）
 #   bash scripts/deploy_kylin.sh --provider deepseek --api-key sk-xxx
 #   bash scripts/deploy_kylin.sh --skip-rust          # 已自备 Rust>=1.85 时跳过 rustup
-#   bash scripts/deploy_kylin.sh --pip-index https://pypi.org/simple   # 用官方源
+#   bash scripts/deploy_kylin.sh --pip-index ""       # 完全用官方 PyPI（不走镜像）
 #   bash scripts/deploy_kylin.sh --help
 # =============================================================================
 set -euo pipefail
@@ -44,11 +48,12 @@ DO_SYSTEMD=0
 DO_NGINX=0
 SKIP_TESTS=0
 SKIP_SYSDEPS=0
-# --- 新增 ---
 SKIP_RUST=0                  # 1=不碰 Rust（已自备 >=1.85 时用）
 RUST_MIN="1.85"              # pydantic-core/maturin 的 edition2024 所需最低 cargo
 PIP_INDEX="https://pypi.tuna.tsinghua.edu.cn/simple"          # pip 国内镜像（空字符串=用官方默认）
 RUST_MIRROR="https://mirrors.tuna.tsinghua.edu.cn/rustup"     # rustup 工具链镜像（空=官方）
+PIP_FALLBACK_URL="https://pypi.org/simple"                    # 镜像缺包时的兜底源（官方 PyPI）
+NO_PIP_FALLBACK=0            # 1=不加兜底源（仅当你确信镜像对 loongarch 索引完整时）
 
 # ---------- 彩色日志 ----------
 if [ -t 1 ]; then C_G=$'\033[32m'; C_Y=$'\033[33m'; C_R=$'\033[31m'; C_B=$'\033[36m'; C_0=$'\033[0m'
@@ -81,6 +86,7 @@ while [ $# -gt 0 ]; do
     --skip-rust)  SKIP_RUST=1; shift ;;
     --pip-index)  PIP_INDEX="$2"; shift 2 ;;
     --rust-mirror) RUST_MIRROR="$2"; shift 2 ;;
+    --no-pip-fallback) NO_PIP_FALLBACK=1; shift ;;
     -h|--help)    usage ;;
     *) die "未知参数：$1（用 --help 看用法）" ;;
   esac
@@ -88,6 +94,14 @@ done
 
 # pip 镜像：export 后所有 pip 调用自动生效
 if [ -n "$PIP_INDEX" ]; then export PIP_INDEX_URL="$PIP_INDEX"; fi
+
+# pip 兜底源：仅当启用了镜像、且未 --no-pip-fallback 时，附加官方 PyPI 作 extra-index。
+# 这样清华缺的包（loongarch 上的 pydantic 等会报 “from versions: none”）会自动回落官方源。
+# 注意：$PIP_FALLBACK 不加引号是要让它在命令行里展开成两个独立 argv（--extra-index-url 与 URL）。
+PIP_FALLBACK=""
+if [ -n "$PIP_INDEX" ] && [ "$NO_PIP_FALLBACK" -eq 0 ] && [ -n "$PIP_FALLBACK_URL" ]; then
+  PIP_FALLBACK="--extra-index-url $PIP_FALLBACK_URL"
+fi
 
 # ---------- sudo 包装 ----------
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else
@@ -105,7 +119,7 @@ OS_PRETTY="${PRETTY_NAME:-$(uname -srm)}"
 KYLIN_REL="$(cat /etc/kylin-release 2>/dev/null || true)"
 printf '    架构: %s\n    系统: %s\n' "$ARCH" "$OS_PRETTY"
 [ -n "$KYLIN_REL" ] && printf '    麒麟: %s\n' "$KYLIN_REL"
-[ -n "$PIP_INDEX" ] && printf '    pip 镜像: %s\n' "$PIP_INDEX"
+[ -n "$PIP_INDEX" ] && printf '    pip 镜像: %s%s\n' "$PIP_INDEX" "$([ -n "$PIP_FALLBACK" ] && echo '  (+官方 PyPI 兜底)')"
 if [ "$ARCH" = "loongarch64" ]; then
   ok "LoongArch 目标架构（注意：pydantic-core/jiter 等 Rust 扩展需源码编译，本脚本已备 Rust 自愈）"
 else
@@ -168,7 +182,7 @@ for t in lsof ss journalctl df free ps; do
     || warn "缺少 $t：相关 MCP 感知工具可能降级（非致命）。"
 done
 
-# ---------- 1.5（新）Rust 工具链自愈 ----------
+# ---------- 1.5 Rust 工具链自愈 ----------
 # 仅当目标架构无预编译 wheel（loongarch64）且未 --skip-rust 时处理。x86 上 pip 直接下 wheel，无需 Rust。
 log "[1.5/8] Rust 工具链检查（pydantic-core/jiter 在 loongarch 上需源码编译）"
 ensure_rust() {
@@ -203,12 +217,10 @@ ensure_rust() {
 }
 if [ "$SKIP_RUST" -eq 1 ]; then
   warn "按 --skip-rust 跳过 Rust 处理（请确保 cargo>=$RUST_MIN，否则 pydantic-core 编译会失败）。"
-  # 仍尽量把已有 cargo 引入 PATH，方便后续编译
   [ -f "$HOME/.cargo/env" ] && { source "$HOME/.cargo/env"; } || true
 elif [ "$ARCH" = "loongarch64" ]; then
   ensure_rust
 else
-  # 非 loongarch 一般有 wheel，无需编译；但若本机恰好也缺 wheel，留一句提示。
   ok "非 loongarch64：pydantic-core 通常有预编译 wheel，跳过 Rust 处理。"
 fi
 
@@ -265,21 +277,29 @@ REQ_SRC="requirements.txt"; [ -f "$REQ_SRC" ] || die "缺少 backend/requirement
 REQ_TMP="$(mktemp)"; trap 'rm -f "$REQ_TMP"' EXIT
 sed -E 's/uvicorn\[[^]]*\]/uvicorn/' "$REQ_SRC" > "$REQ_TMP"
 
-# 先单独处理 pydantic v2：用 --ignore-installed 绕开系统 pydantic 1.x 的干扰。
-# loongarch 上此步会源码编译 pydantic-core（约 10 分钟，CPU 跑满属正常，勿中断）；
-# 编出的 wheel 进 ~/.cache/pip/wheels，重跑命中缓存秒装。
-log "预装 pydantic v2（loongarch 上将编译 pydantic-core，请耐心，勿 Ctrl-C）"
-pip install --ignore-installed "pydantic>=2.6" \
-  || warn "pydantic v2 安装失败：多为 cargo 版本不足或出网慢，检查上方 [1.5] 与 --rust-mirror。"
+# 先确保 venv 内 pydantic 为 v2：
+#   - 已是 v2 → 跳过（幂等重跑不再空跑编译）。
+#   - 否则装 >=2.6：该约束本就让系统 1.x 不满足、必装 v2 进 venv，不需要 --ignore-installed
+#     （后者每次强制重装、loongarch 上重复重编 pydantic-core，慢且易在网络抖动时失败）。
+#   - 走 $PIP_FALLBACK（官方 PyPI 兜底）：清华对 loongarch 索引不全，pydantic 在镜像上会返回
+#     “from versions: none”，回落官方源才能取到源码包并编译。
+log "确保 venv 内 pydantic 为 v2（≥2.6）"
+if python -c 'import pydantic,sys; sys.exit(0 if str(getattr(pydantic,"VERSION","")).startswith("2.") else 1)' 2>/dev/null; then
+  ok "venv 内已是 pydantic v2，跳过（不重装、不重编 pydantic-core）"
+else
+  log "安装 pydantic v2（loongarch 上将编译 pydantic-core，约 10 分钟，CPU 跑满属正常，勿 Ctrl-C）"
+  pip install $PIP_FALLBACK "pydantic>=2.6" \
+    || warn "pydantic v2 安装失败：检查 [1.5] cargo 版本与出网；若镜像取不到包可试 --pip-index \"\" 用官方源。"
+fi
 
 log "安装其余依赖"
-if ! pip install -r "$REQ_TMP"; then
+if ! pip install $PIP_FALLBACK -r "$REQ_TMP"; then
   warn "整体安装有失败项，逐行重试以定位。"
   while IFS= read -r line; do
     case "$line" in ''|\#*) continue ;; esac
     pkg="${line%%#*}"; pkg="$(echo "$pkg" | xargs)"
     [ -z "$pkg" ] && continue
-    pip install "$pkg" || warn "依赖安装失败：$pkg（继续，稍后冒烟检验）"
+    pip install $PIP_FALLBACK "$pkg" || warn "依赖安装失败：$pkg（继续，稍后冒烟检验）"
   done < "$REQ_TMP"
 fi
 
