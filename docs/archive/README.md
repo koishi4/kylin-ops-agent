@@ -11,4 +11,4 @@
 | `IMPROVEMENTS-v4.md` | docs/ | 护栏绕过修复 + 第二轮审查整合 |
 | `改进v2.md` | docs/ | 前沿调研与改进建议（P3 系列来源） |
 
-当前权威文档：`docs/dev-log.md`（开发日志）、`docs/security-design.md`（安全总纲）、`docs/roadmap.md`（路线图）、`docs/课程报告.md` 与 `docs/软件杯-*`（提交物）。
+当前权威文档：`docs/dev-log.md`（开发日志）、`docs/security-design.md`（安全总纲）、`docs/roadmap.md`（路线图）、`课程报告.zip`（软件工程课程报告权威件，仓库根目录）与 `docs/软件杯-*`（提交物）。
