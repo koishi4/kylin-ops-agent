@@ -1,0 +1,54 @@
+@startuml sequence-sse
+!include _style.puml
+title 图5.1　顺序图：/chat 的 SSE 流式执行链推送
+
+actor "运维管理员" as Admin
+box "B 端" #FBFCFE
+  participant "前端 Vue\n(EventSource)" as FE
+end box
+box "S 端 FastAPI" #FBFCFE
+  participant "API 路由\n/chat (SSE)" as API
+  participant "Orchestrator" as ORC
+  participant "护栏\n(classifier/engine)" as GU
+  participant "MCPClient" as MC
+  participant "AuditStore" as AU
+end box
+participant "DeepSeek" as DS
+
+Admin -> FE : 输入自然语言指令
+FE -> API : POST /chat（建立 SSE 连接）
+activate API
+API -> ORC : achat(message)
+activate ORC
+
+ORC -> GU : 防线1/3 意图与注入体检
+GU --> ORC : 放行
+API --> FE : event: 接收指令
+FE --> Admin : 渲染「已接收」段
+
+loop 多轮工具编排（只读）
+  ORC -> DS : achat(messages, tools=22 只读)
+  DS --> ORC : tool_call
+  ORC -> MC : call_tool(只读工具)
+  MC --> ORC : 结果（经 CaMeL 隔离阅读 + 标污点）
+  API --> FE : event: 感知环境（逐段 push）
+  FE --> Admin : 追加「感知」子步
+end
+
+ORC -> DS : 据采集结果总结
+DS --> ORC : 自然语言答复
+API --> FE : event: 推理决策 / 安全校验
+ORC -> AU : save_trace(五段 + HMAC 哈希链)
+AU --> ORC : ok（落库不阻断）
+API --> FE : event: 执行结果 + trace_id
+deactivate ORC
+API --> FE : event: done
+deactivate API
+FE --> Admin : 折叠面板呈现完整五段执行链
+
+note over FE, API
+  SSE 单向流式：服务端按五段逐步 push，
+  前端 EventSource 边收边渲染，呈现
+  「正在感知 / 正在校验」的过程感
+end note
+@enduml
