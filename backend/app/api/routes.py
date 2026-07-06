@@ -388,6 +388,49 @@ async def diagnose(topic: str = "all", path: str = "/", pin: bool = False) -> di
     return await asyncio.to_thread(diagnosis.diagnose, topic, path, pin=pin)
 
 
+@router.get("/briefing", dependencies=[Depends(require_operator)])
+async def briefing(request: Request, period: Literal["daily", "weekly"] = "daily",
+                   path: str = "/", ai: bool = True) -> dict:
+    """生成运维日报/周报：聚合系统快照 + 健康诊断 + 安全态势 + 审计活动，渲染 Markdown。
+
+    全只读聚合，确定性可离线（mock/CI 可跑）；ai=true 且 provider 非 mock 时用一次
+    **无工具** LLM 调用撰写导语（只许转述数据，失败自动降级为确定性导语）。
+    每次生成落一条审计 trace（intent=briefing）——简报本身也可回放溯源。
+    """
+    from app.core import briefing as briefing_mod
+    from app.llm.provider import MockProvider
+
+    orch = request.app.state.orchestrator
+    llm = None if (not ai or isinstance(orch.llm, MockProvider)) else orch.llm
+    result = await asyncio.to_thread(
+        briefing_mod.generate_briefing, period, path=path, llm=llm)
+
+    # 简报生成同样留痕：聚合了哪些数据源、是否用了 AI 导语、产出多大，可按 trace_id 回放。
+    trace_id = uuid.uuid4().hex
+    try:
+        steps = [
+            {"stage": "接收指令", "detail": {"action": "briefing.generate",
+                                             "period": period, "path": path, "ai": ai}},
+            {"stage": "感知环境", "detail": {
+                "sources": ["system_snapshot(psutil)", "diagnosis.diagnose(all)",
+                            "posture.check_posture(offline)", "audit.activity_stats"],
+                "readonly": True}},
+            {"stage": "执行结果", "detail": {
+                "ok": result.get("ok"), "period": period,
+                "ai_overview_used": result.get("ai_overview_used"),
+                "issues": len(result.get("diagnosis", {}).get("issues", [])),
+                "markdown_chars": len(result.get("markdown", ""))}},
+        ]
+        await asyncio.to_thread(
+            store.save_trace, trace_id, f"[简报] 生成{result.get('period_label', period)}",
+            result.get("overview", ""), steps, intent="briefing", blocked=False,
+            tainted=False, llm_provider=get_settings().llm_provider)
+        result["trace_id"] = trace_id
+    except Exception:  # noqa: BLE001 审计是旁路，落库失败不影响简报返回
+        result["trace_id"] = ""
+    return result
+
+
 @router.post("/action/execute", dependencies=[Depends(require_operator)])
 async def action_execute(req: ActionRequest) -> dict:
     """受控 MUTATING 动作端到端闭环（P0-3）：白名单动作 → 语义校验 → 护栏 → 执行。

@@ -11,6 +11,8 @@ from ._validate import (
     MAX_SCAN_FILES,
     clamp_scan,
     is_refused_scan_root,
+    prune_walk_dirs,
+    scan_prune_roots,
 )
 
 
@@ -57,7 +59,10 @@ def find_large_files(path: str = "/", top_n: int = 10, max_scan: int = 200000) -
     heap: list[tuple[int, str]] = []  # 小顶堆维护当前最大的 top_n
     scanned = 0
     truncated = False
-    for root, _dirs, files in os.walk(path, onerror=lambda e: None):
+    # 遍历剪枝：伪文件系统 + WSL 的 /mnt Windows 挂载默认不深入（显式以其为扫描根除外）
+    pruned = scan_prune_roots(path)
+    for root, dirs, files in os.walk(path, onerror=lambda e: None):
+        prune_walk_dirs(root, dirs, pruned)
         for fn in files:
             fp = os.path.join(root, fn)
             try:
@@ -108,7 +113,10 @@ def dir_size(path: str, max_scan: int = 500000) -> dict:
     total = 0
     count = 0
     truncated = False
-    for root, _dirs, files in os.walk(path, onerror=lambda e: None):
+    # 遍历剪枝：与 find_large_files 同口径（伪文件系统 + /mnt Windows 挂载默认不深入）
+    pruned = scan_prune_roots(path)
+    for root, dirs, files in os.walk(path, onerror=lambda e: None):
+        prune_walk_dirs(root, dirs, pruned)
         for fn in files:
             fp = os.path.join(root, fn)
             try:

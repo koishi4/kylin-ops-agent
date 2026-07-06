@@ -209,6 +209,53 @@ def list_traces(limit: int = 50) -> list[dict[str, Any]]:
         return [_session_row(r) for r in cur.fetchall()]
 
 
+def activity_stats(since_ts: float) -> dict[str, Any]:
+    """统计一个时间窗口内的运维活动（供日报/周报聚合）。
+
+    只读聚合查询：窗口内会话总数、被护栏拦截数、污点路径数、意图分布、
+    受控动作次数，以及最近若干条被拦截会话样例（简报「安全事件」一节的素材）。
+
+    Args:
+        since_ts: 窗口起点（Unix 时间戳），统计 created_at >= since_ts 的会话。
+    Returns:
+        {"total", "blocked", "tainted", "actions", "by_intent", "blocked_samples"}。
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "COALESCE(SUM(blocked), 0) AS blocked, "
+            "COALESCE(SUM(tainted), 0) AS tainted "
+            "FROM sessions WHERE created_at >= ?",
+            (since_ts,),
+        ).fetchone()
+        by_intent = {
+            r["intent"] or "unknown": r["n"]
+            for r in conn.execute(
+                "SELECT intent, COUNT(*) AS n FROM sessions "
+                "WHERE created_at >= ? GROUP BY intent ORDER BY n DESC",
+                (since_ts,),
+            ).fetchall()
+        }
+        samples = conn.execute(
+            "SELECT trace_id, created_at, user_input, intent FROM sessions "
+            "WHERE created_at >= ? AND blocked = 1 ORDER BY created_at DESC LIMIT 5",
+            (since_ts,),
+        ).fetchall()
+    return {
+        "total": row["total"],
+        "blocked": row["blocked"],
+        "tainted": row["tainted"],
+        "actions": by_intent.get("action", 0),
+        "by_intent": by_intent,
+        "blocked_samples": [
+            {"trace_id": r["trace_id"], "created_at": r["created_at"],
+             # 简报只需事件轮廓，样例原话截短以免单条超长输入撑爆报告
+             "user_input": (r["user_input"] or "")[:120], "intent": r["intent"]}
+            for r in samples
+        ],
+    }
+
+
 def get_trace(trace_id: str) -> dict[str, Any] | None:
     """取一条会话的完整思维链（含五段 steps），供前端回放。"""
     with _connect() as conn:

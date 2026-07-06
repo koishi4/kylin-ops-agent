@@ -127,3 +127,58 @@ class TestJournalValidation:
         # 不真依赖 journalctl 是否存在：只要不是被参数校验拒（结构化 readonly 即可）
         r = query_journal(lines=99999)
         assert r["level"] == "READONLY"
+
+
+class TestScanPrune:
+    """扫描剪枝：伪文件系统 + WSL /mnt Windows 挂载默认不深入（显式扫描根除外）。"""
+
+    def _fake_mounts(self, tmp_path):
+        f = tmp_path / "mounts"
+        f.write_text(
+            "rootfs / ext4 rw 0 0\n"
+            "C:\\134 /mnt/c 9p rw,dirsync 0 0\n"
+            "D: /mnt/d drvfs rw 0 0\n"
+            "tmpfs /mnt/wsl tmpfs rw 0 0\n"   # 非 9p/drvfs，不算 Windows 挂载
+            "server:/data /data nfs rw 0 0\n"  # 9p/drvfs 之外的网络盘不剪
+        )
+        return str(f)
+
+    def test_windows_mounts_parsed_by_fstype(self, tmp_path):
+        from app.mcp_server.tools._validate import windows_mounts
+        assert windows_mounts(self._fake_mounts(tmp_path)) == ("/mnt/c", "/mnt/d")
+
+    def test_windows_mounts_unreadable_is_safe_empty(self):
+        from app.mcp_server.tools._validate import windows_mounts
+        assert windows_mounts("/no/such/mounts/file") == ()
+
+    def test_scan_prune_roots_default_and_explicit_optin(self, monkeypatch):
+        from app.mcp_server.tools import _validate
+        monkeypatch.setattr(_validate, "windows_mounts", lambda: ("/mnt/c",))
+        # 全盘扫描：伪文件系统与 Windows 挂载都在剪枝集
+        pruned = _validate.scan_prune_roots("/")
+        assert "/proc" in pruned and "/mnt/c" in pruned
+        # 显式以 Windows 挂载为扫描根：视为明确意图，该前缀不剪
+        pruned = _validate.scan_prune_roots("/mnt/c/data")
+        assert "/mnt/c" not in pruned and "/proc" in pruned
+
+    def test_prune_walk_dirs_component_wise(self):
+        from app.mcp_server.tools._validate import prune_walk_dirs
+        dirs = ["c", "cx", "wsl"]
+        # /mnt 下剪 c（在 /mnt/c 前缀内），兄弟目录 cx 是路径分量不同的目录，不误剪
+        prune_walk_dirs("/mnt", dirs, ("/mnt/c",))
+        assert dirs == ["cx", "wsl"]
+
+    def test_find_large_files_skips_windows_mount(self, tmp_path, monkeypatch):
+        from app.mcp_server.tools import _validate, disk
+        # 构造：root/real 下有真实大文件；root/mnt/c 模拟 Windows 挂载下更大的文件
+        real = tmp_path / "real"; real.mkdir()
+        (real / "big.log").write_bytes(b"x" * 4096)
+        win = tmp_path / "mnt" / "c"; win.mkdir(parents=True)
+        (win / "huge.bin").write_bytes(b"y" * 65536)
+        monkeypatch.setattr(_validate, "windows_mounts", lambda: (str(win),))
+        found = [f["path"] for f in disk.find_large_files(str(tmp_path), top_n=5)["files"]]
+        assert str(real / "big.log") in found
+        assert all("huge.bin" not in p for p in found), "Windows 挂载下的文件应被剪枝跳过"
+        # 显式以该挂载为扫描根 → 尊重意图，能扫到
+        found = [f["path"] for f in disk.find_large_files(str(win), top_n=5)["files"]]
+        assert str(win / "huge.bin") in found
