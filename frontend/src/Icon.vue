@@ -35,6 +35,8 @@ const P = {
   cpu: ['M7 7h10v10H7z', 'M9.5 9.5h5v5h-5z', 'M9 3v2.5M15 3v2.5M9 18.5V21M15 18.5V21M3 9h2.5M3 15h2.5M18.5 9H21M18.5 15H21'],
   send: ['M5 12l15-7-6 15-3-6-6-2z'],
   layers: ['M12 3l9 5-9 5-9-5z', 'M3 13l9 5 9-5'],
+  report: ['M7 3h7l4 4v14H7z', 'M14 3v4h4', 'M9.5 11h5', 'M9.5 14.5h5', 'M9.5 18h3'],
+  clock: ['M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16z', 'M12 8v4.5l3 2'],
 }
 
 const sz = typeof props.size === 'number' ? props.size : parseInt(props.size, 10)

@@ -120,3 +120,10 @@ export async function checkPosture(live = false) {
   const { data } = await http.get('/posture', { params: { live } })
   return data // { severity, kernel, matches:[{cve, status, loaded_modules_hit, mitigations}], scope_note, ... }
 }
+
+// 运维简报（日报/周报）：只读聚合系统快照 + 健康诊断 + 安全态势 + 审计活动，渲染 Markdown。
+// ai=true 且后端 provider 非 mock 时由 LLM 撰写导语（失败自动降级为确定性导语）。
+export async function getBriefing(period = 'daily', { ai = true } = {}) {
+  const { data } = await http.get('/briefing', { params: { period, ai } })
+  return data // { ok, period_label, overview, ai_overview_used, snapshot, diagnosis, posture, activity, markdown, trace_id }
+}

@@ -1,9 +1,6 @@
 import { createApp } from 'vue'
-import ElementPlus from 'element-plus'
-import 'element-plus/dist/index.css'
-// 启用 Element Plus 暗色变量，再由 theme.css 改写为「墨+玉」指挥台调色板（覆盖默认蓝）。
-import 'element-plus/theme-chalk/dark/css-vars.css'
+// 无组件库依赖：设计系统与全部交互组件（抽屉/开关/弹框/表格）均为自持实现，见 theme.css / ui.js。
 import './theme.css'
 import App from './App.vue'
 
-createApp(App).use(ElementPlus).mount('#app')
+createApp(App).mount('#app')

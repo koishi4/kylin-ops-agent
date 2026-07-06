@@ -1,7 +1,7 @@
 <script setup>
 /**
  * 五段执行链时间线（接收指令 → 感知环境 → 推理决策 → 安全校验 → 执行结果）。
- * 自绘竖向链路（不直接用 el-timeline），每段按阶段语义着色、带发光节点与连接线，
+ * 自绘竖向链路：方形编号节点 + 发丝连接线，每段按恒定阶段色着色（不发光、不渐变），
  * 是「可追溯思维链」这一核心卖点的统一视觉载体。复用于对话内联、审计回放、评委模式。
  */
 import Icon from './Icon.vue'
@@ -20,8 +20,8 @@ const STAGE = {
   安全校验: { c: 'var(--stage-verify)', n: 4 },
   执行结果: { c: 'var(--stage-result)', n: 5 },
 }
-function meta(stage) { return STAGE[stage] || { c: 'var(--slate)', n: '·' } }
-function fmt(ts) { return ts ? new Date(ts * 1000).toLocaleTimeString() : '' }
+function meta(stage) { return STAGE[stage] || { c: 'var(--t2)', n: '·' } }
+function fmt(ts) { return ts ? new Date(ts * 1000).toLocaleTimeString('zh-CN', { hour12: false }) : '' }
 </script>
 
 <template>
@@ -40,26 +40,25 @@ function fmt(ts) { return ts ? new Date(ts * 1000).toLocaleTimeString() : '' }
       </div>
     </div>
     <div v-if="!steps.length" class="tl-empty">
-      <Icon name="audit" :size="22" /> 暂无执行链
+      <Icon name="audit" :size="20" /> 暂无执行链
     </div>
   </div>
 </template>
 
 <style scoped>
 .tl { display: flex; flex-direction: column; }
-.tl-step { display: grid; grid-template-columns: 30px 1fr; gap: 12px; }
+.tl-step { display: grid; grid-template-columns: 26px 1fr; gap: 12px; }
 .tl-gutter { display: flex; flex-direction: column; align-items: center; }
 .tl-node {
-  width: 26px; height: 26px; border-radius: 50%; flex: 0 0 auto;
+  width: 22px; height: 22px; border-radius: var(--r-s); flex: 0 0 auto;
   display: flex; align-items: center; justify-content: center;
-  font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--sc);
-  background: var(--ink-1); border: 1.5px solid var(--sc);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--sc) 45%, transparent);
+  font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--sc);
+  background: var(--bg); border: 1px solid var(--sc);
 }
-.tl-line { flex: 1; width: 2px; min-height: 14px; margin: 3px 0; background: linear-gradient(var(--line-glow), var(--line-soft)); }
-.tl-content { min-width: 0; padding-bottom: 16px; }
-.tl-head { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
-.tl-stage { font-weight: 650; font-size: 13.5px; letter-spacing: .3px; }
-.tl-time { font-family: var(--mono); font-size: 11px; color: var(--text-2); }
-.tl-empty { display: flex; align-items: center; gap: 8px; color: var(--text-2); padding: 20px 0; }
+.tl-line { flex: 1; width: 1px; min-height: 12px; margin: 4px 0; background: var(--line-2); }
+.tl-content { min-width: 0; padding-bottom: 14px; }
+.tl-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.tl-stage { font-weight: 650; font-size: 13px; letter-spacing: .3px; }
+.tl-time { font-family: var(--mono); font-size: 11px; color: var(--t2); }
+.tl-empty { display: flex; align-items: center; gap: 8px; color: var(--t2); padding: 18px 0; font-size: 12.5px; }
 </style>

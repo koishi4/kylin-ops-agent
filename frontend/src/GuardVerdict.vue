@@ -9,9 +9,8 @@ import { computed } from 'vue'
 
 const props = defineProps({ guard: { type: Object, required: true } })
 
-// medium 复用 warning（EP el-tag type 仅接受 primary/success/info/warning/danger，不接受空串）
-const riskType = { critical: 'danger', high: 'warning', medium: 'warning', low: 'info' }
-const actionType = { deny: 'danger', confirm: 'warning', allow: 'success' }
+const riskCls = { critical: 'bad', high: 'warn', medium: 'warn', low: 'info' }
+const actionCls = { deny: 'bad', confirm: 'warn', allow: 'ok' }
 
 // 正则/路径命中：剔除 AST- 前缀的合成规则（那些单列到右栏，避免两栏重复）
 const regexRules = computed(() =>
@@ -20,9 +19,9 @@ const ast = computed(() => props.guard.ast_findings || [])
 
 const verdict = computed(() => {
   const g = props.guard
-  if (g.allowed) return { text: '✓ 放行', type: 'success' }
-  if (g.require_confirm) return { text: '⚠ 需二次确认', type: 'warning' }
-  return { text: '⛔ 已拦截', type: 'danger' }
+  if (g.allowed) return { text: '放行', cls: 'ok solid' }
+  if (g.require_confirm) return { text: '需二次确认', cls: 'warn' }
+  return { text: '已拦截', cls: 'bad solid' }
 })
 // 「正则漏网、AST 抓到」的高亮条件：字面规则未命中，但语法树发现了危险结构
 const astSaved = computed(() => regexRules.value.length === 0 && ast.value.length > 0)
@@ -31,9 +30,9 @@ const astSaved = computed(() => regexRules.value.length === 0 && ast.value.lengt
 <template>
   <div class="gv">
     <div class="gv-head">
-      <el-tag size="small" :type="verdict.type" effect="dark">{{ verdict.text }}</el-tag>
-      <el-tag size="small" :type="riskType[guard.risk]">风险 {{ guard.risk }}</el-tag>
-      <el-tag size="small" effect="plain" :type="actionType[guard.action]">动作 {{ guard.action }}</el-tag>
+      <span class="tag" :class="verdict.cls">{{ verdict.text }}</span>
+      <span class="tag" :class="riskCls[guard.risk]">风险 {{ guard.risk }}</span>
+      <span class="tag line" :class="actionCls[guard.action]">动作 {{ guard.action }}</span>
     </div>
 
     <div class="gv-cols">
@@ -41,7 +40,7 @@ const astSaved = computed(() => regexRules.value.length === 0 && ast.value.lengt
       <div class="gv-col">
         <div class="gv-col-t">① 正则 / 路径规则判定</div>
         <div v-if="regexRules.length" class="gv-rules">
-          <el-tag v-for="id in regexRules" :key="id" size="small" class="gv-rule">{{ id }}</el-tag>
+          <span v-for="id in regexRules" :key="id" class="tag mono">{{ id }}</span>
         </div>
         <div v-else class="gv-empty">正则未命中任何字面规则</div>
       </div>
@@ -53,8 +52,8 @@ const astSaved = computed(() => regexRules.value.length === 0 && ast.value.lengt
           <div v-for="(f, i) in ast" :key="i" class="gv-finding">
             <div class="gv-finding-h">
               <code>{{ f.structure }}</code>
-              <el-tag size="small" :type="riskType[f.risk]">{{ f.risk }}</el-tag>
-              <el-tag size="small" effect="plain" :type="actionType[f.action]">{{ f.action }}</el-tag>
+              <span class="tag" :class="riskCls[f.risk]">{{ f.risk }}</span>
+              <span class="tag line" :class="actionCls[f.action]">{{ f.action }}</span>
             </div>
             <div class="gv-finding-r">{{ f.reason }}</div>
           </div>
@@ -64,26 +63,26 @@ const astSaved = computed(() => regexRules.value.length === 0 && ast.value.lengt
     </div>
 
     <div v-if="astSaved" class="gv-saved">
-      ⚡ 正则字面失配、AST 结构命中 —— 变形绕过被语法树兜住（这正是纯正则的盲区）
+      正则字面失配、AST 结构命中——变形绕过被语法树兜住（这正是纯正则的盲区）
     </div>
   </div>
 </template>
 
 <style scoped>
-.gv { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--ink-1); }
-.gv-head { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
-.gv-cols { display: flex; gap: 10px; }
-.gv-col { flex: 1; min-width: 0; background: var(--ink-0); border: 1px solid var(--line-soft); border-radius: 6px; padding: 9px; }
-.gv-col-t { font-weight: 600; font-size: 12px; color: var(--text-1); margin-bottom: 7px; }
-.gv-rules { display: flex; gap: 6px; flex-wrap: wrap; }
-.gv-rule { font-family: var(--mono); }
-.gv-empty { font-size: 12px; color: var(--text-2); }
-.gv-finding { border-left: 3px solid var(--amber); padding: 2px 0 2px 8px; margin-bottom: 6px; }
+.gv { border: 1px solid var(--line); border-radius: var(--r-s); padding: 10px; background: var(--s0); }
+.gv-head { display: flex; gap: 6px; margin-bottom: 9px; flex-wrap: wrap; }
+.gv-cols { display: flex; gap: 8px; }
+.gv-col { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-s); padding: 9px 10px; }
+.gv-col-t { font-weight: 600; font-size: 11.5px; color: var(--t1); margin-bottom: 7px; }
+.gv-rules { display: flex; gap: 5px; flex-wrap: wrap; }
+.gv-empty { font-size: 12px; color: var(--t2); }
+.gv-finding { border-left: 2px solid var(--warn); padding: 2px 0 2px 8px; margin-bottom: 7px; }
+.gv-finding:last-child { margin-bottom: 0; }
 .gv-finding-h { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.gv-finding-h code { font-size: 12px; font-family: var(--mono); background: var(--ink-3); color: var(--amber); padding: 1px 5px; border-radius: 4px; }
-.gv-finding-r { font-size: 12px; color: var(--text-1); line-height: 1.5; margin-top: 2px; }
+.gv-finding-h code { font-size: 11.5px; font-family: var(--mono); background: var(--s2); color: var(--warn); padding: 1px 5px; border-radius: var(--r-s); }
+.gv-finding-r { font-size: 12px; color: var(--t1); line-height: 1.55; margin-top: 3px; }
 .gv-saved {
-  margin-top: 8px; padding: 7px 10px; border-radius: 6px; font-size: 12px;
-  background: var(--amber-soft); color: var(--amber); border: 1px dashed rgba(243, 181, 61, .4);
+  margin-top: 9px; padding: 7px 10px; border-radius: var(--r-s); font-size: 12px;
+  background: var(--warn-soft); color: var(--warn); border-left: 2px solid var(--warn);
 }
 </style>
