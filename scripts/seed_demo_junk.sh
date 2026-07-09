@@ -86,9 +86,19 @@ if [ -z "$SVC_USER" ]; then
   [ -z "$SVC_USER" ] && SVC_USER="opsagent"
 fi
 if ! id "$SVC_USER" >/dev/null 2>&1; then
-  warn "服务账户 $SVC_USER 不存在；退回当前后端可能的身份。注意：垃圾文件/进程的属主必须与"
-  warn "后端实际运行身份一致，否则受控动作会因权限不足执行失败。请确认后用 --user 指定。"
-  die "请先确认后端运行账户（systemctl show -p User kylin-ops-agent），再 --user 指定。"
+  # 账户不存在（常见于本机排练：后端不走 systemd、以开发者身份手动起）→
+  # 自动探测 8000 端口后端进程的属主兜底。素材属主必须与后端实际运行身份一致，
+  # 否则受控动作会因权限不足「执行失败」而非「执行成功」。
+  bpid="$(ss -tlnp 2>/dev/null | grep -E '[:.]8000\s' | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)"
+  owner=""
+  [ -n "$bpid" ] && owner="$(ps -o user= -p "$bpid" 2>/dev/null | tr -d ' ')"
+  if [ -n "$owner" ] && id "$owner" >/dev/null 2>&1; then
+    warn "服务账户 $SVC_USER 不存在；已探测到 8000 端口后端进程（PID $bpid）属主为 $owner，改用它。"
+    SVC_USER="$owner"
+  else
+    warn "服务账户 $SVC_USER 不存在，且 8000 端口上没有可探测的后端进程。"
+    die "请先起后端，或确认运行账户（systemctl show -p User kylin-ops-agent）后用 --user 指定。"
+  fi
 fi
 
 # 杀掉本脚本起过的全部演示进程（--clean 与重复播种共用；僵尸随父进程被杀由 init 回收）。
