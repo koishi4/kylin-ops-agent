@@ -54,6 +54,63 @@
   --r-s: 3px;             /* 小件圆角 */
   --mono: "JetBrains Mono", "Cascadia Code", "SF Mono", "Consolas", "Noto Sans Mono", ui-monospace, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Hiragino Sans GB", sans-serif;
+
+  /* 浮层投影：暗色下用深黑，亮色主题在下方按纸感调浅（令牌化，供 toast/弹层/抽屉共用）*/
+  --sh-1: 0 8px 28px rgba(0, 0, 0, .45);   /* toast */
+  --sh-2: 0 18px 60px rgba(0, 0, 0, .5);   /* modal */
+  --sh-3: -16px 0 48px rgba(0, 0, 0, .45); /* drawer */
+  --scrim: rgba(8, 9, 10, .62);            /* overlay 遮罩 */
+  --scroll-hover: #43474f;                 /* 滚动条 hover */
+}
+
+/* ============================================================================
+ * 亮色主题（图纸/晒图：暖白纸面 + 图纸蓝 + 朱砂印章）
+ *
+ * 只重定义设计令牌，不碰任何组件规则——全部视图样式均走 var()，故换肤零改动即生效。
+ * 立意与暗色一脉相承：石墨底翻成「制图纸」，蓝仍是图纸蓝、红仍是朱砂，语义色为落在
+ * 白底上保证对比度统一加深。默认（无 data-theme）仍是石墨暗色，是本作品的品牌基调。
+ * ==========================================================================*/
+:root[data-theme="light"] {
+  /* —— 纸面层次（越小越靠后，面板抬升为更白）—— */
+  --bg:  #e7e4dc;         /* 页面底：暖调制图纸 */
+  --s0:  #f7f5f0;         /* 面板：暖白 */
+  --s1:  #edeae2;         /* 抬升 / 输入：微降一档，靠边框区分 */
+  --s2:  #e0dcd2;         /* 悬浮 / hover */
+  --line:   #d6d1c6;      /* 发丝线 */
+  --line-2: #c0bbad;      /* 强调线 / hover 边 */
+
+  /* —— 文本层次（墨色，暖灰）—— */
+  --t0: #22262b;
+  --t1: #55524b;
+  --t2: #86837b;
+
+  /* —— 强调与品牌（蓝加深以压住白底）—— */
+  --acc: #35618a;
+  --acc-deep: #3d6285;
+  --acc-soft: rgba(53, 97, 138, .10);
+  --seal: #c8502d;
+
+  /* —— 语义色（落白底统一加深，soft 底相应提亮）—— */
+  --ok:   #4d7a3c;  --ok-soft:   rgba(77, 122, 60, .13);
+  --warn: #9a6d1e;  --warn-soft: rgba(154, 109, 30, .14);
+  --bad:  #b23f2d;  --bad-soft:  rgba(178, 63, 45, .12);
+  --info: #35618a;  --info-soft: rgba(53, 97, 138, .12);
+  --plum: #79589a;  --plum-soft: rgba(121, 88, 154, .14);
+
+  /* —— 五段执行链阶段色（跟随语义色，起点灰随主题变墨灰）—— */
+  --stage-recv:   #7a776f;
+  --stage-perc:   var(--info);
+  --stage-reason: var(--warn);
+  --stage-verify: var(--plum);
+  --stage-result: var(--ok);
+
+  /* —— 浮层投影：纸面上改为轻投影，去掉暗色的厚重黑影 —— */
+  --sh-1: 0 6px 20px rgba(40, 44, 50, .12);
+  --sh-2: 0 16px 46px rgba(40, 44, 50, .18);
+  --sh-3: -14px 0 40px rgba(40, 44, 50, .13);
+  --scrim: rgba(60, 62, 66, .30);
+  --scroll-hover: #b3ada0;
+  color-scheme: light;
 }
 
 /* ============================== 基础 ============================== */
@@ -71,7 +128,7 @@ a { color: var(--acc); text-decoration: none; }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #43474f; }
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); }
 ::-webkit-scrollbar-track { background: transparent; }
 ::selection { background: rgba(126, 168, 205, .28); }
 
@@ -108,6 +165,15 @@ a { color: var(--acc); text-decoration: none; }
 .readout .sq { width: 7px; height: 7px; border-radius: 1px; background: var(--t2); }
 .readout.live .sq { background: var(--ok); }
 .readout.down .sq { background: var(--bad); }
+
+/* 顶栏图标按钮（亮/暗主题切换）：无边框、随主题着色，hover 抬升底色 */
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 24px; margin-left: 8px; padding: 0;
+  border: 1px solid transparent; background: none; color: var(--t2);
+  border-radius: var(--r-s); cursor: pointer; transition: color .12s, background .12s, border-color .12s;
+}
+.icon-btn:hover { color: var(--t0); background: var(--s2); border-color: var(--line); }
 
 /* —— 左栏：编号式导航 —— */
 .rail {
@@ -309,7 +375,7 @@ pre.detail {
   min-width: 240px; max-width: 400px; padding: 9px 13px;
   background: var(--s1); border: 1px solid var(--line-2); border-left: 2px solid var(--t2);
   border-radius: var(--r-s); color: var(--t0); font-size: 12.5px; line-height: 1.55;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .45); animation: toastin .18s ease;
+  box-shadow: var(--sh-1); animation: toastin .18s ease;
 }
 .toast.ok { border-left-color: var(--ok); }
 .toast.warn { border-left-color: var(--warn); }
@@ -317,12 +383,12 @@ pre.detail {
 .toast.info { border-left-color: var(--info); }
 @keyframes toastin { from { opacity: 0; transform: translateY(-5px); } }
 
-.overlay { position: fixed; inset: 0; z-index: 80; background: rgba(8, 9, 10, .62); }
+.overlay { position: fixed; inset: 0; z-index: 80; background: var(--scrim); }
 .modal {
   position: fixed; z-index: 81; top: 26vh; left: 50%; transform: translateX(-50%);
   width: min(440px, calc(100vw - 40px));
   background: var(--s0); border: 1px solid var(--line-2); border-radius: var(--r);
-  box-shadow: 0 18px 60px rgba(0, 0, 0, .5); padding: 16px 18px;
+  box-shadow: var(--sh-2); padding: 16px 18px;
 }
 .modal-title { font-size: 14px; font-weight: 650; color: var(--t0); margin-bottom: 9px; }
 .modal-body { font-size: 13px; color: var(--t1); line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
@@ -332,7 +398,7 @@ pre.detail {
 .drawer-panel {
   position: fixed; z-index: 81; top: 0; right: 0; bottom: 0; width: min(460px, 94vw);
   background: var(--s0); border-left: 1px solid var(--line-2);
-  box-shadow: -16px 0 48px rgba(0, 0, 0, .45);
+  box-shadow: var(--sh-3);
   display: flex; flex-direction: column; animation: drawerin .2s ease;
 }
 @keyframes drawerin { from { transform: translateX(24px); opacity: .4; } }

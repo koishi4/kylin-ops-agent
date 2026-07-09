@@ -14,11 +14,25 @@ import GuardrailView from './views/GuardrailView.vue'
 import CapabilityView from './views/CapabilityView.vue'
 import AuditView from './views/AuditView.vue'
 import JudgeMode from './JudgeMode.vue'
+import Icon from './Icon.vue'
 
 const provider = ref('…')
 const toolCount = ref(0)
 const connected = ref(false)
 const clock = ref('')
+
+// 主题：初值取自首屏前置脚本落到 <html> 的 data-theme（无 = 石墨暗色）。
+// 切换即改属性 + 持久化，暗色回落为「移除属性」，与默认态保持一致。
+const theme = ref(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark')
+function toggleTheme() {
+  theme.value = theme.value === 'light' ? 'dark' : 'light'
+  const root = document.documentElement
+  if (theme.value === 'light') root.setAttribute('data-theme', 'light')
+  else root.removeAttribute('data-theme')
+  try { localStorage.setItem('kylin-theme', theme.value) } catch { /* 隐私模式禁存，忽略 */ }
+  const meta = document.querySelector('meta[name="theme-color"]')
+  if (meta) meta.setAttribute('content', theme.value === 'light' ? '#e7e4dc' : '#0f1113')
+}
 
 const view = ref('console')
 const NAV = [
@@ -65,6 +79,11 @@ onUnmounted(() => clearInterval(timer))
         <span class="readout"><span class="k">MCP</span><b>{{ toolCount }}</b> 工具 · 全只读</span>
         <span class="readout"><span class="k">护栏</span><b>在位</b></span>
         <span class="readout">{{ clock }}</span>
+        <button class="icon-btn" type="button" @click="toggleTheme"
+                :title="theme === 'light' ? '切换到暗色主题' : '切换到亮色主题'"
+                :aria-label="theme === 'light' ? '切换到暗色主题' : '切换到亮色主题'">
+          <Icon :name="theme === 'light' ? 'moon' : 'sun'" :size="16" />
+        </button>
       </div>
     </header>
 
