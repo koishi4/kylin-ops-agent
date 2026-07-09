@@ -2166,3 +2166,23 @@ MCP 工具描述未受波及——只改了模块/类 docstring，工具函数�
 **教训**：① 降级摘要只写了原因文本、`to_trace` 没落 `reason` 字段，导致审计里看得见 degraded
 看不见为什么——排障靠字符数反推。后续可把降级 reason（截断后）计入 trace detail。② 配置漂移
 （临时改 .env 忘还原）会以「不相干模块报错」的形态发作，关键默认值旁边要有「为什么是这个值」的注释。
+
+## 2026-07-09 扫盘剪枝补漏：/mnt/wslg 是本发行版根盘的只读重复挂载
+
+**现象**：WSL 开发机上「根因体检（path=/）」的大文件 TOP10 里每个文件出现两次——一次在
+`/home/...`，一次在 `/mnt/wslg/distro/home/...`，且「可清理」建议会指向只读副本。
+
+**根因**：6 月做的「/mnt Windows 挂载默认剪枝」按 fstype（9p/drvfs）判定；而 WSLg 会把
+**本发行版自己的根盘 VHD 再以 ext4 只读挂载一次**到 `/mnt/wslg/distro`（挂载表实证：
+`/dev/sdg /mnt/wslg/distro ext4 ro`），不是 9p/drvfs，漏网。全盘扫描顺路走进去等于把 `/`
+重复扫一遍。
+
+**修复**：`_validate.windows_mounts` 在原 fstype 判定外，按**挂载点证据**把 `/mnt/wslg`
+及其下任何挂载整棵纳入剪枝（去重为单条 `/mnt/wslg`）。仍只认 /proc/mounts 不猜路径；
+麒麟/裸机无此挂载，零影响。显式以其为扫描根仍视为明确意图不剪（语义与 Windows 挂载一致）。
+
+**验证**：`test_tool_limits.py` 伪挂载表加 wslg 两行断言去重结果；真机 `scan_prune_roots('/')`
+输出含 `/mnt/wslg`；ruff 零违规。
+
+**教训**：「按 fstype 白名单剪枝」对付得了跨 OS 挂载，对付不了「同盘重复挂载」这类拓扑问题；
+剪枝证据要同时看 fstype 和挂载点两个维度。

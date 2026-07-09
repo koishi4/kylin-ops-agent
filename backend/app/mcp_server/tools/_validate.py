@@ -50,22 +50,30 @@ def is_refused_scan_root(path: str) -> bool:
 
 
 def windows_mounts(mounts_file: str = "/proc/mounts") -> tuple[str, ...]:
-    """/mnt 下的 Windows 盘符挂载点（据 /proc/mounts 的 9p/drvfs 类型判定）。
+    """/mnt 下应剪枝的 WSL 跨界挂载点：Windows 盘符（9p/drvfs）+ WSLg 系统挂载。
 
     只认证据（真实挂载表），不猜路径形态；非 WSL 环境（麒麟/裸机）自然返回空元组，零影响。
     /proc/mounts 不可读时保守返回空（宁可多扫，不误剪真实 Linux 目录）。
     mounts_file 仅供测试注入伪挂载表。
+
+    /mnt/wslg 单独处理：WSLg 会把**本发行版自己的根盘再只读挂载一次**到 /mnt/wslg/distro，
+    全盘扫描（path=/）顺路走进去等于把 / 重复扫一遍——大文件全部成双出现且「可清理」建议
+    指向只读副本。它不是 9p/drvfs，按 fstype 判不到，故按挂载点证据整棵剪掉。
     """
     mounts: list[str] = []
     try:
         with open(mounts_file, encoding="utf-8") as f:
             for line in f:
                 fields = line.split()
-                if len(fields) >= 3 and fields[2] in _WINDOWS_MOUNT_FSTYPES:
-                    # 挂载点里的空格等按 mounts(5) 以八进制转义（如 \040），还原后再判断
-                    mp = fields[1].encode().decode("unicode_escape")
-                    if mp.startswith("/mnt/"):
-                        mounts.append(mp)
+                if len(fields) < 3:
+                    continue
+                # 挂载点里的空格等按 mounts(5) 以八进制转义（如 \040），还原后再判断
+                mp = fields[1].encode().decode("unicode_escape")
+                if fields[2] in _WINDOWS_MOUNT_FSTYPES and mp.startswith("/mnt/"):
+                    mounts.append(mp)
+                elif (mp == "/mnt/wslg" or mp.startswith("/mnt/wslg/")) \
+                        and "/mnt/wslg" not in mounts:
+                    mounts.append("/mnt/wslg")
     except OSError:
         return ()
     return tuple(mounts)

@@ -140,12 +140,14 @@ class TestScanPrune:
             "D: /mnt/d drvfs rw 0 0\n"
             "tmpfs /mnt/wsl tmpfs rw 0 0\n"   # 非 9p/drvfs，不算 Windows 挂载
             "server:/data /data nfs rw 0 0\n"  # 9p/drvfs 之外的网络盘不剪
+            "none /mnt/wslg tmpfs rw 0 0\n"        # WSLg 系统挂载：按挂载点剪
+            "/dev/sdg /mnt/wslg/distro ext4 ro 0 0\n"  # 本发行版根盘的只读重复挂载（去重为 /mnt/wslg）
         )
         return str(f)
 
     def test_windows_mounts_parsed_by_fstype(self, tmp_path):
         from app.mcp_server.tools._validate import windows_mounts
-        assert windows_mounts(self._fake_mounts(tmp_path)) == ("/mnt/c", "/mnt/d")
+        assert windows_mounts(self._fake_mounts(tmp_path)) == ("/mnt/c", "/mnt/d", "/mnt/wslg")
 
     def test_windows_mounts_unreadable_is_safe_empty(self):
         from app.mcp_server.tools._validate import windows_mounts
