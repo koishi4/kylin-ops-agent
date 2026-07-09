@@ -267,7 +267,7 @@ class Orchestrator:
                 if should_quarantine(untrusted=untrusted,
                                      injection_detected=san.injection_detected):
                     planner_content = await self._quarantined_read(
-                        name, san.wrapped, trace, model=model)
+                        name, san.wrapped, trace)
                 else:
                     planner_content = san.wrapped
 
@@ -297,8 +297,7 @@ class Orchestrator:
                                   tainted=tainted)
 
     async def _quarantined_read(self, tool_name: str, wrapped: str,
-                                trace: list[TraceStep], *,
-                                model: str | None = None) -> str:
+                                trace: list[TraceStep]) -> str:
         """CaMeL 隔离阅读器：用**无工具**的 LLM 调用把一条不可信工具输出压成摘要。
 
         强制隔离边界的三个要点：
@@ -308,11 +307,17 @@ class Orchestrator:
         3. 返回给规划器的是**被重新标记为不可信**的派生摘要（never raw bytes）。
 
         任何异常 / provider 不可用 → 安全降级（不外泄原文、不崩），沿用项目「fail-safe」风格。
+
+        模型选择：**恒用快速模型（provider 默认），不跟随「深度思考」开关**。一是提取任务不需要
+        推理模型；二是 DeepSeek 思考模型要求回传的 assistant 消息带 reasoning_content，而阅读器
+        会话里的 assistant→tool 配对是人工构造的（无 reasoning_content），思考模型会 400 拒绝
+        （曾致阅读器恒降级、规划器误判工具故障，见 dev-log 2026-07-09）。
         """
         reader_msgs = build_reader_messages(READER_SYSTEM, wrapped)
         try:
             # 关键：不传 tools。阅读器无工具 → 结构上无法发起 tool_call。
-            reader_msg = await self.llm.achat(reader_msgs, None, model=model)
+            # 不传 model → 用 provider 默认的快速模型（见 docstring「模型选择」）。
+            reader_msg = await self.llm.achat(reader_msgs, None)
             _push_thinking(trace, reader_msg, "隔离阅读器")  # 阅读器的思维链也入回放
             if reader_msg.get("tool_calls"):
                 # 阅读器越权试图调工具（在无 tools 下不应发生）→ 丢弃产物，安全降级。

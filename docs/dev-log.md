@@ -2131,3 +2131,38 @@ MCP 工具描述未受波及——只改了模块/类 docstring，工具函数�
   大目录树遍历拖慢一个量级。
 - 测试：`test_tool_limits.py::TestScanPrune` 五用例（挂载表解析/不可读安全空/默认剪+显式豁免/
   分量判断不误剪兄弟目录/端到端跳过 Windows 挂载）。
+
+## 2026-07-09 修「隔离阅读器在思考模型下恒降级」：list_processes“接口异常”假象溯因
+
+**现象**：真机问「当前内存占用情况」，答复称 `list_processes` 连续两次「内部异常」拿不到进程排行。
+按审计回放（trace `e8ebe3…`）逐段核对：**工具两次都成功返回了完整数据**（seq=9/14 均 `ok: true`），
+真正失败的是下游 CaMeL 隔离阅读器——两次 `degraded: true`，规划器收到降级占位摘要后把它理解成
+「工具出错」，重试同败，最终只用 memory_info 作答。这正是审计五段链的价值：用户可见的故障描述
+（LLM 的转述）与链路事实（每段的结构化 detail）可以逐一对质，10 分钟定位到真实层位。
+
+**根因**：`.env` 的 `DEEPSEEK_MODEL` 被临时改成了思考模型 `deepseek-v4-pro`（既定方案是默认
+`deepseek-chat`，v4-pro 只给「深度思考」开关）。DeepSeek 思考模型要求**回传的 assistant 消息必须带
+`reasoning_content`**，而阅读器会话（`build_reader_messages`）里的 assistant→tool 配对是人工构造的
+（`content: None`、无 reasoning_content）→ API 直接 400：
+`The reasoning_content in the thinking mode must be passed back to the API.`
+规划器主循环不受影响，因为它回传的是模型自己产出的完整消息（`model_dump` 保留 reasoning_content）；
+全链路只有阅读器这条伪造消息踩雷。降级摘要 270 字符与该异常文本 201 字符吻合，复现坐实。
+
+**修复**（两处，一处治标一处治本）：
+1. `.env`：`DEEPSEEK_MODEL` 改回 `deepseek-chat`，并加注释说明「思考模型不要设为默认」的原因；
+   `DEEPSEEK_THINK_MODEL=deepseek-v4-pro` 显式落档（此前靠 config 默认 `deepseek-reasoner`，已过时）。
+2. `orchestrator._quarantined_read`：**恒用快速模型（provider 默认），不再跟随「深度思考」开关**
+   （去掉 `model` 透传）。理由：① 阅读器是提取任务，不需要推理模型，快模型更快更省；② 结构上
+   规避思考模型对伪造 assistant 消息的 reasoning_content 硬性要求——否则用户一开深度思考，
+   阅读器必 400 降级，等于「深度思考模式下所有不可信工具输出全部拿不到摘要」。
+
+**安全语义不变**：降级路径当时的行为完全符合 fail-safe 设计——不外泄原文、不崩、提示谨慎作答；
+本次修的是「不该触发降级的场景恒触发降级」这个可用性回归，隔离边界（无工具阅读器 + 不可信打标 +
+长度受限）一字未动。
+
+**验证**：真实 DeepSeek 端到端，`deep_thinking=False/True` 各跑一遍「看看哪些进程占内存最多」，
+阅读器均 `degraded: False`，答复给出进程内存排行；全量 pytest 2662 通过，ruff 零违规。
+
+**教训**：① 降级摘要只写了原因文本、`to_trace` 没落 `reason` 字段，导致审计里看得见 degraded
+看不见为什么——排障靠字符数反推。后续可把降级 reason（截断后）计入 trace detail。② 配置漂移
+（临时改 .env 忘还原）会以「不相干模块报错」的形态发作，关键默认值旁边要有「为什么是这个值」的注释。
