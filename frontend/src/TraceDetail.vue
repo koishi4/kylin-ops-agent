@@ -6,6 +6,10 @@
  *   - 安全校验段含 rule_of_two → 「致命三要素 / Rule of Two」能力面小结
  *   - 推理决策段含 reasoning_content → 深度思考思维链卡
  *   - 执行结果段 output 含沙箱字段 → 「沙箱内执行 / 失控被掐死」横幅
+ *   - 推理决策段含 tool+arguments → 「自主工具调用」卡（agent 感知-推理-行动循环的可视证据）
+ *   - 含 self_heal → 「失败自愈」卡（工具失败 → 结构化回喂 → 模型换策略重试）
+ *   - 安全校验段 phase=隔离阅读器 → 「CaMeL 双模型隔离阅读」卡
+ *   - 安全校验段 phase=双层意图研判 → 「规则 × AI 两栏裁决」卡（不依赖深度思考开关）
  * 其余明细回退为原始 JSON（native details 折叠）。复用于内联对话 trace、回放与评委模式。
  */
 import { computed } from 'vue'
@@ -59,9 +63,35 @@ const sandbox = computed(() => {
 })
 const sbKilled = computed(() => !!sandbox.value && !!(sandbox.value.sandbox_killed || sandbox.value.limit_hit))
 
+// 自主工具调用（推理决策段 {tool, arguments}：模型在循环里自主选的下一步）
+const toolCall = computed(() =>
+  isObj.value && props.detail.tool && 'arguments' in props.detail
+    && !props.detail.self_heal ? props.detail : null)
+
+// 失败自愈（orchestrator P2-2：{tool_error, tool, reason, hint} 结构化回喂驱动模型重试）
+const selfHeal = computed(() =>
+  isObj.value && props.detail.self_heal && typeof props.detail.self_heal === 'object'
+    ? props.detail.self_heal : null)
+
+// CaMeL 隔离阅读器（flow_control.to_trace：不可信输出经无工具 LLM 压成摘要）
+const reader = computed(() =>
+  isObj.value && typeof props.detail.phase === 'string'
+    && props.detail.phase.startsWith('隔离阅读器') ? props.detail : null)
+
+// 双层意图研判（risk_assessor.to_trace：规则 × AI 两栏 + 保守合并）
+const dual = computed(() =>
+  isObj.value && props.detail.phase === '双层意图研判' ? props.detail : null)
+const VERDICT = {
+  allow: { cls: 'ok', text: '放行' },
+  confirm: { cls: 'warn', text: '需确认' },
+  deny: { cls: 'bad', text: '拒绝' },
+}
+function verdict(x) { return VERDICT[x] || { cls: 'info', text: x || '—' } }
+
 const enriched = computed(() =>
   !!guard.value || !!sandbox.value || !!posture.value || !!rot.value
-  || !!thinking.value || !!riskThinking.value)
+  || !!thinking.value || !!riskThinking.value
+  || !!toolCall.value || !!selfHeal.value || !!reader.value || !!dual.value)
 function pretty(d) { return typeof d === 'string' ? d : JSON.stringify(d, null, 2) }
 </script>
 
@@ -85,6 +115,76 @@ function pretty(d) { return typeof d === 'string' ? d : JSON.stringify(d, null, 
         <span class="tag mono">安全研判</span>
       </div>
       <div class="think-body">{{ riskThinking }}</div>
+    </div>
+
+    <!-- 自主工具调用：模型在推理循环中自主选择的下一步（agent 循环可视证据） -->
+    <div v-if="toolCall" class="mini info">
+      <div class="mini-h">
+        <Icon name="bolt" :size="13" />
+        <span class="mini-t">自主工具调用</span>
+        <span class="tag mono info">{{ toolCall.tool }}</span>
+      </div>
+      <div class="mini-r mono">参数 {{ JSON.stringify(toolCall.arguments) }}</div>
+      <div class="mini-r">由模型基于上一步观察自主决策：选哪个工具、填什么参数，非预设流程。</div>
+    </div>
+
+    <!-- 失败自愈：工具失败不终止会话，结构化回喂错误由模型换策略重试 -->
+    <div v-if="selfHeal" class="mini warn">
+      <div class="mini-h">
+        <Icon name="refresh" :size="13" />
+        <span class="mini-t">失败自愈 · 结构化回喂</span>
+        <span class="tag mono">{{ selfHeal.tool }}</span>
+      </div>
+      <div class="mini-r">{{ selfHeal.reason }}</div>
+      <div class="mini-r">回喂提示：{{ selfHeal.hint }}</div>
+    </div>
+
+    <!-- CaMeL 隔离阅读器：不可信工具输出经「无工具」LLM 压成摘要，原始字节不达规划器 -->
+    <div v-if="reader" class="mini plum">
+      <div class="mini-h">
+        <Icon name="lock" :size="13" />
+        <span class="mini-t">隔离阅读器 · CaMeL 双模型</span>
+        <span class="tag plum">无工具</span>
+        <span v-if="reader.tool" class="tag mono">{{ reader.tool }}</span>
+        <span v-if="reader.degraded" class="tag warn">降级摘要</span>
+        <span v-else class="tag mono">摘要 {{ reader.summary_chars }} 字</span>
+      </div>
+      <div class="mini-r">{{ reader.note }}</div>
+    </div>
+
+    <!-- 双层意图研判：规则 × AI 两栏裁决 + 保守合并（LLM 当安全裁判的可视证据） -->
+    <div v-if="dual" class="mini" :class="verdict(dual.final_verdict).cls">
+      <div class="mini-h">
+        <Icon name="judge" :size="13" />
+        <span class="mini-t">双层意图研判 · 规则 × AI</span>
+        <span class="tag" :class="verdict(dual.final_verdict).cls">
+          合并裁决：{{ verdict(dual.final_verdict).text }}
+        </span>
+        <span v-if="dual.upgraded_by_ai" class="tag warn">AI 升级判级</span>
+      </div>
+      <div class="mini-cols">
+        <div class="mini-col">
+          <span class="mini-k">规则层</span>
+          <span class="tag mono">{{ (dual.rule_judgment || {}).intent }}</span>
+          <span class="tag" :class="verdict((dual.rule_judgment || {}).verdict).cls">
+            {{ verdict((dual.rule_judgment || {}).verdict).text }}
+          </span>
+        </div>
+        <div class="mini-col">
+          <span class="mini-k">AI 研判</span>
+          <template v-if="(dual.ai_judgment || {}).used">
+            <span class="tag mono">{{ dual.ai_judgment.risk_level }}</span>
+            <span class="tag" :class="verdict(dual.ai_judgment.verdict).cls">
+              {{ verdict(dual.ai_judgment.verdict).text }}
+            </span>
+          </template>
+          <span v-else class="tag line">未启用（离线 / 桩模型）</span>
+        </div>
+      </div>
+      <div v-if="(dual.ai_judgment || {}).suspected_intent" class="mini-r">
+        AI 推断真实意图：{{ dual.ai_judgment.suspected_intent }}
+      </div>
+      <div v-if="dual.reason" class="mini-r">{{ dual.reason }}</div>
     </div>
 
     <GuardVerdict v-if="guard" :guard="guard" />
@@ -157,6 +257,11 @@ function pretty(d) { return typeof d === 'string' ? d : JSON.stringify(d, null, 
 .mini.ok { border-left-color: var(--ok); }
 .mini.warn { border-left-color: var(--warn); }
 .mini.bad { border-left-color: var(--bad); }
+.mini.info { border-left-color: var(--info); }
+.mini.plum { border-left-color: var(--plum); }
+.mini-cols { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 7px; }
+.mini-col { display: flex; align-items: center; gap: 5px; }
+.mini-k { font-size: 11px; color: var(--t2); }
 .mini-h { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; color: var(--t1); }
 .mini-h .icon { color: var(--t2); }
 .mini-t { font-size: 12px; font-weight: 600; color: var(--t0); }

@@ -40,6 +40,22 @@ const SUGGESTS = [
 
 const hasMsg = computed(() => messages.value.length > 0)
 
+// Agent 行为摘要：从执行链统计模型的自主行为（多轮规划 / 自愈 / 隔离阅读 / AI 研判），
+// 让「感知-推理-行动循环」不用展开 JSON 也一眼可见。点击条带即展开执行链细看对应段。
+function agentStats(m) {
+  const steps = m.trace || []
+  const d = s => (s.detail && typeof s.detail === 'object') ? s.detail : {}
+  const count = f => steps.filter(f).length
+  return [
+    { text: '自主工具调用', cls: 'info',
+      n: count(s => s.stage === '推理决策' && d(s).tool && 'arguments' in d(s)) },
+    { text: '失败自愈', cls: 'warn', n: count(s => !!d(s).self_heal) },
+    { text: '隔离阅读', cls: 'plum',
+      n: count(s => String(d(s).phase || '').startsWith('隔离阅读器')) },
+    { text: 'AI 安全研判', cls: 'info', n: count(s => d(s).phase === '双层意图研判') },
+  ].filter(x => x.n > 0)
+}
+
 async function scrollBottom() {
   await nextTick()
   if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight
@@ -215,6 +231,14 @@ async function confirmExec() {
             </span>
           </div>
           <div class="msg-text">{{ m.answer }}</div>
+          <!-- Agent 行为摘要条：模型这轮自主干了什么，点击展开执行链看细节 -->
+          <button v-if="m.role === 'assistant' && agentStats(m).length" class="agent-sum"
+                  @click="openTrace[i] = !openTrace[i]">
+            <span class="as-k mono">AGENT LOOP</span>
+            <span v-for="st in agentStats(m)" :key="st.text" class="as-item" :class="st.cls">
+              {{ st.text }} <b class="mono">×{{ st.n }}</b>
+            </span>
+          </button>
           <div v-if="m.trace && m.trace.length" class="trace-toggle">
             <button class="tt-btn" @click="openTrace[i] = !openTrace[i]">
               {{ openTrace[i] ? '收起' : '展开' }}执行链 · {{ m.trace.length }} 段
@@ -346,6 +370,18 @@ async function confirmExec() {
 .msg-body.blocked { border-left: 2px solid var(--bad); }
 .msg-tags { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; align-items: center; }
 .msg-text { white-space: pre-wrap; line-height: 1.7; font-size: 13.5px; color: var(--t0); }
+
+/* Agent 行为摘要条：细边框静态条带（不发光不渐变），色彩仅用于分类计数 */
+.agent-sum { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 10px; padding: 6px 10px; width: 100%;
+  border: 1px solid var(--line); border-radius: var(--r-s); background: var(--bg);
+  cursor: pointer; font: inherit; font-size: 11.5px; color: var(--t2); text-align: left; }
+.agent-sum:hover { border-color: var(--line-2); }
+.as-k { font-size: 10px; letter-spacing: .14em; color: var(--t2); }
+.as-item.info { color: var(--info); }
+.as-item.warn { color: var(--warn); }
+.as-item.plum { color: var(--plum); }
+.as-item b { font-weight: 650; }
 
 .trace-toggle { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
 .tt-btn {
