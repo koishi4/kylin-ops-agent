@@ -12,7 +12,7 @@
  *   - 安全校验段 phase=双层意图研判 → 「规则 × AI 两栏裁决」卡（不依赖深度思考开关）
  * 其余明细回退为原始 JSON（native details 折叠）。复用于内联对话 trace、回放与评委模式。
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import GuardVerdict from './GuardVerdict.vue'
 import Icon from './Icon.vue'
 
@@ -77,6 +77,8 @@ const selfHeal = computed(() =>
 const reader = computed(() =>
   isObj.value && typeof props.detail.phase === 'string'
     && props.detail.phase.startsWith('隔离阅读器') ? props.detail : null)
+// 摘要正文点击展开（旧 trace 无 summary 字段则不可展开，仅显示字数）
+const showSummary = ref(false)
 
 // 双层意图研判（risk_assessor.to_trace：规则 × AI 两栏 + 保守合并）
 const dual = computed(() =>
@@ -147,8 +149,13 @@ function pretty(d) { return typeof d === 'string' ? d : JSON.stringify(d, null, 
         <span class="tag plum">无工具</span>
         <span v-if="reader.tool" class="tag mono">{{ reader.tool }}</span>
         <span v-if="reader.degraded" class="tag warn">降级摘要</span>
-        <span v-else class="tag mono">摘要 {{ reader.summary_chars }} 字</span>
+        <button v-if="reader.summary" class="tag mono sum-btn"
+          :aria-expanded="showSummary" @click="showSummary = !showSummary">
+          摘要 {{ reader.summary_chars }} 字 {{ showSummary ? '▾' : '▸' }}
+        </button>
+        <span v-else-if="!reader.degraded" class="tag mono">摘要 {{ reader.summary_chars }} 字</span>
       </div>
+      <div v-if="showSummary && reader.summary" class="sum-body">{{ reader.summary }}</div>
       <div class="mini-r">{{ reader.note }}</div>
     </div>
 
@@ -267,4 +274,14 @@ function pretty(d) { return typeof d === 'string' ? d : JSON.stringify(d, null, 
 .mini-t { font-size: 12px; font-weight: 600; color: var(--t0); }
 .mini-legs { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
 .mini-r { font-size: 11.5px; color: var(--t2); line-height: 1.55; margin-top: 5px; }
+
+/* 隔离阅读器摘要正文：点「摘要 N 字」展开，规划器实际收到的派生文本（非原始不可信字节） */
+.sum-btn { cursor: pointer; border: 1px solid var(--line); background: transparent;
+  color: inherit; font: inherit; }
+.sum-btn:hover { border-color: var(--plum); color: var(--plum); }
+.sum-body { margin-top: 7px; font-size: 11.5px; line-height: 1.66; color: var(--t1);
+  white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto;
+  font-family: var(--mono); border: 1px solid var(--line);
+  border-left: 2px solid var(--plum); border-radius: var(--r-s);
+  padding: 7px 9px; background: var(--s1); }
 </style>

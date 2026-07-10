@@ -91,6 +91,8 @@ class ReaderSummary:
             "reader_has_tools": False,
             "summary_chars": len(self.summary),
             "max_summary_chars": MAX_SUMMARY_CHARS,
+            # 摘要正文本身即规划器收到的派生文本（非原始不可信字节），入审计以支撑「可追溯」回放
+            "summary": self.summary,
             "truncated": self.truncated,
             "degraded": self.degraded,
             "note": ("不可信原始字节只进入无工具的隔离阅读器；规划器仅收到被标记为不可信的"
